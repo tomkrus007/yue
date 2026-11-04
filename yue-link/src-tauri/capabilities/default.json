@@ -1,0 +1,25 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "notification:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*.bingolink.biz" },
+        { "url": "http://*.bingolink.biz" },
+        { "url": "https://*.yuexiu.com" },
+        { "url": "http://*.yuexiu.com" },
+        { "url": "https://*.bingolink.biz/*" },
+        { "url": "http://*.bingolink.biz/*" },
+        { "url": "https://*.yuexiu.com/*" },
+        { "url": "http://*.yuexiu.com/*" },
+        { "url": "https://config.bingolink.biz/*" }
+      ]
+    }
+  ]
+}
