@@ -6,7 +6,7 @@
 
       <form @submit.prevent="onLogin">
         <div class="field">
-          <label>工号 / 账号</label>
+          <label>账号</label>
           <input v-model="username" placeholder="例如 12345（自动补 @yuexiu）" autocomplete="username" />
         </div>
         <div class="field">
@@ -28,26 +28,45 @@
         </button>
       </form>
 
-      <details class="debug" open>
-        <summary>调试日志（点击折叠）</summary>
-        <ul class="debug-log">
-          <li v-for="(l, i) in auth.debugLog" :key="i">{{ l }}</li>
-          <li v-if="!auth.debugLog.length" class="muted">尚未登录</li>
-        </ul>
-      </details>
-
-      <details class="debug">
-        <summary>高级：自定义服务地址</summary>
-        <div class="adv">
-          <input v-model="ssoUrl" placeholder="ssoUrl（留空用配置中心/内置值）" />
-          <input v-model="microServiceUrl" placeholder="配置中心 microServiceUrl" />
-        </div>
-      </details>
-
-      <details class="debug">
-        <summary>服务端点（点击展开）</summary>
-        <pre>{{ endpoints }}</pre>
-      </details>
+      <div class="tools-toggle">
+        <button
+          type="button"
+          class="tools-button"
+          title="调试与高级设置"
+          aria-label="调试与高级设置"
+          aria-controls="login-tools"
+          :aria-expanded="showTools"
+          @click="showTools = !showTools"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M4 7h16M4 17h16" />
+            <circle cx="9" cy="7" r="3" fill="white" />
+            <circle cx="15" cy="17" r="3" fill="white" />
+          </svg>
+        </button>
+      </div>
+      <div v-show="showTools" id="login-tools">
+        <details class="debug" open>
+          <summary>调试日志（点击折叠）</summary>
+          <ul class="debug-log">
+            <li v-for="(l, i) in auth.debugLog" :key="i">{{ l }}</li>
+            <li v-if="!auth.debugLog.length" class="muted">尚未登录</li>
+          </ul>
+        </details>
+  
+        <details class="debug">
+          <summary>高级：自定义服务地址</summary>
+          <div class="adv">
+            <input v-model="ssoUrl" placeholder="ssoUrl（留空用配置中心/内置值）" />
+            <input v-model="microServiceUrl" placeholder="配置中心 microServiceUrl" />
+          </div>
+        </details>
+  
+        <details class="debug">
+          <summary>服务端点（点击展开）</summary>
+          <pre>{{ endpoints }}</pre>
+        </details>
+      </div>
     </div>
   </div>
 </template>
@@ -71,6 +90,7 @@ const username = ref('')
 const password = ref('')
 const remember = ref(false)
 const autoLogin = ref(false)
+const showTools = ref(false)
 const ssoUrl = ref(localStorage.getItem('ssoUrl') || '')
 const microServiceUrl = ref(localStorage.getItem('microServiceUrl') || '')
 let autoTried = false
@@ -142,7 +162,8 @@ async function onLogin() {
 
 <style scoped>
 .login-page {
-  height: 100%;
+  min-height: 100%;
+  padding: 24px 16px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -150,6 +171,7 @@ async function onLogin() {
 }
 .login-card {
   width: 380px;
+  max-width: 100%;
   background: #fff;
   border-radius: 12px;
   padding: 36px 32px;
@@ -181,7 +203,20 @@ async function onLogin() {
   font-size: 12px;
   color: var(--text-muted);
 }
-.options label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.options label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+.options input[type='checkbox'] { width: auto; flex-shrink: 0; }
+.tools-toggle { display: flex; justify-content: flex-end; margin-top: 12px; }
+.tools-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+}
+.tools-button:hover, .tools-button[aria-expanded='true'] { background: #f0f0f0; color: var(--text); }
 .error {
   background: #fff0f0;
   color: var(--danger);

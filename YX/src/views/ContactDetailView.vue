@@ -28,7 +28,7 @@
           <div class="field"><dt>部门</dt><dd>{{ detail.orgName || detail.deptName || detail.departmentName || '-' }}</dd></div>
           <div class="field"><dt>公司/组织</dt><dd>{{ detail.eName || detail.companyName || '-' }}</dd></div>
           <div class="field"><dt>岗位</dt><dd>{{ detail.postDescription || detail.positionalTitle || '-' }}</dd></div>
-          <div class="field"><dt>用户 ID</dt><dd class="mono">{{ detail.userId || id }}</dd></div>
+          <div class="field"><dt>邮箱</dt><dd class="mono">{{ detail.email || '-' }}</dd></div>
         </template>
 
         <template v-else-if="kind === 'group'">
