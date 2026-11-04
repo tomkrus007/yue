@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <title>YX 应用图标</title>
+  <rect fill="#150c01" x="40" y="46.42" width="432" height="419.17" rx="96.06"/>
+  <rect fill="#150c01" x="60" y="66.42" width="392" height="379.17" rx="76.06"/>
+  <g fill="#ff9100">
+    <path d="M112 165H153L183 225L213 165H254L202 263V331H164V263Z"/>
+    <path d="M263 165H306L332 214L358 165H401L354 246L403 331H360L332 278L304 331H261L310 246Z"/>
+  </g>
+</svg>

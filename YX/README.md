@@ -1,0 +1,142 @@
+# YX
+
+云上越秀（品高 BingoLink）桌面端的 IM 通信 + 云盘功能复刻客户端。
+
+- **技术栈**：Tauri v2 + Vue 3 + TypeScript + Pinia + Vue Router
+- **目标服务端**：直连真实越秀生产环境（纯客户端，不自建服务端）
+  - IM：配置中心下发的 `embWebSocketUri`（生产为 `wss://…:443`）
+  - 网盘：`https://streamapi.bingolink.biz/openapi`
+  - 登录：`https://www.bingolink.biz/sso/oauth2/token`（OAuth2 password 模式 + RSA 密码加密）
+- **不复刻**：视频会议、日程、红包等重业务；零信任只做白名单分流代理，不实现官方隧道协议
+
+## 功能范围
+
+### IM 通信
+- OAuth2 登录 → 配置中心 → WebSocket 连接 → 鉴权（Cmd.uAuth=11）
+- 心跳保活（Cmd.uBeats=6 / dBeats=16，30 秒间隔，3 次丢失重连）
+- 收发文本 / 图片 / 文件消息（Cmd.uSendMsg=3 / dRecMsg=3）
+- 附件上传 `store/putFile`，支持多选、粘贴、拖拽；图片内联显示
+- 离线消息拉取（Cmd.uOfflineStart=102 / dEOFoffline=97 / dEOFonline=101）
+- 历史消息（`get/history/date`）与继续往前翻页
+- REST 会话列表（`emb/sessions/latest`）、未读数、置顶、折叠、免打扰
+- 富文本 / 复杂消息 / 合并转发的文本与 HTML 白名单渲染
+- 会话已读回执（Cmd.uReadedSession=19）
+- Token 刷新通知（Cmd.dRefreshToken=99）
+- 自定义二进制帧协议（非 protobuf）
+- 内容"加密"：按位取反 + Base64（伪加密，已还原）
+- 记住密码 / 自动登录（Base64 混淆，不是加密）
+
+### 扩展面板
+- 我的应用（`appApiUri/es/authorized`，含图标）
+- 团队任务（`taskUri`，团队群 → 分组 → 任务树）
+- 团队文档（品高云盘目录、下载、预览、在线编辑）
+- 仅 `templateCode = workGroupDefault` 的团队群显示任务/文档抽屉
+
+### 零信任分流
+- Rust 单端口代理：HTTP CONNECT / 普通 HTTP / SOCKS5
+- 白名单规则：hostExact / hostSuffix / hostRegex / CIDR / 端口
+- 上游：直连 / HTTP 代理 / SOCKS5；连接日志与统计
+- 这是本地分流代理，不是官方零信任隧道本身
+
+### 云盘
+- 列目录 / 进入 / 返回 / 刷新
+- 创建目录 / 删除 / 搜索
+- 文件下载 URL 生成
+- 文件上传（HTTP 直传，简化版）
+- 在线编辑 WS URL 构造（WPS 协同）
+
+## 目录结构
+
+```
+YX/
+├── src/
+│   ├── components/
+│   │   ├── MessageContent.vue   # 文本/图片/文件/合并转发渲染
+│   │   ├── MessageImage.vue     # 图片 blob 加载与大图
+│   │   ├── HistoryModal.vue     # 历史消息
+│   │   ├── AppPanel.vue         # 应用面板
+│   │   ├── ChatDrawer.vue       # 团队任务 / 文档抽屉
+│   │   └── TaskNode.vue         # 任务树节点
+│   ├── services/
+│   │   ├── im/
+│   │   │   ├── cmd.ts           # IM 命令码表
+│   │   │   ├── types.ts         # 消息类型/会话类型
+│   │   │   ├── protocol.ts      # 帧编解码 + 内容编解码
+│   │   │   ├── content.ts       # 消息归一/HTML 净化
+│   │   │   ├── media.ts         # 附件上传/图片获取
+│   │   │   ├── prefs.ts         # 免打扰/折叠/置顶/团队群
+│   │   │   ├── session-api.ts   # 会话列表/历史
+│   │   │   └── im-client.ts     # WebSocket 客户端
+│   │   ├── auth.ts              # OAuth2 + RSA + 配置中心
+│   │   ├── http.ts              # 统一 HTTP + 401 续期
+│   │   ├── config.ts            # 服务端点配置
+│   │   ├── credentials.ts       # 记住密码
+│   │   ├── app-client.ts        # 应用面板
+│   │   ├── task-client.ts       # 团队任务
+│   │   ├── pan-client.ts        # 团队文档
+│   │   ├── zt.ts                # 零信任配置与命令
+│   │   └── disk-client.ts       # 网盘 REST 客户端
+│   ├── stores/
+│   │   ├── auth.ts              # 登录态
+│   │   ├── im.ts                # 会话/消息/未读/上传
+│   │   └── disk.ts              # 文件列表
+│   ├── views/
+│   │   ├── LoginView.vue        # 登录页
+│   │   ├── ChatView.vue         # 聊天页
+│   │   ├── ContactsView.vue     # 通讯录
+│   │   ├── DiskView.vue         # 网盘页
+│   │   └── ZtView.vue           # 零信任分流
+│   ├── assets/styles.css
+│   ├── App.vue
+│   └── main.ts
+└── src-tauri/
+    ├── src/zt.rs                # 零信任代理（CONNECT/HTTP/SOCKS5）
+    ├── tauri.conf.json          # CSP 允许 blob/ws/wss/http/https
+    └── capabilities/default.json  # http 域名白名单 *.bingolink.biz *.yuexiu.com
+```
+
+## 开发
+
+```bash
+pnpm install
+pnpm tauri dev    # 启动开发（首次编译 Rust 较慢）
+pnpm tauri build  # 打包
+```
+
+## 协议要点
+
+帧格式（8 字节头 + payload）：
+```
+[header:1][command:1][number:1][operation:1][length:4 BE][payload: UTF-8 JSON]
+```
+- `operation=0` 表示无负载（心跳）
+- `length` 为 payload 字节数，big-endian
+- payload 是 JSON，其中 `content` 字段会被 `encryptContent`（取反 + Base64）编码
+
+详见同目录的 `../doc/云上越秀_技术规格_深挖版.md`。
+
+## 系统托盘与消息提醒
+
+- 启动后显示系统托盘图标，macOS 菜单栏在图标旁显示未读消息总数；为零时隐藏数字。点击图标恢复并聚焦主窗口。
+- 托盘未读数仅统计同时未免打扰、未折叠的会话；阅读消息、修改会话设置或退出登录后自动更新。免打扰会话的 @ 消息也不计入托盘数字。
+- macOS 收到上述会话的他人实时未读消息时播放系统 Glass 提示音，当前打开的会话同样提醒；离线补发、历史加载、重复消息及自己发送的消息不响铃，连续消息最多每秒响一次。
+- 数字展示和原生声音提醒目前面向 macOS；Windows 托盘仅显示图标及未读数量悬浮提示，尚未实现声音提醒。声音受系统音量控制。
+
+## 已知限制
+
+- 网盘上传走 HTTP 直传（原版走 WS 分片），大文件可能受限
+- 群管理、@提醒、语音/视频等高级能力未实现
+- 团队任务/文档依赖配置中心下发对应地址；部分账号可能没有权限
+- 零信任代理需要自行提供可访问内网的上游 HTTP/SOCKS5；未命中规则默认直连
+- 图片/附件下载走带 `access_token` 的 query，链接有时效性
+- 设备序列号用随机 UUID 替代（原版用 serial-number 模块）
+
+
+## 消息与文件转发
+
+- 聊天顶部点击“多选转发”，或点击单条消息旁的“转发”，勾选多条文本、图片、文件、富文本或聊天记录；可混选、全选。
+- “逐一转发”按原消息时间顺序保留内容和类型；“合并转发”发送一条可展开的聊天记录，保留原发送人、时间和附件。接收人可从已有会话、已加载通讯录及全员目录搜索并多选，支持未聊过的个人；多次搜索的选择持续保留在“已选”区域，可单独移除。个人同时展示子公司（address）与组织（orgName），缺失信息会自动查询补齐，接口未提供时明确标注。
+- 文件转发复用原附件地址，不重新上传。原附件失效或接收人没有访问权限时，转发不能恢复其可访问性。
+- 逐一和合并转发均逐个接收人发送；中途失败时，弹窗保留剩余发送任务，可重试，已提交的任务不会重复发送。开始发送后锁定接收人选择。已提交发送只代表写入 WebSocket，最终投递仍依赖服务端回执。
+- 当前范围是聊天内已有的消息与文件消息；不包含从云盘文件列表直接转发。更多历史消息可先通过“历史”加载，再回聊天区多选。
+- 协议依据：仓库技术规格列出 `COMBINE = 24`；参考项目 `repo/kit/src/emb/content.js` 描述 `{brief, from_name, to_name, forwardMsgDetailId, msgs}`。当前实现直接随消息内嵌 `msgs`。参考资料还列出 `{embHttpUri}emb/upload/forwardMsgDetail`，但标注未测，没有可核实的请求参数，因此当前没有调用此接口。内嵌合并消息与官方客户端的互通、大体积消息限制，仍需可用生产账号实测。
