@@ -247,7 +247,7 @@
               :style="{ height: `${composerHeight}px` }"
               :disabled="submitting"
               placeholder="输入消息，Enter 发送，Shift+Enter 换行；可直接粘贴或拖入图片/文件"
-              @keydown.enter.exact.prevent="!$event.isComposing && onSend()"
+              @keydown.enter.exact="onComposerEnter"
               @paste="onPaste"
             ></textarea>
             <div v-if="im.currentUploadText()" class="upload-state">
@@ -513,6 +513,13 @@ function kindLabel(kind: string): string {
     case 'serviceno': return '服务号'
     default: return ''
   }
+}
+
+function onComposerEnter(event: KeyboardEvent) {
+  // 部分输入法确认时已结束组合，但仍以 229 标记该次按键。
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  void onSend()
 }
 
 async function onSend() {
