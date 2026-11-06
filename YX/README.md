@@ -39,11 +39,12 @@
 - 这是本地分流代理，不是官方零信任隧道本身
 
 ### 云盘
-- 列目录 / 进入 / 返回 / 刷新
-- 创建目录 / 删除 / 搜索
-- 文件下载 URL 生成
-- 文件上传（HTTP 直传，简化版）
-- 在线编辑 WS URL 构造（WPS 协同）
+- 列目录 / 进入 / 返回 / 刷新（`panServerUri /v1/directories/{dirId}/items`）
+- 创建目录 / 删除 / 重命名 / 移动（`/v1/directories|files/*`，与「任务与文档 → 团队文档」同一套接口）
+- 搜索（`/openapi/file/search`）
+- 文件下载（`/openapi/stream/download`，302 到 S3 签名地址）
+- 在线编辑（`driveWpsUri /v1/api/file/wps3rd`）
+- 个人/团队/部门/公开四类盘的目录 id：`CurrentUserId` / teamId / orgId / classId
 
 ## 目录结构
 
@@ -75,7 +76,8 @@ YX/
 │   │   ├── task-client.ts       # 团队任务
 │   │   ├── pan-client.ts        # 团队文档
 │   │   ├── zt.ts                # 零信任配置与命令
-│   │   └── disk-client.ts       # 网盘 REST 客户端
+│   │   ├── disk-pan.ts          # 网盘文档接口（/pan/v1）
+│   │   └── disk-client.ts       # 网盘 REST 客户端（/openapi 元数据）
 │   ├── stores/
 │   │   ├── auth.ts              # 登录态
 │   │   ├── im.ts                # 会话/消息/未读/上传
@@ -125,7 +127,8 @@ pnpm tauri build  # 打包
 
 ## 已知限制
 
-- 网盘上传走 HTTP 直传（原版走 WS 分片），大文件可能受限
+- 网盘旧的 `/openapi/file/*` 写接口已被服务端以 `app.ex.666` 退役，目录与写操作统一走 `panServerUri /pan/v1`；上传、回收站、分享等入口尚未实现
+- 上传依赖 `zs3.yuexiu.com`，当前网络下不可解析，暂未在客户端接入
 - 群管理、@提醒、语音/视频等高级能力未实现
 - 团队任务/文档依赖配置中心下发对应地址；部分账号可能没有权限
 - 零信任代理需要自行提供可访问内网的上游 HTTP/SOCKS5；未命中规则默认直连

@@ -1,7 +1,14 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { editUrl, signDownload } from '../services/pan-client'
+import { authService } from '../services/auth'
+import { getServerPaths } from '../services/config'
+import {
+  createFolder,
+  deleteItem,
+  listDir,
+  type PanDiskItem,
+} from '../services/disk-pan'
 import {
   diskClient,
   type DiskFile,
@@ -19,13 +26,50 @@ export interface DiskDrive {
 export const useDiskStore = defineStore('disk', () => {
   const drives = ref<DiskDrive[]>([])
   const currentDrive = ref<DiskDrive | null>(null)
-  const currentPath = ref('/Private')
   const files = ref<DiskFile[]>([])
   const loading = ref(false)
   const error = ref('')
-  const history = ref<string[]>(['/Private'])
+  /** 当前浏览路径：{id: 目录 id, name: 显示名}，根目录为第一条 */
+  const trail = ref<Array<{ id: string; name: string }>>([])
   /** 团队盘和部门盘的入口列表 */
   const subEntries = ref<DiskFile[]>([])
+
+  const currentPath = computed(
+    () => trail.value.slice(1).map((x) => x.name).join(' / ') || '/',
+  )
+  /** 模板用 history.length 判断能否返回 */
+  const history = computed(() => trail.value)
+  const currentDirId = computed(() =>
+    trail.value.length ? trail.value[trail.value.length - 1]!.id : '',
+  )
+
+  function toDiskFile(it: PanDiskItem): DiskFile {
+    const name = String(it.name || '')
+    const ext =
+      it.type === 'F' && name.includes('.')
+        ? name.split('.').pop()!.toLowerCase()
+        : undefined
+    return {
+      id: String(it.id ?? ''),
+      name,
+      path: '',
+      type: it.type === 'D' ? 'D' : 'F',
+      ext,
+      size: typeof it.size === 'number' ? it.size : undefined,
+      updateTime: it.updatedAt || undefined,
+      permissions: it.permissions,
+    }
+  }
+
+  function sortFiles(list: DiskFile[]): DiskFile[] {
+    return [...list].sort((a, b) =>
+      a.type === b.type
+        ? a.name.localeCompare(b.name, 'zh')
+        : a.type === 'D'
+          ? -1
+          : 1,
+    )
+  }
 
   /** 加载各盘（system/info + public 分类） */
   async function loadDrives() {
@@ -57,7 +101,7 @@ export const useDiskStore = defineStore('disk', () => {
       }
       drives.value = list
       if (list.length && !currentDrive.value) {
-        await openDrive(list[0])
+        await openDrive(list[0]!)
       }
     } catch (e: any) {
       error.value = e.message
@@ -69,21 +113,24 @@ export const useDiskStore = defineStore('disk', () => {
   /** 切换盘 */
   async function openDrive(drive: DiskDrive) {
     currentDrive.value = drive
-    history.value = [drive.id]
     subEntries.value = []
+    error.value = ''
     if (drive.kind === 'team') {
+      trail.value = []
       await loadSub('/Team')
       return
     }
     if (drive.kind === 'org') {
+      trail.value = []
       await loadSub('/Org')
       return
     }
-    if (drive.kind === 'public') {
-      await list('/Public', 100, drive.classId)
-      return
-    }
-    await list('/Private')
+    const rootId =
+      drive.kind === 'private'
+        ? authService.getCurrentUserId()
+        : drive.classId || ''
+    trail.value = [{ id: rootId, name: drive.name }]
+    await list(rootId)
   }
 
   /** 团队盘和部门盘入口列表 */
@@ -94,7 +141,6 @@ export const useDiskStore = defineStore('disk', () => {
       const r = await (path === '/Org' ? diskClient.orgList() : diskClient.teamList())
       subEntries.value = r.files
       files.value = []
-      currentPath.value = path
     } catch (e: any) {
       error.value = e.message
       subEntries.value = []
@@ -103,23 +149,14 @@ export const useDiskStore = defineStore('disk', () => {
     }
   }
 
-  async function list(path: string = currentPath.value, limit = 100, classId?: string) {
-    if ((currentDrive.value?.kind === 'team' && path === '/Team') ||
-        (currentDrive.value?.kind === 'org' && path === '/Org')) {
-      await loadSub(path)
-      return
-    }
+  /** 列出目录 */
+  async function list(dirId: string) {
     loading.value = true
     error.value = ''
     try {
-      const drive = currentDrive.value
-      const cid = classId ?? (drive?.kind === 'public' ? drive.classId : undefined)
-      const r = await diskClient.list(path, limit, cid)
-      files.value = r.files
-      currentPath.value = path
-      if (history.value[history.value.length - 1] !== path) {
-        history.value.push(path)
-      }
+      const items = await listDir(dirId)
+      files.value = sortFiles(items.map(toDiskFile))
+      subEntries.value = []
     } catch (e: any) {
       error.value = e.message
       files.value = []
@@ -130,37 +167,47 @@ export const useDiskStore = defineStore('disk', () => {
 
   async function enter(dir: DiskFile) {
     if (dir.type !== 'D') return
-    subEntries.value = []
-    await list(dir.path)
+    trail.value.push({ id: dir.id, name: dir.name })
+    await list(dir.id)
   }
 
   async function enterTeam(team: DiskFile) {
-    subEntries.value = []
-    await list(team.path || team.id)
+    trail.value = [{ id: team.id, name: team.name }]
+    await list(team.id)
   }
 
   async function back() {
-    if (history.value.length > 1) {
-      history.value.pop()
-      const prev = history.value[history.value.length - 1]
-      await list(prev)
+    if (trail.value.length > 1) {
+      trail.value.pop()
+      await list(currentDirId.value)
+      return
+    }
+    // 团队/部门盘从具体团队返回入口列表
+    if (currentDrive.value?.kind === 'team' || currentDrive.value?.kind === 'org') {
+      trail.value = []
+      await loadSub(currentDrive.value.kind === 'team' ? '/Team' : '/Org')
     }
   }
 
   async function refresh() {
-    await list(currentPath.value)
+    if (currentDirId.value) await list(currentDirId.value)
+    else if (currentDrive.value) await openDrive(currentDrive.value)
   }
 
   async function mkdir(name: string) {
-    const base = currentPath.value === '/' ? '' : currentPath.value
-    await diskClient.mkdirs(base + '/' + name)
+    if (!currentDirId.value) throw new Error('请先进入一个目录')
+    await createFolder(currentDirId.value, name)
     await refresh()
   }
 
   async function remove(file: DiskFile) {
     error.value = ''
     try {
-      await diskClient.delete(file.id || file.path)
+      await deleteItem({
+        id: file.id,
+        name: file.name,
+        type: file.type,
+      })
     } catch (e: any) {
       error.value = '删除失败：' + (e?.message || String(e))
       throw e
@@ -179,20 +226,33 @@ export const useDiskStore = defineStore('disk', () => {
     }
   }
 
-  /** 获取服务端编辑地址后交给系统浏览器打开。 */
+  /** 打开在线编辑（WPS），失败时退回预览 */
   async function onlineEdit(file: DiskFile) {
     error.value = ''
     try {
-      await openUrl(await editUrl(file.id))
+      const paths = getServerPaths()
+      const wps = String(paths.driveWpsUri || paths.onlineDocUri || '').replace(/\/+$/, '')
+      if (!wps) throw new Error('缺少 driveWpsUri')
+      const ext = file.ext || ''
+      const url =
+        wps +
+        '/v1/api/file/wps3rd?storeSource=2&fileId=' +
+        encodeURIComponent(file.id) +
+        '&filePath=' +
+        encodeURIComponent(ext) +
+        '&access_token=' +
+        encodeURIComponent(authService.getAccessToken())
+      await openUrl(url)
     } catch (e: any) {
       error.value = '在线编辑失败：' + (e?.message || String(e))
     }
   }
 
+  /** 下载：openapi 的 stream 接口会 302 到 S3 签名地址 */
   async function download(file: DiskFile) {
     error.value = ''
     try {
-      await openUrl(await signDownload(file.id))
+      await openUrl(diskClient.getDownloadUrl(file.id))
     } catch (e: any) {
       error.value = '下载失败：' + (e?.message || String(e))
     }
@@ -202,10 +262,12 @@ export const useDiskStore = defineStore('disk', () => {
     drives,
     currentDrive,
     currentPath,
+    currentDirId,
     files,
     loading,
     error,
     history,
+    trail,
     subEntries,
     loadDrives,
     openDrive,

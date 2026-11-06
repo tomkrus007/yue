@@ -97,7 +97,7 @@
               <td>{{ f.size ? fmtSize(f.size) : '-' }}</td>
               <td>{{ fmtTime(f.updateTime) }}</td>
               <td class="ops">
-                <button v-if="f.type === 'F'" class="small" @click.stop="onOnlineEdit(f)">在线编辑</button>
+                <button v-if="canOnlineEdit(f)" class="small" @click.stop="onOnlineEdit(f)">在线编辑</button>
                 <button v-if="f.type === 'F'" class="secondary small" @click.stop="onDownload(f)">下载</button>
                 <button class="secondary small danger-btn" @click.stop="onDelete(f)">删除</button>
               </td>
@@ -143,6 +143,7 @@ import ConnectionStatus from '../components/ConnectionStatus.vue'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
 import { useDiskStore, type DiskDrive } from '../stores/disk'
+import { OFFICE_EXT } from '../services/pan-client'
 import { type DiskFile } from '../services/disk-client'
 
 const auth = useAuthStore()
@@ -194,9 +195,13 @@ async function onSearch() {
 
 async function onMkdir() {
   if (!mkdirName.value.trim()) return
-  await disk.mkdir(mkdirName.value.trim())
-  mkdirName.value = ''
-  showMkdir.value = false
+  try {
+    await disk.mkdir(mkdirName.value.trim())
+    mkdirName.value = ''
+    showMkdir.value = false
+  } catch (e: any) {
+    disk.error = '新建目录失败：' + (e?.message || String(e))
+  }
 }
 
 const pendingDelete = ref<DiskFile | null>(null)
@@ -237,6 +242,10 @@ async function onDownload(f: DiskFile) {
 
 async function onOnlineEdit(f: DiskFile) {
   await disk.onlineEdit(f)
+}
+
+function canOnlineEdit(f: DiskFile): boolean {
+  return f.type === 'F' && !!f.ext && OFFICE_EXT.has(f.ext.toLowerCase())
 }
 
 function iconFor(ext?: string): string {

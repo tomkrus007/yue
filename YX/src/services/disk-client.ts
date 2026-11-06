@@ -24,6 +24,7 @@ export interface DiskFile {
     wopiSupport: boolean
   }
   previewable?: boolean
+  permissions?: Record<string, boolean>
 }
 
 export interface DiskListResult {
@@ -49,14 +50,20 @@ export class DiskClient {
     return localStorage.getItem('diskSiteUrl') || 'https://pan.bingolink.biz/'
   }
 
-  /** 通用请求头（逆向自 home.js callAjax：Bearer token + version + displayVersion + deviceId） */
+  /** 通用请求头（逆向自 ajaxSetting.js：appId + appVersion + Pan-Version + deviceId + os） */
   private headers(extra: Record<string, string> = {}): Record<string, string> {
+    const os = /Mac|iPhone|iPad/.test(navigator.userAgent)
+      ? 'Mac'
+      : /Windows/.test(navigator.userAgent)
+        ? 'Windows'
+        : 'Linux'
     return {
       Authorization: 'Bearer ' + authService.getAccessToken(),
-      version: '5.2.4',
-      displayVersion: this.config.version,
-      ClientType: 'pc',
+      appId: this.config.diskAppId,
+      appVersion: '3.6.0',
+      'Pan-Version': '3.6.1',
       deviceId: authService.getDeviceId() || '',
+      os,
       'Accept-Language': 'zh_cn',
       'X-Requested-With': 'XMLHttpRequest',
       Accept: 'application/json',
@@ -226,16 +233,13 @@ export class DiskClient {
     return this.request('POST', '/file/copy', {}, { from, to })
   }
 
-  /** 删除 */
-  delete(files: string | string[]): Promise<any> {
-    const f = Array.isArray(files) ? files.join(',') : files
-    return this.request('POST', '/file/delete', {}, { files: f })
-  }
-
   /** 搜索 */
   search(keyword: string): Promise<DiskFile[]> {
-    return this.request<any>('GET', '/file/search', { keyword }).then((r) =>
-      (r.files || r.items || r || []).map(this.normalizeFile),
+    return this.request<any>('GET', '/file/search', {
+      keyword,
+      bounds: JSON.stringify({ offset: 0, limit: 100 }),
+    }).then((r) =>
+      (r.rows || r.files || r.items || []).map(this.normalizeFile),
     )
   }
 
@@ -285,16 +289,15 @@ export class DiskClient {
    * 复刻版简化：直连 stream 端点
    */
   getDownloadUrl(fileId: string): string {
-    const streamUrl =
-      localStorage.getItem('diskStreamUrl') ||
-      this.siteUrl.replace(/\/$/, '') + '/stream'
-    return (
-      streamUrl +
-      '/v1/file/download?fileId=' +
-      encodeURIComponent(fileId) +
-      '&access_token=' +
-      encodeURIComponent(authService.getAccessToken())
-    )
+    const params = new URLSearchParams({
+      fileId,
+      access_token: authService.getAccessToken(),
+      appId: this.config.diskAppId,
+      appVersion: '3.6.0',
+      deviceId: authService.getDeviceId() || '',
+      os: /Mac|iPhone|iPad/.test(navigator.userAgent) ? 'Mac' : 'Windows',
+    })
+    return this.apiBase + '/stream/download?' + params.toString()
   }
 
   /**
@@ -336,23 +339,33 @@ export class DiskClient {
 
   /* ============ 工具 ============ */
 
-  private normalizeFile = (r: any): DiskFile => ({
-    id: String(r.id ?? r.fileId ?? ''),
-    name: r.name || r.fileName || '',
-    path: r.path || r.filepath || '',
-    type: (r.type === 'D' || r.isDirectory ? 'D' : 'F') as 'F' | 'D',
-    ext: r.ext || r.extension,
-    size: r.actualSize ?? r.size,
-    parentId: r.parentId || r.parent_id,
-    classId: r.classId,
-    createTime: r.createTime || r.create_time || r.joinTime,
-    updateTime: r.modifiedTime || r.updateTime || r.update_time,
-    preview:
-      r.preview != null
-        ? { available: !!r.preview.available, wopiSupport: !!r.preview.wopiSupport }
-        : undefined,
-    previewable: !!r.previewable || !!(r.permissions && r.permissions.previewable),
-  })
+  private normalizeFile = (r: any): DiskFile => {
+    const modified = r.modifiedTime || r.updateTime || r.update_time
+    return {
+      id: String(r.id ?? r.fileId ?? ''),
+      name: r.name || r.fileName || '',
+      path: r.path || r.filepath || '',
+      type: (r.type === 'D' || r.isDirectory ? 'D' : 'F') as 'F' | 'D',
+      ext: r.ext || r.extension,
+      size: r.actualSize ?? r.size,
+      parentId: r.parentId || r.parent_id,
+      classId: r.classId,
+      createTime: r.createTime || r.create_time || r.joinTime,
+      // openapi 搜索返回 "YYYY-MM-DD hh:mm" 字符串，pan 接口返回毫秒时间戳
+      updateTime:
+        typeof modified === 'number'
+          ? modified
+          : modified
+            ? Date.parse(String(modified).replace(' ', 'T'))
+            : undefined,
+      preview:
+        r.preview != null
+          ? { available: !!r.preview.available, wopiSupport: !!r.preview.wopiSupport }
+          : undefined,
+      previewable: !!r.previewable || !!(r.permissions && r.permissions.previewable),
+      permissions: r.permissions,
+    }
+  }
 }
 
 export const diskClient = new DiskClient()

@@ -26,6 +26,12 @@
 - 应用图标源文件为 `YX/app-icon.svg`，通过 `pnpm tauri icon` 导出 PNG、ICNS、ICO；系统托盘使用默认窗口图标，也应同步更新。
 - macOS 开发模式将 ICNS 嵌入可执行文件。仅更新图片、运行 `cargo check` 或前端构建不足以确认生效；`build.rs` 必须追踪 `icons` 目录，并通过 `cargo build` 验证新 ICNS 已嵌入程序。
 
+## 云盘写操作必须走 panServerUri（`/pan/v1`）
+
+- **现象**：`/openapi/file/delete`、`/file/mkdirs`、`/file/move`、`/file/copy` 返回 `400 app.ex.666`「您当前使用的客户端版本需要升级」，而 `file/list`、`file/info` 等读接口正常。
+- **原因**：旧 openapi 写接口已退役；改 `appVersion`/`Pan-Version`/`appId`/UA/IP 等请求头均无效，不是参数问题。
+- **做法**：目录与写操作改走 `panServerUri`（`https://pan.bingolink.biz/pan`）的 `/v1/directories/*`、`/v1/files/*`；`access_token` 放 query。个人/团队/部门/公开文档的 `dirId` 分别是 `CurrentUserId` / teamId / orgId / classId。该接口与「群聊 → 任务与文档 → 团队文档」相同。
+
 ## 执行命令前固定工作目录
 
 - 仓库根目录与 `YX/` 的相对路径不可混用：在 `YX/` 执行命令时，文件路径应为 `src/...`、`scripts/...`，不要再加 `YX/` 前缀。
