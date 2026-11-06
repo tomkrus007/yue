@@ -130,7 +130,7 @@ pnpm tauri build  # 打包
 ## 已知限制
 
 - 网盘旧的 `/openapi/file/*` 写接口已被服务端以 `app.ex.666` 退役，目录与写操作统一走 `panServerUri /pan/v1`
-- 上传走对象存储 `store/putFile` + `v2/{id}/share/document`（与聊天附件保存到云盘一致）；尚未实现上传进度条以外的断点续传
+- 上传走对象存储 `store/putFile` + `v2/{id}/share/document`（与聊天附件保存到云盘一致），写入文档服务；盘根会合并 `/openapi/file/list` 展示历史文件
 - 回收站、分享、文件属性/版本/标签等入口尚未实现
 - 群管理、@提醒、语音/视频等高级能力未实现
 - 团队任务/文档依赖配置中心下发对应地址；部分账号可能没有权限
