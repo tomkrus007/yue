@@ -29,7 +29,7 @@
 ### 扩展面板
 - 我的应用（`appApiUri/es/authorized`，含图标）
 - 团队任务（`taskUri`，团队群 → 分组 → 任务树）
-- 团队文档（品高云盘目录、上传、下载、预览、在线编辑）
+- 团队文档（品高云盘目录、上传、下载、预览、在线编辑、删除）
 - 仅 `templateCode = workGroupDefault` 的团队群显示任务/文档抽屉
 
 ### 零信任分流
@@ -45,6 +45,7 @@
 - 搜索（`/openapi/file/search`）
 - 文件下载（`/openapi/stream/download`，302 到 S3 签名地址）
 - 在线编辑（`driveWpsUri /v1/api/file/wps3rd`）
+- 群文档入口：把聊天群/团队群的文档空间聚合成一个盘，进入后按群 id 浏览
 - 个人/团队/部门/公开四类盘的目录 id：`CurrentUserId` / teamId / orgId / classId
 
 ## 目录结构

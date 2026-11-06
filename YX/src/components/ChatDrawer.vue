@@ -92,16 +92,33 @@
               : [fmtSize(item.size), panDate(item.updatedAt)].filter(Boolean).join(' · ')
           }}
         </div>
-        <div v-if="item.type !== 'D'" class="pan-acts" @click.stop>
-          <button class="pan-btn" @click="panAction(item, 'download')">下载</button>
-          <button
-            v-if="isOffice(item.name)"
-            class="pan-btn"
-            @click="panAction(item, 'edit')"
-          >
-            在线编辑
-          </button>
-          <button class="pan-btn" @click="panAction(item, 'preview')">浏览</button>
+        <div class="pan-acts" @click.stop>
+          <template v-if="pendingDeleteId === item.id">
+            <button class="pan-btn danger" :disabled="deleting" @click="confirmDelete(item)">
+              {{ deleting ? '删除中…' : '确认删除' }}
+            </button>
+            <button class="pan-btn" :disabled="deleting" @click="pendingDeleteId = ''">取消</button>
+          </template>
+          <template v-else>
+            <template v-if="item.type !== 'D'">
+              <button class="pan-btn" @click="panAction(item, 'download')">下载</button>
+              <button
+                v-if="isOffice(item.name)"
+                class="pan-btn"
+                @click="panAction(item, 'edit')"
+              >
+                在线编辑
+              </button>
+              <button class="pan-btn" @click="panAction(item, 'preview')">浏览</button>
+            </template>
+            <button
+              v-if="item.permissions?.deleteable !== false"
+              class="pan-btn danger"
+              @click="pendingDeleteId = item.id"
+            >
+              删除
+            </button>
+          </template>
         </div>
       </div>
     </div>
@@ -125,6 +142,7 @@ import {
   type PanItem,
 } from '../services/pan-client'
 import { loadTeamTasks, type TaskGroup } from '../services/task-client'
+import { deleteItem } from '../services/disk-pan'
 import { useUploadStore } from '../stores/uploads'
 import TaskNode from './TaskNode.vue'
 
@@ -143,6 +161,8 @@ const panError = ref('')
 const uploadInput = ref<HTMLInputElement | null>(null)
 const uploads = useUploadStore()
 const dragging = ref(false)
+const pendingDeleteId = ref('')
+const deleting = ref(false)
 const foot = ref('团队任务 · 只读')
 
 const taskCount = computed(() =>
@@ -157,6 +177,7 @@ function reset() {
   tasksError.value = ''
   panItems.value = []
   panError.value = ''
+  pendingDeleteId.value = ''
   panStack.value = props.session
     ? [{ id: props.session.id, name: '团队文档' }]
     : []
@@ -194,6 +215,7 @@ async function loadPanDir() {
 
 function switchTab(next: 'task' | 'doc') {
   tab.value = next
+  pendingDeleteId.value = ''
   foot.value = next === 'doc' ? '文档来自品高云盘' : '团队任务 · 只读'
   if (next === 'task' && !taskGroups.value.length && !tasksError.value) {
     loadTasks()
@@ -203,12 +225,14 @@ function switchTab(next: 'task' | 'doc') {
 }
 
 function panEnter(item: PanItem) {
+  pendingDeleteId.value = ''
   panStack.value.push({ id: item.id, name: item.name })
   loadPanDir()
 }
 
 function panBack() {
   if (panStack.value.length <= 1) return
+  pendingDeleteId.value = ''
   panStack.value.pop()
   loadPanDir()
 }
@@ -272,6 +296,26 @@ async function panAction(item: PanItem, mode: 'download' | 'edit' | 'preview') {
     foot.value =
       (mode === 'edit' ? '在线编辑失败：' : mode === 'download' ? '下载失败：' : '浏览失败：') +
       (e?.message || e)
+  }
+}
+
+async function confirmDelete(item: PanItem) {
+  if (deleting.value) return
+  deleting.value = true
+  panError.value = ''
+  try {
+    await deleteItem({
+      id: item.id,
+      name: item.name,
+      type: item.type === 'D' ? 'D' : 'F',
+    })
+    pendingDeleteId.value = ''
+    foot.value = '已删除：' + item.name
+    await loadPanDir()
+  } catch (e: any) {
+    panError.value = '删除失败：' + (e?.message || e)
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -407,6 +451,7 @@ watch(
   border-radius: 4px;
 }
 .pan-btn:hover { background: #e3e7eb; }
+.pan-btn.danger { color: var(--danger); }
 .drawer-foot {
   padding: 8px 12px;
   border-top: 1px solid var(--border);

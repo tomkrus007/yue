@@ -14,6 +14,7 @@ export interface PanItem {
   type: 'D' | 'F' | string
   size?: number
   updatedAt?: number
+  permissions?: Record<string, boolean>
 }
 
 export const OFFICE_EXT = new Set([
@@ -50,6 +51,7 @@ export async function listDir(dirId: string): Promise<PanItem[]> {
       type: it.type === 'D' ? 'D' : 'F',
       size: Number(it.size) || 0,
       updatedAt: Number(it.updatedAt) || 0,
+      permissions: it.permissions || undefined,
     }))
     .sort((a: PanItem, b: PanItem) =>
       a.type === b.type
