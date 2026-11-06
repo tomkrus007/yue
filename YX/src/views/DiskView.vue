@@ -1,5 +1,5 @@
 <template>
-  <div class="disk-layout">
+  <div class="disk-layout" @dragover.prevent @drop.prevent>
     <nav class="side-nav">
       <div class="nav-avatar" :title="auth.user?.name">
         {{ (auth.user?.name || '?').slice(0, 1) }}
@@ -43,18 +43,22 @@
       </ul>
     </aside>
 
-    <main class="disk-main">
+    <main
+      class="disk-main"
+      @dragenter.prevent="dragging = true"
+      @dragover.prevent="dragging = true"
+      @dragleave="onDragLeave"
+      @drop.prevent="onDrop"
+    >
       <header class="disk-header">
         <div class="path-bar">
           <button class="secondary small" @click="disk.back()" :disabled="disk.history.length <= 1">← 返回</button>
           <button class="secondary small" @click="disk.refresh()">刷新</button>
           <button class="secondary small" @click="showMkdir = !showMkdir">+ 新建目录</button>
-          <button class="small" :disabled="uploading || !disk.currentDirId" @click="pickUpload">
-            {{ uploading ? '上传中…' : '上传' }}
-          </button>
+          <button class="small" :disabled="!disk.currentDirId" @click="pickUpload">上传</button>
           <input ref="uploadInput" type="file" multiple hidden @change="onUploadChange" />
           <div class="path">📁 {{ disk.currentDrive?.name }} · {{ disk.currentPath }}</div>
-          <span v-if="uploadNote" class="upload-note">{{ uploadNote }}</span>
+          <span v-if="activeUploads" class="upload-note">{{ activeUploads }} 个上传中</span>
         </div>
         <div class="search-bar">
           <input v-model="keyword" placeholder="搜索文件" @keydown.enter="onSearch" />
@@ -113,6 +117,7 @@
           </tbody>
         </table>
       </div>
+      <div v-if="dragging" class="drop-mask">松开鼠标上传到当前目录</div>
     </main>
 
     <!-- macOS WebView 不支持原生 confirm()，删除确认必须在应用内完成 -->
@@ -141,7 +146,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppPanel from '../components/AppPanel.vue'
 import ConnectionStatus from '../components/ConnectionStatus.vue'
@@ -149,7 +154,7 @@ import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
 import { useDiskStore, type DiskDrive } from '../stores/disk'
 import { OFFICE_EXT } from '../services/pan-client'
-import { uploadFileToDir } from '../services/disk-upload'
+import { useUploadStore } from '../stores/uploads'
 import { type DiskFile } from '../services/disk-client'
 
 const auth = useAuthStore()
@@ -161,8 +166,11 @@ const keyword = ref('')
 const showMkdir = ref(false)
 const mkdirName = ref('')
 const uploadInput = ref<HTMLInputElement | null>(null)
-const uploading = ref(false)
-const uploadNote = ref('')
+const uploads = useUploadStore()
+const dragging = ref(false)
+const activeUploads = computed(
+  () => uploads.tasks.filter((t) => ['queued', 'uploading', 'saving'].includes(t.status)).length,
+)
 
 onMounted(async () => {
   if (!auth.isLoggedIn) {
@@ -214,38 +222,38 @@ async function onMkdir() {
 }
 
 function pickUpload() {
-  if (!uploading.value) uploadInput.value?.click()
+  uploadInput.value?.click()
 }
 
-async function onUploadChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const files = Array.from(input.files || [])
-  input.value = ''
+function enqueueFiles(files: File[]) {
   if (!files.length) return
   const dirId = disk.currentDirId
   if (!dirId) {
     disk.error = '请先进入一个目录'
     return
   }
-  uploading.value = true
   disk.error = ''
-  let done = 0
-  try {
-    for (const file of files) {
-      uploadNote.value = `上传中 ${done + 1}/${files.length}：${file.name}`
-      await uploadFileToDir(file, dirId, (pct) => {
-        uploadNote.value = `上传中 ${done + 1}/${files.length}：${file.name} ${pct}%`
-      })
-      done += 1
-    }
-    uploadNote.value = `已上传 ${done} 个文件`
-    await disk.refresh()
-  } catch (e: any) {
-    disk.error = '上传失败：' + (e?.message || String(e))
-    uploadNote.value = done ? `已上传 ${done}/${files.length}` : ''
-  } finally {
-    uploading.value = false
-  }
+  uploads.enqueue(files, dirId, `${disk.currentDrive?.name || '云盘'} · ${disk.currentPath}`, () => {
+    disk.refresh()
+  })
+}
+
+function onUploadChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''
+  enqueueFiles(files)
+}
+
+function onDragLeave(event: DragEvent) {
+  const target = event.currentTarget as HTMLElement | null
+  const related = event.relatedTarget as Node | null
+  if (!target || !related || !target.contains(related)) dragging.value = false
+}
+
+function onDrop(event: DragEvent) {
+  dragging.value = false
+  enqueueFiles(Array.from(event.dataTransfer?.files || []))
 }
 
 const pendingDelete = ref<DiskFile | null>(null)
@@ -356,7 +364,7 @@ function fmtTime(t?: number): string {
 .drive-list li.empty { color: var(--text-muted); cursor: default; justify-content: center; }
 .drive-icon { font-size: 16px; }
 
-.disk-main { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+.disk-main { position: relative; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
 .disk-header {
   padding: 12px 20px; background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -365,6 +373,13 @@ function fmtTime(t?: number): string {
 .path-bar { display: flex; align-items: center; gap: 8px; }
 .path { flex: 1; color: var(--text-muted); font-size: 13px; }
 .upload-note { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.drop-mask {
+  position: absolute; inset: 8px; z-index: 20;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px dashed var(--primary); border-radius: 10px;
+  background: rgba(242, 136, 35, 0.08); color: var(--primary);
+  font-size: 14px; pointer-events: none;
+}
 .search-bar { display: flex; gap: 8px; }
 .search-bar input { flex: 1; }
 .small { padding: 5px 12px; font-size: 12px; }

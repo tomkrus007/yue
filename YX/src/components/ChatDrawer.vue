@@ -1,5 +1,5 @@
 <template>
-  <aside class="drawer">
+  <aside class="drawer" @dragover.prevent @drop.prevent>
     <header class="drawer-head">
       <div class="drawer-title" :title="session?.name">{{ session?.name }}</div>
       <button class="secondary small" @click="$emit('close')">收起</button>
@@ -46,7 +46,15 @@
     </div>
 
     <!-- 文档 -->
-    <div v-else class="drawer-body">
+    <div
+      v-else
+      class="drawer-body"
+      @dragenter.prevent="dragging = true"
+      @dragover.prevent="dragging = true"
+      @dragleave="onDragLeave"
+      @drop.prevent="onDrop"
+    >
+      <div v-if="dragging" class="drop-mask">松开鼠标上传到「{{ crumb }}」</div>
       <div class="pan-bar">
         <button
           class="secondary small"
@@ -58,9 +66,7 @@
         <div class="pan-crumb" :title="crumb">
           {{ crumb }}
         </div>
-        <button class="secondary small" :disabled="uploading || !panStack.length" @click="pickUpload">
-          {{ uploading ? '上传中…' : '上传' }}
-        </button>
+        <button class="secondary small" :disabled="!panStack.length" @click="pickUpload">上传</button>
         <input ref="uploadInput" type="file" multiple hidden @change="onUploadChange" />
       </div>
 
@@ -119,7 +125,7 @@ import {
   type PanItem,
 } from '../services/pan-client'
 import { loadTeamTasks, type TaskGroup } from '../services/task-client'
-import { uploadFileToDir } from '../services/disk-upload'
+import { useUploadStore } from '../stores/uploads'
 import TaskNode from './TaskNode.vue'
 
 const props = defineProps<{ session: ChatSession | null }>()
@@ -135,7 +141,8 @@ const panItems = ref<PanItem[]>([])
 const panLoading = ref(false)
 const panError = ref('')
 const uploadInput = ref<HTMLInputElement | null>(null)
-const uploading = ref(false)
+const uploads = useUploadStore()
+const dragging = ref(false)
 const foot = ref('团队任务 · 只读')
 
 const taskCount = computed(() =>
@@ -207,34 +214,34 @@ function panBack() {
 }
 
 function pickUpload() {
-  if (!uploading.value) uploadInput.value?.click()
+  uploadInput.value?.click()
 }
 
-async function onUploadChange(event: Event) {
+function enqueueFiles(files: File[]) {
+  const top = panStack.value[panStack.value.length - 1]
+  if (!files.length || !top) return
+  panError.value = ''
+  uploads.enqueue(files, top.id, `团队文档 · ${crumb.value}`, () => {
+    loadPanDir()
+  })
+}
+
+function onUploadChange(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files || [])
   input.value = ''
-  const top = panStack.value[panStack.value.length - 1]
-  if (!files.length || !top) return
-  uploading.value = true
-  panError.value = ''
-  let done = 0
-  try {
-    for (const file of files) {
-      foot.value = `上传中 ${done + 1}/${files.length}：${file.name}`
-      await uploadFileToDir(file, top.id, (pct) => {
-        foot.value = `上传中 ${done + 1}/${files.length}：${file.name} ${pct}%`
-      })
-      done += 1
-    }
-    foot.value = `已上传 ${done} 个文件`
-    await loadPanDir()
-  } catch (e: any) {
-    panError.value = '上传失败：' + (e?.message || e)
-    foot.value = done ? `已上传 ${done}/${files.length}` : '文档来自品高云盘'
-  } finally {
-    uploading.value = false
-  }
+  enqueueFiles(files)
+}
+
+function onDragLeave(event: DragEvent) {
+  const target = event.currentTarget as HTMLElement | null
+  const related = event.relatedTarget as Node | null
+  if (!target || !related || !target.contains(related)) dragging.value = false
+}
+
+function onDrop(event: DragEvent) {
+  dragging.value = false
+  enqueueFiles(Array.from(event.dataTransfer?.files || []))
 }
 
 function isOffice(name: string): boolean {
@@ -327,7 +334,14 @@ watch(
   border-radius: 8px;
   margin-left: 4px;
 }
-.drawer-body { flex: 1; overflow-y: auto; padding: 8px 10px; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 8px 10px; position: relative; }
+.drop-mask {
+  position: absolute; inset: 6px; z-index: 20;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px dashed var(--primary); border-radius: 10px;
+  background: rgba(242, 136, 35, 0.08); color: var(--primary);
+  font-size: 12px; pointer-events: none;
+}
 .d-empty {
   text-align: center;
   color: var(--text-muted);

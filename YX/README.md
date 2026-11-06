@@ -41,7 +41,7 @@
 ### 云盘
 - 列目录 / 进入 / 返回 / 刷新（`panServerUri /v1/directories/{dirId}/items`）
 - 创建目录 / 删除 / 重命名 / 移动（`/v1/directories|files/*`，与「任务与文档 → 团队文档」同一套接口）
-- 上传文件（`store/putFile` + `v2/{id}/share/document`）
+- 上传文件（选择或拖拽；浮动窗口显示进度，失败可点击重试）
 - 搜索（`/openapi/file/search`）
 - 文件下载（`/openapi/stream/download`，302 到 S3 签名地址）
 - 在线编辑（`driveWpsUri /v1/api/file/wps3rd`）
@@ -58,6 +58,7 @@ YX/
 │   │   ├── HistoryModal.vue     # 历史消息
 │   │   ├── AppPanel.vue         # 应用面板
 │   │   ├── ChatDrawer.vue       # 团队任务 / 文档抽屉
+│   │   ├── UploadProgress.vue   # 上传进度浮窗
 │   │   └── TaskNode.vue         # 任务树节点
 │   ├── services/
 │   │   ├── im/
@@ -83,6 +84,7 @@ YX/
 │   ├── stores/
 │   │   ├── auth.ts              # 登录态
 │   │   ├── im.ts                # 会话/消息/未读/上传
+│   │   ├── uploads.ts           # 上传队列/进度/重试
 │   │   └── disk.ts              # 文件列表
 │   ├── views/
 │   │   ├── LoginView.vue        # 登录页

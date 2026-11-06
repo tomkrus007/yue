@@ -1,10 +1,12 @@
 <template>
   <router-view />
+  <UploadProgress />
 </template>
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useAuthStore } from './stores/auth'
+import UploadProgress from './components/UploadProgress.vue'
 
 const auth = useAuthStore()
 
