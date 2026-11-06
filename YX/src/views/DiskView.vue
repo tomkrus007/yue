@@ -109,12 +109,34 @@
         </table>
       </div>
     </main>
+
+    <!-- macOS WebView 不支持原生 confirm()，删除确认必须在应用内完成 -->
+    <div v-if="pendingDelete" class="confirm-mask" @click.self="closeDelete">
+      <section
+        class="confirm-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-title"
+        tabindex="-1"
+        @keydown.esc="closeDelete"
+      >
+        <h3 id="delete-title">删除{{ pendingDelete.type === 'D' ? '目录' : '文件' }}</h3>
+        <p>确定删除「{{ pendingDelete.name }}」？删除后该条目会从当前目录移除。</p>
+        <p v-if="deleteError" class="confirm-error" role="alert">{{ deleteError }}</p>
+        <footer>
+          <button class="secondary small" :disabled="deleting" @click="closeDelete">取消</button>
+          <button ref="confirmButton" class="secondary small danger-btn" :disabled="deleting" @click="confirmDelete">
+            {{ deleting ? '删除中…' : '确认删除' }}
+          </button>
+        </footer>
+      </section>
+    </div>
     <AppPanel v-model:open="appOpen" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppPanel from '../components/AppPanel.vue'
 import ConnectionStatus from '../components/ConnectionStatus.vue'
@@ -177,9 +199,36 @@ async function onMkdir() {
   showMkdir.value = false
 }
 
-async function onDelete(f: DiskFile) {
-  if (!confirm(`确定删除「${f.name}」？`)) return
-  await disk.remove(f)
+const pendingDelete = ref<DiskFile | null>(null)
+const deleting = ref(false)
+const deleteError = ref('')
+const confirmButton = ref<HTMLButtonElement | null>(null)
+
+function onDelete(f: DiskFile) {
+  deleteError.value = ''
+  pendingDelete.value = f
+  nextTick(() => confirmButton.value?.focus())
+}
+
+function closeDelete() {
+  if (deleting.value) return
+  pendingDelete.value = null
+  deleteError.value = ''
+}
+
+async function confirmDelete() {
+  const f = pendingDelete.value
+  if (!f || deleting.value) return
+  deleting.value = true
+  deleteError.value = ''
+  try {
+    await disk.remove(f)
+    pendingDelete.value = null
+  } catch (e: any) {
+    deleteError.value = e?.message || String(e)
+  } finally {
+    deleting.value = false
+  }
 }
 
 async function onDownload(f: DiskFile) {
@@ -287,4 +336,19 @@ tbody td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px
 tbody tr:hover { background: #f7f8f9; }
 .name .f-icon { margin-right: 6px; }
 .ops { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.confirm-mask {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex; align-items: center; justify-content: center;
+}
+.confirm-dialog {
+  width: min(380px, 90vw); padding: 20px;
+  background: var(--panel); border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.25);
+}
+.confirm-dialog h3 { font-size: 15px; margin-bottom: 10px; }
+.confirm-dialog p { font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+.confirm-dialog .confirm-error { margin-top: 8px; color: var(--danger); }
+.confirm-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 </style>

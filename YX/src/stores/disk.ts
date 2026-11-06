@@ -158,7 +158,13 @@ export const useDiskStore = defineStore('disk', () => {
   }
 
   async function remove(file: DiskFile) {
-    await diskClient.delete(file.id || file.path)
+    error.value = ''
+    try {
+      await diskClient.delete(file.id || file.path)
+    } catch (e: any) {
+      error.value = '删除失败：' + (e?.message || String(e))
+      throw e
+    }
     await refresh()
   }
 
