@@ -2,7 +2,7 @@
   <div class="msg-content">
     <!-- 合并转发：可展开的聊天记录 -->
     <details v-if="msgType === MsgType.COMBINE" class="combine">
-      <summary>{{ combineText }}</summary>
+      <summary>{{ replaceEmojiAliases(combineText) }}</summary>
       <div class="combine-body">
         <div v-if="!rows.length" class="hint">（明细未随消息下发）</div>
         <div v-for="(row, i) in rows" :key="i" class="combine-row">
@@ -29,7 +29,7 @@
             :class="{ html: looksLikeHtml(seg.text), ph: isPlaceholder(seg.text, segments.length) }"
           >
             <span v-if="looksLikeHtml(seg.text)" v-html="sanitizeHtml(seg.text)"></span>
-            <template v-else>{{ seg.text }}</template>
+            <template v-else>{{ replaceEmojiAliases(seg.text) }}</template>
           </span>
           <MessageImage
             v-else-if="seg.type === 'image'"
@@ -54,6 +54,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { replaceEmojiAliases } from '../services/im/emoji'
 import { MsgType } from '../services/im/types'
 import {
   combineDetails,
@@ -85,7 +86,7 @@ const rows = computed(() => combineDetails(props.content))
 const combineText = computed(() => combineToPlain(props.content))
 
 function isPlaceholder(text: string, total: number): boolean {
-  return total === 1 && /^\[[^\]]*\]$/.test(text)
+  return total === 1 && /^\[[^\]]*\]$/.test(replaceEmojiAliases(text))
 }
 
 function download(seg: ImageMeta) {

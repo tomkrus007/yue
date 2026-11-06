@@ -176,7 +176,7 @@ export async function loadMuteStates(): Promise<Map<string, boolean>> {
     for (const g of normalizeList(d)) {
       if (!g || !g.groupId) continue
       // 免打扰是 msgReceiveType === 1；silentStatus 是「全员禁言」，两回事
-      if (g.msgReceiveType === 1) muted.set(String(g.groupId), true)
+      if (Number(g.msgReceiveType) === 1) muted.set(String(g.groupId), true)
     }
   } catch {
     /* 忽略 */
@@ -185,7 +185,7 @@ export async function loadMuteStates(): Promise<Map<string, boolean>> {
     const d = await httpJson<any>(base + '/v1/nodisturbing/list')
     for (const it of normalizeList(d)) {
       if (!it || !it.instanceId) continue
-      if (it.msgReceiveMode === undefined || it.msgReceiveMode !== 0) {
+      if (it.msgReceiveMode === undefined || Number(it.msgReceiveMode) !== 0) {
         muted.set(String(it.instanceId), true)
       }
     }
@@ -196,7 +196,7 @@ export async function loadMuteStates(): Promise<Map<string, boolean>> {
     const d = await httpJson<any>(base + '/v1/organizations/list')
     for (const o of normalizeList(d)) {
       const id = o && (o.orgId || o.id)
-      if (id && o.msgReceiveType) muted.set(String(id), true)
+      if (id && Number(o.msgReceiveType) === 1) muted.set(String(id), true)
     }
   } catch {
     /* 忽略 */
@@ -207,7 +207,7 @@ export async function loadMuteStates(): Promise<Map<string, boolean>> {
       const d = await httpJson<any>(sn + '/v2/servicenos/authorized')
       for (const a of normalizeList(d)) {
         if (!a || !a.accountId) continue
-        if (a.msgReceiveType) muted.set(String(a.accountId), true)
+        if (Number(a.msgReceiveType) === 1) muted.set(String(a.accountId), true)
       }
     }
   } catch {

@@ -6,6 +6,7 @@
  *   24 COMBINE  → {brief, msgs:[...]}
  */
 import { MsgType } from './types'
+import { replaceEmojiAliases } from './emoji'
 
 export interface ImageMeta {
   downloadUrl: string
@@ -282,7 +283,7 @@ export function sanitizeHtml(html: string): string {
   const walk = (node: Node, parent: HTMLElement) => {
     for (const child of Array.from(node.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) {
-        parent.appendChild(document.createTextNode(child.nodeValue || ''))
+        parent.appendChild(document.createTextNode(replaceEmojiAliases(child.nodeValue || '')))
         continue
       }
       if (child.nodeType !== Node.ELEMENT_NODE) continue

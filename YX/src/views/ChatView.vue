@@ -164,7 +164,7 @@
           @drop.prevent="onDrop"
         >
           <div
-            v-for="m in im.currentMessages"
+            v-for="m in visibleMessages"
             :key="m.msg_id"
             :class="['msg', im.isMine(m) ? 'mine' : 'theirs']"
           >
@@ -173,8 +173,8 @@
               <div class="msg-name">
                 {{ im.isMine(m) ? '我' : m.from_name || '未知' }}
                 · {{ fmtMsgTime(m.send_time) }}
-                <button v-if="!selecting && canForward(m.msg_type)" class="small secondary" @click="selectOne(m.msg_id)">转发</button>
               </div>
+              <div class="bubble-row">
               <div class="bubble">
                 <MessageContent
                   :msg-type="Number(m.msg_type)"
@@ -182,10 +182,16 @@
                   @preview="openPreview"
                 />
               </div>
+              <MessageToolbar v-if="!selecting" :key="composerKey + m.msg_id" :reaction="messageState[m.msg_id]?.reaction" :favorite="!!messageState[m.msg_id]?.favorite" :forwardable="canForward(m.msg_type)" @action="messageAction(m, $event)" @react="setReaction(m.msg_id, $event)" />
+              </div>
+              <div v-if="messageState[m.msg_id]?.reaction || messageState[m.msg_id]?.favorite" class="message-marks">
+                <button v-if="messageState[m.msg_id]?.reaction" title="取消表情回应（本机）" @click="setReaction(m.msg_id, messageState[m.msg_id]!.reaction!)">{{ messageState[m.msg_id]?.reaction }}</button>
+                <span v-if="messageState[m.msg_id]?.favorite" title="已收藏到本机">☆ 已收藏</span>
+              </div>
             </div>
           </div>
 
-          <div v-if="im.currentMessages.length === 0" class="empty-main">
+          <div v-if="visibleMessages.length === 0" class="empty-main">
             <div>
               <div>还没有消息</div>
               <button
@@ -300,11 +306,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useAuthStore } from '../stores/auth'
 import { authService } from '../services/auth'
 import { useImStore } from '../stores/im'
 import type { ContactEntry } from '../services/contact-client'
-import { fmtMsgTime, fmtSessionTime } from '../services/im/content'
+import { fmtMsgTime, fmtSessionTime, toPlainText, stripHtml } from '../services/im/content'
 import {
   normalizeClipboardImage,
 } from '../services/im/media'
@@ -316,6 +324,7 @@ import HistoryModal from '../components/HistoryModal.vue'
 import AppPanel from '../components/AppPanel.vue'
 import ConnectionStatus from '../components/ConnectionStatus.vue'
 import ChatDrawer from '../components/ChatDrawer.vue'
+import MessageToolbar from '../components/MessageToolbar.vue'
 
 const auth = useAuthStore()
 const im = useImStore()
@@ -327,11 +336,11 @@ const selectedIds = ref<string[]>([])
 const forwardOpen = ref(false)
 const forwardCombine = ref(false)
 const forwardMessages = ref<ImMessage[]>([])
-const selectedMessages = computed(() => im.currentMessages.filter(m => selectedIds.value.includes(m.msg_id) && canForward(m.msg_type)))
+const selectedMessages = computed(() => visibleMessages.value.filter(m => selectedIds.value.includes(m.msg_id) && canForward(m.msg_type)))
 function canForward(type: number) { return [1, 2, 3, 24, 25, 30, 96].includes(Number(type)) }
 function toggleSelection() { selecting.value = !selecting.value; selectedIds.value = [] }
 function selectOne(id: string) { selecting.value = true; selectedIds.value = [id] }
-function selectAll() { selectedIds.value = im.currentMessages.filter(m => canForward(m.msg_type)).map(m => m.msg_id) }
+function selectAll() { selectedIds.value = visibleMessages.value.filter(m => canForward(m.msg_type)).map(m => m.msg_id) }
 function openForward(combine: boolean) {
   forwardCombine.value = combine
   forwardMessages.value = [...selectedMessages.value]
@@ -339,6 +348,40 @@ function openForward(combine: boolean) {
 }
 function finishForward() { forwardOpen.value = false; selecting.value = false; selectedIds.value = [] }
 watch(() => im.currentSessionId, () => { selecting.value = false; selectedIds.value = [] })
+interface MessageState { reaction?: string; favorite?: boolean; deleted?: boolean }
+const messageStateKey = `yl.message-actions.${authService.getCurrentUserId()}`
+function readMessageState(): Record<string, MessageState> {
+  try { return JSON.parse(localStorage.getItem(messageStateKey) || '{}') || {} } catch { return {} }
+}
+const messageState = ref<Record<string, MessageState>>(readMessageState())
+const visibleMessages = computed(() => im.currentMessages.filter(m => !messageState.value[m.msg_id]?.deleted))
+watch(messageState, value => localStorage.setItem(messageStateKey, JSON.stringify(value)), { deep: true })
+function setReaction(id: string, emoji: string) {
+  const state = messageState.value[id] ||= {}
+  state.reaction = state.reaction === emoji ? undefined : emoji
+}
+async function messageAction(message: ImMessage, action: string) {
+  const text = stripHtml(toPlainText(Number(message.msg_type), message.content))
+  const state = messageState.value[message.msg_id] ||= {}
+  switch (action) {
+    case 'copy':
+      try { await navigator.clipboard.writeText(text) } catch { window.alert('复制失败，请选中消息文字后复制。') }
+      break
+    case 'forward':
+      forwardMessages.value = [message]
+      forwardCombine.value = false
+      forwardOpen.value = true
+      break
+    case 'quote':
+      draft.value = `${draft.value}${draft.value ? '\n' : ''}> ${message.from_name || (im.isMine(message) ? '我' : '未知')}：${text.replace(/\n/g, '\n> ')}\n`
+      await nextTick()
+      document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus()
+      break
+    case 'delete': state.deleted = true; break
+    case 'favorite': state.favorite = !state.favorite; break
+    case 'more': selectOne(message.msg_id); break
+  }
+}
 interface PendingAttachment {
   id: number
   file: File
@@ -419,6 +462,26 @@ const emptyHint = computed(() => {
   return '没有折叠的会话'
 })
 
+let disposed = false
+let unlistenFocus: UnlistenFn | undefined
+
+async function trackWindowFocus(): Promise<void> {
+  const appWindow = getCurrentWindow()
+  let focusChanged = false
+  const unlisten = await appWindow.onFocusChanged(({ payload }) => {
+    focusChanged = true
+    if (!disposed) im.setChatActive(payload)
+  })
+  if (disposed) {
+    unlisten()
+    return
+  }
+  unlistenFocus = unlisten
+  const focused = await appWindow.isFocused()
+  // 初始化查询期间发生的焦点事件优先，避免旧查询结果覆盖隐藏状态。
+  if (!disposed && !focusChanged) im.setChatActive(focused)
+}
+
 onMounted(() => {
   if (!auth.isLoggedIn) {
     router.replace('/login')
@@ -430,6 +493,7 @@ onMounted(() => {
     const tp = Number(route.query.type || 1)
     im.openChat(sid, nm || sid, tp)
   }
+  trackWindowFocus().catch((e) => im.log('窗口焦点监听失败：' + String(e)))
   im.start()
   // 恢复登录会话时也刷新姓名，修复旧版本把用户 ID 缓存成姓名的情况。
   // 保持异步，不阻塞聊天页面和长连接启动。
@@ -444,6 +508,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  unlistenFocus?.()
+  im.setChatActive(false)
   for (const items of Object.values(attachments.value)) {
     for (const item of items) if (item.preview) URL.revokeObjectURL(item.preview)
   }
@@ -761,6 +828,12 @@ function openPreview(payload: { url: string; name: string }) {
 .msg.theirs { justify-content: flex-start; }
 .msg-body { max-width: 72%; }
 .msg.mine .msg-body { text-align: right; }
+.bubble-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.msg.mine .bubble-row { justify-content: flex-end; }
+.bubble-row .bubble { min-width: 0; }
+.message-marks { display: flex; gap: 6px; align-items: center; margin-top: 4px; font-size: 11px; color: var(--text-muted); }
+.msg.mine .message-marks { justify-content: flex-end; }
+.message-marks button { background: var(--panel); border: 1px solid var(--border); padding: 1px 6px; border-radius: 12px; }
 .msg-name { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
 .bubble {
   display: inline-block;

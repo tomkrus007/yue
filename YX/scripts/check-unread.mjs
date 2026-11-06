@@ -17,7 +17,7 @@ assert.equal(functions.length, names.length)
 const ref = (value) => ({ value })
 const context = vm.createContext({
   prefsLoaded: false, prefsLoading: false,
-  currentSessionId: ref(''),
+  currentSessionId: ref(''), chatActive: ref(true),
   unread: ref({ a: 2, b: 3, c: 4 }), unreadAt: ref({ c: 1 }),
   muted: ref(new Set()), folded: ref(new Set()), pinned: ref({}), directory: ref(new Map()),
   sessions: ref(['a', 'b', 'c'].map((id) => ({ id, type: 1 }))),

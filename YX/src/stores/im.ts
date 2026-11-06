@@ -79,6 +79,8 @@ export const useImStore = defineStore('im', () => {
   const messages = ref<ChatMessage[]>([])
   const sessions = ref<ChatSession[]>([])
   const currentSessionId = ref('')
+  // 只有消息页所在窗口位于前台，才把当前会话视为正在阅读。
+  const chatActive = ref(false)
   const sending = ref(false)
   const loadingHistory = ref(false)
 
@@ -92,7 +94,9 @@ export const useImStore = defineStore('im', () => {
     .filter(([id]) => !muted.value.has(id) && !folded.value.has(id))
     .reduce((sum, [, count]) => sum + count, 0))
   watch(trayUnread, (count) => {
-    invoke('set_tray_unread', { count }).catch((e) => console.warn('托盘未读更新失败', e))
+    invoke('set_tray_unread', { count })
+      .then(() => log(`[提醒诊断] 托盘未读已更新：${count}`))
+      .catch((e) => log('[提醒诊断] 托盘未读更新失败：' + String(e)))
   }, { immediate: true })
   let lastSoundAt = 0
 
@@ -270,11 +274,17 @@ export const useImStore = defineStore('im', () => {
     if (!msg || !msg.msg_id) return
     // 已读/回执类不落库
     if ([0, 95, 97].includes(Number(msg.msg_type))) return
-    if (messages.value.some((m) => m.msg_id === msg.msg_id)) return
+    if (messages.value.some((m) => m.msg_id === msg.msg_id)) {
+      if (!msg.offline) log('[提醒诊断] 收到实时推送，但本地已有该消息，已跳过去重')
+      return
+    }
 
     const meId = authService.getCurrentUserId()
     const ref = sessionOfMsg(msg, meId)
-    if (!ref.id) return
+    if (!ref.id) {
+      log('[提醒诊断] 消息缺少会话归属，已跳过')
+      return
+    }
 
     const item: ChatMessage = {
       ...msg,
@@ -296,18 +306,37 @@ export const useImStore = defineStore('im', () => {
     const atMe = atList.includes('ALL') || atList.includes(meId)
     const sessionMuted = muted.value.has(ref.id)
 
+    // 只记录提醒判断所需的状态，不记录消息内容、用户标识或凭据。
+    log('[提醒诊断] 收到消息 ' + JSON.stringify({
+      is_read: msg.is_read,
+      is_read类型: typeof msg.is_read,
+      offline: msg.offline,
+      offline类型: typeof msg.offline,
+      未读判定: unreadFlag,
+      本设备发送: fromThisDevice,
+      自己发送: isMine(msg),
+      当前会话: currentSessionId.value === ref.id,
+      免打扰: sessionMuted,
+      折叠: folded.value.has(ref.id),
+      服务号: isServiceAccount({ type: ref.type }),
+      提及自己: atMe,
+      已计未读: unreadIds.value.has(msg.msg_id),
+    }))
+
     if (unreadFlag && !msg.offline && !isMine(msg) && !fromThisDevice &&
       !sessionMuted && !folded.value.has(ref.id) &&
       !isServiceAccount({ type: ref.type }) && Date.now() - lastSoundAt > 1000) {
       lastSoundAt = Date.now()
-      invoke('play_message_sound').catch((e) => console.warn('消息提示音播放失败', e))
+      invoke('play_message_sound')
+        .then(() => log('[提醒诊断] 提示音命令已执行'))
+        .catch((e) => log('[提醒诊断] 提示音调用失败：' + String(e)))
     }
 
 
     if (
       unreadFlag &&
       !fromThisDevice &&
-      currentSessionId.value !== ref.id &&
+      (!chatActive.value || currentSessionId.value !== ref.id) &&
       !isServiceAccount({ type: ref.type }) &&
       !unreadIds.value.has(msg.msg_id) &&
       (!sessionMuted || atMe)
@@ -334,7 +363,7 @@ export const useImStore = defineStore('im', () => {
     persistMessages()
     persistSessions()
 
-    if (currentSessionId.value === ref.id) {
+    if (chatActive.value && currentSessionId.value === ref.id) {
       delete unread.value[ref.id]
       delete unreadAt.value[ref.id]
       persistUnread()
@@ -721,9 +750,14 @@ export const useImStore = defineStore('im', () => {
     localStorage.setItem(STORAGE_KEYS.imTab, tab)
   }
 
+  function setChatActive(active: boolean): void {
+    chatActive.value = active
+    if (active && currentSessionId.value) clearUnread(currentSessionId.value)
+  }
+
   function selectSession(id: string): void {
     currentSessionId.value = id
-    clearUnread(id)
+    if (chatActive.value) clearUnread(id)
     const s = sessions.value.find((x) => x.id === id)
     const hasLocal = messages.value.some((m) => m.sessionId === id)
     if (s && !hasLocal) {
@@ -1008,6 +1042,7 @@ export const useImStore = defineStore('im', () => {
     resetLocal,
     log,
     selectSession,
+    setChatActive,
     setTab,
     clearUnread,
     sendText,
