@@ -1,7 +1,7 @@
 <template>
   <div class="msg-content">
-    <!-- 合并转发：可展开的聊天记录 -->
-    <details v-if="msgType === MsgType.COMBINE" class="combine">
+    <!-- 合并转发：默认展开，仍可手动收起 -->
+    <details v-if="msgType === MsgType.COMBINE" class="combine" open>
       <summary>{{ replaceEmojiAliases(combineText) }}</summary>
       <div class="combine-body">
         <div v-if="!rows.length" class="hint">（明细未随消息下发）</div>

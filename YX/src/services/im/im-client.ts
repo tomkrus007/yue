@@ -484,6 +484,7 @@ export class ImClient {
     toType: number,
     text: string,
     replyMsgId?: string,
+    atUserIds: string[] = [],
   ): ImMessage {
     const msg = this.baseMessage(
       MsgType.TEXT,
@@ -493,6 +494,7 @@ export class ImClient {
       toType,
       replyMsgId,
     )
+    msg.at_user_ids = [...new Set(atUserIds)].join(',')
     this.send(Cmd.uSendMsg, 1, msg)
     return msg
   }

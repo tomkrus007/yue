@@ -278,6 +278,29 @@ export class ContactService {
     return []
   }
 
+  /** 当前群组的成员，不使用全员通讯录代替。 */
+  async getGroupMembers(groupId: string): Promise<LinkUserDetail[]> {
+    const resp = await fetch(this.base + `v1/groups/${encodeURIComponent(groupId)}/members`, {
+      method: 'GET',
+      headers: this.headers(),
+    })
+    if (!resp.ok) throw new Error(`获取群成员失败: HTTP ${resp.status}`)
+    const json = await resp.json()
+    const data = json?.code !== undefined ? this.unwrapCode(json) : json
+    const list = Array.isArray(data) ? data : data?.members ?? data?.users ?? data?.ids
+    if (!Array.isArray(list)) throw new Error('群成员接口返回格式异常')
+    const members = list.map((item: any) => typeof item === 'string'
+      ? { userId: item } : { ...item, ...(item.user || {}), userId: String(item.user?.userId || item.userId || item.id || '') })
+      .filter((item: LinkUserDetail) => item.userId)
+    const missing = members.filter((item: LinkUserDetail) => !item.name && !item.userName)
+    if (missing.length) {
+      const details = await this.getUsersByIds(missing.map((item: LinkUserDetail) => item.userId))
+      const byId = new Map(details.map(item => [item.userId, item]))
+      for (const member of missing) Object.assign(member, byId.get(member.userId))
+    }
+    return [...new Map<string, LinkUserDetail>(members.map((item: LinkUserDetail) => [item.userId, item])).values()]
+  }
+
   /** 群组详情 */
   async getGroupDetail(groupId: string): Promise<any> {
     const resp = await fetch(this.base + `v1/groups/${groupId}/detail`, {

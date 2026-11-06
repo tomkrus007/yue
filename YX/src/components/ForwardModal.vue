@@ -3,6 +3,11 @@
     <section class="forward-dialog" role="dialog" aria-modal="true" aria-label="转发消息">
       <header><h3>{{ combine ? '合并转发' : '逐一转发' }} · {{ pending.length }} 条消息</h3><button class="secondary small" @click="close">关闭</button></header>
       <p>选择接收人或群组，文件沿用原附件，无需重新上传。</p>
+      <fieldset class="forward-mode" :disabled="started">
+        <legend>转发方式</legend>
+        <label><input v-model="combine" type="radio" :value="false" />逐一转发</label>
+        <label><input v-model="combine" type="radio" :value="true" />合并转发（聊天记录）</label>
+      </fieldset>
       <input v-model="keyword" placeholder="搜索会话、联系人或群组" aria-label="搜索转发接收人" />
       <div v-if="selectedTargets.length" class="selected-targets">
         <div class="selected-heading">已选 {{ selectedTargets.length }} 个接收人</div>
@@ -53,6 +58,7 @@ import { toPlainText } from '../services/im/content'
 const props = defineProps<{ messages: ImMessage[]; combine: boolean }>()
 const emit = defineEmits<{ close: []; sent: [] }>()
 const im = useImStore()
+const combine = ref(props.combine)
 const pending = ref([...props.messages])
 const keyword = ref('')
 interface ForwardTarget {
@@ -158,7 +164,7 @@ async function send() {
   busy.value = true
   error.value = ''
   if (!started.value) {
-    jobs.value = selectedTargets.value.flatMap(receiver => props.combine
+    jobs.value = selectedTargets.value.flatMap(receiver => combine.value
       ? [{ receiver: { ...receiver }, messages: [...pending.value] }]
       : pending.value.map(message => ({ receiver: { ...receiver }, messages: [message] })))
     started.value = true
@@ -166,7 +172,7 @@ async function send() {
   try {
     while (jobs.value.length) {
       const job = jobs.value[0]
-      im.forwardMessage(job.receiver, job.messages, props.combine)
+      im.forwardMessage(job.receiver, job.messages, combine.value)
       jobs.value.shift()
       done.value += 1
       await new Promise(resolve => setTimeout(resolve, 0))
@@ -183,6 +189,8 @@ async function send() {
 .forward-dialog { width: min(520px, 90vw); max-height: 85vh; overflow: auto; background: var(--panel); padding: 20px; border-radius: 10px; }
 header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h3 { margin: 0; }
+.forward-mode { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.forward-mode label { display: flex; align-items: center; gap: 6px; }
 p, small { color: var(--text-muted); font-size: 13px; }
 .targets { max-height: 280px; overflow-y: auto; margin: 12px 0; padding: 2px; }
 .target-row {

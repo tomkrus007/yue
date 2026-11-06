@@ -776,7 +776,7 @@ export const useImStore = defineStore('im', () => {
     selectSession(id)
   }
 
-  function sendText(text: string): void {
+  function sendText(text: string, atUserIds: string[] = []): void {
     const s = currentSession.value
     if (!s || !text.trim()) return
     if (!imClient.authed) {
@@ -785,7 +785,7 @@ export const useImStore = defineStore('im', () => {
     }
     sending.value = true
     try {
-      const msg = imClient.sendText(s.id, s.name, s.type, text)
+      const msg = imClient.sendText(s.id, s.name, s.type, text, undefined, atUserIds)
       addMessage(msg)
     } finally {
       sending.value = false

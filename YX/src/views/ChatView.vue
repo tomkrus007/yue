@@ -249,7 +249,10 @@
               </div>
             </div>
             <textarea
+              ref="composerInput"
               v-model="draft"
+              @input="onComposerInput"
+              @compositionend="onComposerInput"
               :style="{ height: `${composerHeight}px` }"
               :disabled="submitting"
               placeholder="输入消息，Enter 发送，Shift+Enter 换行；可直接粘贴或拖入图片/文件"
@@ -275,6 +278,8 @@
       :session="im.currentSession"
       @close="drawerOpen = false"
     />
+
+    <MentionPicker v-if="mentionPosition !== null && im.currentSession" :key="composerKey" :group-id="im.currentSession.id" @close="closeMention" @confirm="confirmMention" />
 
     <!-- 历史消息 -->
     <HistoryModal v-model:open="historyOpen" @preview="openPreview" />
@@ -311,6 +316,8 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useAuthStore } from '../stores/auth'
 import { authService } from '../services/auth'
 import { useImStore } from '../stores/im'
+import MentionPicker from '../components/MentionPicker.vue'
+import type { LinkUserDetail } from '../services/contact-client'
 import type { ContactEntry } from '../services/contact-client'
 import { fmtMsgTime, fmtSessionTime, toPlainText, stripHtml } from '../services/im/content'
 import {
@@ -394,6 +401,53 @@ const draft = computed({
   get: () => drafts.value[composerKey.value] || '',
   set: (value: string) => { drafts.value[composerKey.value] = value },
 })
+const composerInput = ref<HTMLTextAreaElement | null>(null)
+const mentionPosition = ref<number | null>(null)
+interface DraftMention { id: string; start: number; end: number }
+const draftMentions = ref<Record<string, DraftMention[]>>({})
+watch(() => [composerKey.value, draft.value] as const, ([key, value], [previousKey, previous]) => {
+  if (key !== previousKey) return
+  // 保留未被编辑的提醒，并随前方文字的增删移动位置。
+  let start = 0
+  while (start < value.length && start < previous.length && value[start] === previous[start]) start++
+  let end = previous.length
+  let newEnd = value.length
+  while (end > start && newEnd > start && previous[end - 1] === value[newEnd - 1]) { end--; newEnd-- }
+  draftMentions.value[composerKey.value] = (draftMentions.value[composerKey.value] || []).flatMap(item => {
+    if (item.end <= start) return [item]
+    if (item.start >= end) return [{ ...item, start: item.start + newEnd - end, end: item.end + newEnd - end }]
+    return []
+  })
+}, { flush: 'sync' })
+watch(composerKey, () => { mentionPosition.value = null })
+function onComposerInput(event: Event) {
+  if (event instanceof InputEvent && event.isComposing) return
+  if (im.currentSession?.type !== 2) return
+  const input = event.target as HTMLTextAreaElement
+  const position = input.selectionStart - 1
+  if (input.value[position] === '@' && (event.type === 'compositionend' || (event as InputEvent).data?.endsWith('@'))) {
+    mentionPosition.value = position
+  }
+}
+async function closeMention() {
+  mentionPosition.value = null
+  await nextTick()
+  composerInput.value?.focus()
+}
+async function confirmMention(members: LinkUserDetail[]) {
+  const position = mentionPosition.value
+  if (position === null || !members.length) return
+  const text = members.map(member => `@${member.name || member.userName || member.userId} `).join('')
+  draft.value = draft.value.slice(0, position) + text + draft.value.slice(position + 1)
+  let offset = position
+  for (const member of members) {
+    const length = 1 + (member.name || member.userName || member.userId).length
+    ;(draftMentions.value[composerKey.value] ||= []).push({ id: member.userId, start: offset, end: offset + length })
+    offset += length + 1
+  }
+  await closeMention()
+  composerInput.value?.setSelectionRange(offset, offset)
+}
 const pendingAttachments = computed(() => attachments.value[composerKey.value] || [])
 const submitting = ref(false)
 let attachmentId = 0
@@ -585,6 +639,7 @@ function kindLabel(kind: string): string {
 function onComposerEnter(event: KeyboardEvent) {
   // 部分输入法确认时已结束组合，但仍以 229 标记该次按键。
   if (event.isComposing || event.keyCode === 229) return
+  if (mentionPosition.value !== null) { event.preventDefault(); return }
   event.preventDefault()
   void onSend()
 }
@@ -598,7 +653,7 @@ async function onSend() {
   submitting.value = true
   try {
     if (text) {
-      im.sendText(text)
+      im.sendText(text, (draftMentions.value[key] || []).map(item => item.id))
       drafts.value[key] = ''
     }
     await im.sendFiles(items.map(item => item.file), (_, index) => {
