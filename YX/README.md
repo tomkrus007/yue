@@ -29,7 +29,7 @@
 ### 扩展面板
 - 我的应用（`appApiUri/es/authorized`，含图标）
 - 团队任务（`taskUri`，团队群 → 分组 → 任务树）
-- 团队文档（品高云盘目录、下载、预览、在线编辑）
+- 团队文档（品高云盘目录、上传、下载、预览、在线编辑）
 - 仅 `templateCode = workGroupDefault` 的团队群显示任务/文档抽屉
 
 ### 零信任分流
@@ -41,6 +41,7 @@
 ### 云盘
 - 列目录 / 进入 / 返回 / 刷新（`panServerUri /v1/directories/{dirId}/items`）
 - 创建目录 / 删除 / 重命名 / 移动（`/v1/directories|files/*`，与「任务与文档 → 团队文档」同一套接口）
+- 上传文件（`store/putFile` + `v2/{id}/share/document`）
 - 搜索（`/openapi/file/search`）
 - 文件下载（`/openapi/stream/download`，302 到 S3 签名地址）
 - 在线编辑（`driveWpsUri /v1/api/file/wps3rd`）
@@ -77,6 +78,7 @@ YX/
 │   │   ├── pan-client.ts        # 团队文档
 │   │   ├── zt.ts                # 零信任配置与命令
 │   │   ├── disk-pan.ts          # 网盘文档接口（/pan/v1）
+│   │   ├── disk-upload.ts       # 网盘/团队文档上传（store → 文档服务）
 │   │   └── disk-client.ts       # 网盘 REST 客户端（/openapi 元数据）
 │   ├── stores/
 │   │   ├── auth.ts              # 登录态
@@ -127,8 +129,9 @@ pnpm tauri build  # 打包
 
 ## 已知限制
 
-- 网盘旧的 `/openapi/file/*` 写接口已被服务端以 `app.ex.666` 退役，目录与写操作统一走 `panServerUri /pan/v1`；上传、回收站、分享等入口尚未实现
-- 上传依赖 `zs3.yuexiu.com`，当前网络下不可解析，暂未在客户端接入
+- 网盘旧的 `/openapi/file/*` 写接口已被服务端以 `app.ex.666` 退役，目录与写操作统一走 `panServerUri /pan/v1`
+- 上传走对象存储 `store/putFile` + `v2/{id}/share/document`（与聊天附件保存到云盘一致）；尚未实现上传进度条以外的断点续传
+- 回收站、分享、文件属性/版本/标签等入口尚未实现
 - 群管理、@提醒、语音/视频等高级能力未实现
 - 团队任务/文档依赖配置中心下发对应地址；部分账号可能没有权限
 - 零信任代理需要自行提供可访问内网的上游 HTTP/SOCKS5；未命中规则默认直连

@@ -58,6 +58,10 @@
         <div class="pan-crumb" :title="crumb">
           {{ crumb }}
         </div>
+        <button class="secondary small" :disabled="uploading || !panStack.length" @click="pickUpload">
+          {{ uploading ? '上传中…' : '上传' }}
+        </button>
+        <input ref="uploadInput" type="file" multiple hidden @change="onUploadChange" />
       </div>
 
       <div v-if="panLoading" class="d-empty">加载中…</div>
@@ -115,6 +119,7 @@ import {
   type PanItem,
 } from '../services/pan-client'
 import { loadTeamTasks, type TaskGroup } from '../services/task-client'
+import { uploadFileToDir } from '../services/disk-upload'
 import TaskNode from './TaskNode.vue'
 
 const props = defineProps<{ session: ChatSession | null }>()
@@ -129,6 +134,8 @@ const panStack = ref<Array<{ id: string; name: string }>>([])
 const panItems = ref<PanItem[]>([])
 const panLoading = ref(false)
 const panError = ref('')
+const uploadInput = ref<HTMLInputElement | null>(null)
+const uploading = ref(false)
 const foot = ref('团队任务 · 只读')
 
 const taskCount = computed(() =>
@@ -197,6 +204,37 @@ function panBack() {
   if (panStack.value.length <= 1) return
   panStack.value.pop()
   loadPanDir()
+}
+
+function pickUpload() {
+  if (!uploading.value) uploadInput.value?.click()
+}
+
+async function onUploadChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''
+  const top = panStack.value[panStack.value.length - 1]
+  if (!files.length || !top) return
+  uploading.value = true
+  panError.value = ''
+  let done = 0
+  try {
+    for (const file of files) {
+      foot.value = `上传中 ${done + 1}/${files.length}：${file.name}`
+      await uploadFileToDir(file, top.id, (pct) => {
+        foot.value = `上传中 ${done + 1}/${files.length}：${file.name} ${pct}%`
+      })
+      done += 1
+    }
+    foot.value = `已上传 ${done} 个文件`
+    await loadPanDir()
+  } catch (e: any) {
+    panError.value = '上传失败：' + (e?.message || e)
+    foot.value = done ? `已上传 ${done}/${files.length}` : '文档来自品高云盘'
+  } finally {
+    uploading.value = false
+  }
 }
 
 function isOffice(name: string): boolean {

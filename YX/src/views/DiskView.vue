@@ -49,7 +49,12 @@
           <button class="secondary small" @click="disk.back()" :disabled="disk.history.length <= 1">← 返回</button>
           <button class="secondary small" @click="disk.refresh()">刷新</button>
           <button class="secondary small" @click="showMkdir = !showMkdir">+ 新建目录</button>
+          <button class="small" :disabled="uploading || !disk.currentDirId" @click="pickUpload">
+            {{ uploading ? '上传中…' : '上传' }}
+          </button>
+          <input ref="uploadInput" type="file" multiple hidden @change="onUploadChange" />
           <div class="path">📁 {{ disk.currentDrive?.name }} · {{ disk.currentPath }}</div>
+          <span v-if="uploadNote" class="upload-note">{{ uploadNote }}</span>
         </div>
         <div class="search-bar">
           <input v-model="keyword" placeholder="搜索文件" @keydown.enter="onSearch" />
@@ -144,6 +149,7 @@ import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
 import { useDiskStore, type DiskDrive } from '../stores/disk'
 import { OFFICE_EXT } from '../services/pan-client'
+import { uploadFileToDir } from '../services/disk-upload'
 import { type DiskFile } from '../services/disk-client'
 
 const auth = useAuthStore()
@@ -154,6 +160,9 @@ const router = useRouter()
 const keyword = ref('')
 const showMkdir = ref(false)
 const mkdirName = ref('')
+const uploadInput = ref<HTMLInputElement | null>(null)
+const uploading = ref(false)
+const uploadNote = ref('')
 
 onMounted(async () => {
   if (!auth.isLoggedIn) {
@@ -201,6 +210,41 @@ async function onMkdir() {
     showMkdir.value = false
   } catch (e: any) {
     disk.error = '新建目录失败：' + (e?.message || String(e))
+  }
+}
+
+function pickUpload() {
+  if (!uploading.value) uploadInput.value?.click()
+}
+
+async function onUploadChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''
+  if (!files.length) return
+  const dirId = disk.currentDirId
+  if (!dirId) {
+    disk.error = '请先进入一个目录'
+    return
+  }
+  uploading.value = true
+  disk.error = ''
+  let done = 0
+  try {
+    for (const file of files) {
+      uploadNote.value = `上传中 ${done + 1}/${files.length}：${file.name}`
+      await uploadFileToDir(file, dirId, (pct) => {
+        uploadNote.value = `上传中 ${done + 1}/${files.length}：${file.name} ${pct}%`
+      })
+      done += 1
+    }
+    uploadNote.value = `已上传 ${done} 个文件`
+    await disk.refresh()
+  } catch (e: any) {
+    disk.error = '上传失败：' + (e?.message || String(e))
+    uploadNote.value = done ? `已上传 ${done}/${files.length}` : ''
+  } finally {
+    uploading.value = false
   }
 }
 
@@ -320,6 +364,7 @@ function fmtTime(t?: number): string {
 }
 .path-bar { display: flex; align-items: center; gap: 8px; }
 .path { flex: 1; color: var(--text-muted); font-size: 13px; }
+.upload-note { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .search-bar { display: flex; gap: 8px; }
 .search-bar input { flex: 1; }
 .small { padding: 5px 12px; font-size: 12px; }
