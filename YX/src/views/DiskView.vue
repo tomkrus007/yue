@@ -92,7 +92,7 @@
         </table>
 
         <div
-          v-else-if="disk.currentDrive?.kind === 'group' && !disk.loading"
+          v-else-if="disk.currentDrive?.kind === 'group' && disk.trail.length === 0 && !disk.loading"
           class="empty"
         >
           没有可用的群文档
