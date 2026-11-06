@@ -31,6 +31,7 @@
 - **现象**：`/openapi/file/delete`、`/file/mkdirs`、`/file/move`、`/file/copy` 返回 `400 app.ex.666`「您当前使用的客户端版本需要升级」，而 `file/list`、`file/info` 等读接口正常。
 - **原因**：旧 openapi 写接口已退役；改 `appVersion`/`Pan-Version`/`appId`/UA/IP 等请求头均无效，不是参数问题。
 - **做法**：目录与写操作改走 `panServerUri`（`https://pan.bingolink.biz/pan`）的 `/v1/directories/*`、`/v1/files/*`；`access_token` 放 query。个人/团队/部门/公开文档的 `dirId` 分别是 `CurrentUserId` / teamId / orgId / classId。该接口与「群聊 → 任务与文档 → 团队文档」相同。
+- **参数坑**：文件与目录的写接口参数不统一——删除目录是 query `dirId`，删除文件是 JSON `{ids:[fileId]}`；重命名目录 `{dirId,name}`，重命名文件 `{id,name}`；移动目录 `{dirId,targetParentId}`，移动文件 `{ids:[fileId],targetParentId}`。文件接口传错字段会报 `Parameter parsing failed` 或 430004。
 
 ## 执行命令前固定工作目录
 

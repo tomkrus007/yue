@@ -84,21 +84,21 @@ export function createFolder(parentId: string, name: string): Promise<unknown> {
 export function deleteItem(item: PanDiskItem): Promise<unknown> {
   return item.type === 'D'
     ? request('POST', '/v1/directories/delete?dirId=' + encodeURIComponent(item.id))
-    : request('POST', '/v1/files/delete?fileId=' + encodeURIComponent(item.id))
+    : request('POST', '/v1/files/delete', { ids: [item.id] })
 }
 
 /** 重命名文件或目录 */
 export function renameItem(item: PanDiskItem, name: string): Promise<unknown> {
   return item.type === 'D'
     ? request('POST', '/v1/directories/rename', { dirId: item.id, name })
-    : request('POST', '/v1/files/rename', { fileId: item.id, name })
+    : request('POST', '/v1/files/rename', { id: item.id, name })
 }
 
 /** 移动到目标目录 */
 export function moveItem(item: PanDiskItem, targetParentId: string): Promise<unknown> {
   return item.type === 'D'
     ? request('POST', '/v1/directories/move', { dirId: item.id, targetParentId })
-    : request('POST', '/v1/files/move', { fileId: item.id, targetParentId })
+    : request('POST', '/v1/files/move', { ids: [item.id], targetParentId })
 }
 
 /** 下载地址（302 前的签名 URL） */
