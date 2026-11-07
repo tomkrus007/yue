@@ -175,5 +175,4 @@ export const STORAGE_KEYS = {
   imGroupMeta: 'yl.im.groupMeta',
   imTab: 'yl.im.tab',
   savedCreds: 'yl.creds',
-  ztConfig: 'yl.zt.config',
 } as const

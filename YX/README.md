@@ -7,7 +7,7 @@
   - IM：配置中心下发的 `embWebSocketUri`（生产为 `wss://…:443`）
   - 网盘：`https://streamapi.bingolink.biz/openapi`
   - 登录：`https://www.bingolink.biz/sso/oauth2/token`（OAuth2 password 模式 + RSA 密码加密）
-- **不复刻**：视频会议、日程、红包等重业务；零信任只做白名单分流代理，不实现官方隧道协议
+- **不复刻**：视频会议、日程、红包等重业务；零信任不自研隧道，只驱动本机官方零信任客户端的登录接口
 
 ## 功能范围
 
@@ -32,11 +32,34 @@
 - 团队文档（品高云盘目录、上传、下载、预览、在线编辑、删除）
 - 仅 `templateCode = workGroupDefault` 的团队群显示任务/文档抽屉
 
-### 零信任分流
-- Rust 单端口代理：HTTP CONNECT / 普通 HTTP / SOCKS5
-- 白名单规则：hostExact / hostSuffix / hostRegex / CIDR / 端口
-- 上游：直连 / HTTP 代理 / SOCKS5；连接日志与统计
-- 这是本地分流代理，不是官方零信任隧道本身
+### 零信任
+- 用当前云上越秀 AccessToken 调本机官方客户端 SDK（`127.0.0.1:35440-35443/trustagent`）完成登录
+- 展示状态（online/offline）、网关认证方式（YX_TOKEN / AD / LOCAL_UP），支持注销
+- 按需启动：平时不驻留，点登录才拉起官方客户端进程，注销即退出（`launchctl kickstart` 失败时直接 spawn 二进制兜底）
+- 隧道与内网路由由官方客户端负责；与 Clash 共存需删掉零信任抢占的默认路由（页面内有命令）
+- 不自研隧道、不做系统级 DNS/路由注入
+
+#### 按需启动
+
+`YX` 只在点击「用登录态登录零信任」时拉起官方客户端，注销时 `bootout` 用户级 agent 并结束进程。
+
+只有 SDK 的 plist 需要手工改一次（root 所有，客户端不会覆盖）：
+
+```bash
+sudo /usr/libexec/PlistBuddy -c "Set :RunAtLoad false" -c "Set :KeepAlive false" \
+  /Library/LaunchAgents/com.legendsec.trustagentsdk.plist
+```
+
+`trustagentservice`、`trustdservice` 的 plist 会被客户端每次启动时改回 `RunAtLoad`/`KeepAlive=true`，
+改了也会被还原；`YX` 注销时用 `launchctl bootout` 解除用户级任务，所以不依赖改这两个文件。
+`trustdservice` 是 root 守护进程，要彻底停住（重启前）需手工执行：
+
+```bash
+sudo launchctl bootout system/com.legendsec.trustdservice
+```
+
+另外在「系统设置 → 通用 → 登录项」里关掉 `TrustAgentLauncher` 的开机自启。
+`jobblesshelper` / `trustuninstall` 平时不驻留，可以保留。
 
 ### 云盘
 - 列目录 / 进入 / 返回 / 刷新（`panServerUri /v1/directories/{dirId}/items`）
@@ -44,7 +67,7 @@
 - 上传文件（选择或拖拽；浮动窗口显示进度，失败可点击重试）
 - 搜索（`/openapi/file/search`）
 - 文件下载（`/openapi/stream/download`，302 到 S3 签名地址）
-- 在线编辑（`driveWpsUri /v1/api/file/wps3rd`）
+- 在线编辑（优先 `panDocUri /v1/doc/open`；仅旧 openapi 的历史文件退回 `driveWpsUri /v1/api/file/wps3rd`）
 - 群文档入口：把聊天群/团队群的文档空间聚合成一个盘，进入后按群 id 浏览
 - 个人/团队/部门/公开四类盘的目录 id：`CurrentUserId` / teamId / orgId / classId
 
@@ -78,7 +101,7 @@ YX/
 │   │   ├── app-client.ts        # 应用面板
 │   │   ├── task-client.ts       # 团队任务
 │   │   ├── pan-client.ts        # 团队文档
-│   │   ├── zt.ts                # 零信任配置与命令
+│   │   ├── zt.ts                # 零信任 SDK 调用（状态/登录/注销）
 │   │   ├── disk-pan.ts          # 网盘文档接口（/pan/v1）
 │   │   ├── disk-upload.ts       # 网盘/团队文档上传（store → 文档服务）
 │   │   └── disk-client.ts       # 网盘 REST 客户端（/openapi 元数据）
@@ -92,12 +115,12 @@ YX/
 │   │   ├── ChatView.vue         # 聊天页
 │   │   ├── ContactsView.vue     # 通讯录
 │   │   ├── DiskView.vue         # 网盘页
-│   │   └── ZtView.vue           # 零信任分流
+│   │   └── ZtView.vue           # 零信任（登录/状态）
 │   ├── assets/styles.css
 │   ├── App.vue
 │   └── main.ts
 └── src-tauri/
-    ├── src/zt.rs                # 零信任代理（CONNECT/HTTP/SOCKS5）
+    ├── src/zt_sdk.rs            # 零信任：驱动官方客户端 SDK 的 JSON-RPC
     ├── tauri.conf.json          # CSP 允许 blob/ws/wss/http/https
     └── capabilities/default.json  # http 域名白名单 *.bingolink.biz *.yuexiu.com
 ```
@@ -137,7 +160,8 @@ pnpm tauri build  # 打包
 - 回收站、分享、文件属性/版本/标签等入口尚未实现
 - 群管理、@提醒、语音/视频等高级能力未实现
 - 团队任务/文档依赖配置中心下发对应地址；部分账号可能没有权限
-- 零信任代理需要自行提供可访问内网的上游 HTTP/SOCKS5；未命中规则默认直连
+- 零信任需要本机已安装官方客户端（`/Applications/TrustAgentLauncher.app`），不需要它常驻；未登录时 SDK 报 `offline`
+- 官方客户端升级会重写 launchd plist（恢复 `RunAtLoad`/`KeepAlive`），需要重新关闭才能保持按需启动
 - 图片/附件下载走带 `access_token` 的 query，链接有时效性
 - 设备序列号用随机 UUID 替代（原版用 serial-number 模块）
 
