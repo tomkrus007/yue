@@ -15,6 +15,7 @@ import {
   diskClient,
   type DiskFile,
 } from '../services/disk-client'
+import { editUrl } from '../services/pan-client'
 
 export interface DiskDrive {
   /** 盘标识：/Private /Team /Org /Groups /Public/<classId> */
@@ -301,22 +302,35 @@ export const useDiskStore = defineStore('disk', () => {
   async function onlineEdit(file: DiskFile) {
     error.value = ''
     try {
-      const paths = getServerPaths()
-      const wps = String(paths.driveWpsUri || paths.onlineDocUri || '').replace(/\/+$/, '')
-      if (!wps) throw new Error('缺少 driveWpsUri')
-      const ext = file.ext || ''
-      const url =
-        wps +
-        '/v1/api/file/wps3rd?storeSource=2&fileId=' +
-        encodeURIComponent(file.id) +
-        '&filePath=' +
-        encodeURIComponent(ext) +
-        '&access_token=' +
-        encodeURIComponent(authService.getAccessToken())
+      let url = ''
+      try {
+        // 与「消息 → 群聊 → 任务与文档」一致：群文档只存在于 pan 文档服务，
+        // 必须按 fileId 向 panDocUri 换编辑地址。
+        url = await editUrl(file.id)
+      } catch {
+        // 仅存在于旧 openapi 的历史文件不在 pan 文档服务里，退回 WPS 3rd。
+        url = wps3rdUrl(file)
+      }
       await openUrl(url)
     } catch (e: any) {
       error.value = '在线编辑失败：' + (e?.message || String(e))
     }
+  }
+
+  function wps3rdUrl(file: DiskFile): string {
+    const paths = getServerPaths()
+    const wps = String(paths.driveWpsUri || paths.onlineDocUri || '').replace(/\/+$/, '')
+    if (!wps) throw new Error('缺少 driveWpsUri')
+    const ext = file.ext || ''
+    return (
+      wps +
+      '/v1/api/file/wps3rd?storeSource=2&fileId=' +
+      encodeURIComponent(file.id) +
+      '&filePath=' +
+      encodeURIComponent(ext) +
+      '&access_token=' +
+      encodeURIComponent(authService.getAccessToken())
+    )
   }
 
   /** 下载：openapi 的 stream 接口会 302 到 S3 签名地址 */
