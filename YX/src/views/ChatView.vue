@@ -568,7 +568,7 @@ onUnmounted(() => {
   for (const items of Object.values(attachments.value)) {
     for (const item of items) if (item.preview) URL.revokeObjectURL(item.preview)
   }
-  im.stop()
+  // 不要在这里 im.stop()：IM 连接是全局的，离开聊天页只应取消"聊天页激活"标记
 })
 
 watch(
