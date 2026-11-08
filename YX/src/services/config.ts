@@ -113,6 +113,7 @@ export interface ServerPaths {
   taskUri?: string
   appApiUri?: string
   serviceNoUri?: string
+  toDoUri?: string
   [key: string]: unknown
 }
 
@@ -148,6 +149,7 @@ export function getServerPaths(): Required<
     embQueryUri: saved.embQueryUri || DEFAULT_CONFIG.embQueryUrl,
     uamApiUri: saved.uamApiUri || DEFAULT_CONFIG.uamApiUrl,
     storeUri: saved.storeUri || DEFAULT_CONFIG.storeUrlBase,
+    toDoUri: saved.toDoUri || 'https://gw.yuexiu.com/todosrvapi',
   }
 }
 

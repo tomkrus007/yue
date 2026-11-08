@@ -43,3 +43,24 @@
 
 - 仓库根目录与 `YX/` 的相对路径不可混用：在 `YX/` 执行命令时，文件路径应为 `src/...`、`scripts/...`，不要再加 `YX/` 前缀。
 - 编辑与验证分开执行，并给每次命令显式指定工作目录；`pnpm build` 和前端回归脚本统一在 `YX/` 运行，避免生成嵌套目录或在根目录找不到脚本。
+
+## 待办动作解析与禁用状态
+
+- 消息中的「查看待办」按用户要求直接打开该条详情，不照搬官方的列表入口。没有直链或条目 ID 时，在后台按来源与完整标题唯一匹配；同名歧义时明确提示，不能随意打开第一条。
+- 官方待办的 `action` 解析兼容 JSON 和对象字面量，不能仅用 `JSON.parse`；接口已返回对象时也应直接解析其 `pc` / `android`。对象字面量使用 JSON5 数据解析，不复制官方的 `eval` 回退。
+- 仅以标准 JSON 字符串作为模拟响应，会漏掉「列表加载成功、打开按钮却被禁用」的问题。离线回归需覆盖对象、JSON、对象字面量、真实及字面量换行，并检查列表项最终能生成地址。
+- 缺少可用链接时显示原因；不要只把按钮置灰，让用户无法判断是数据缺失还是功能故障。离线回归通过不代表生产 CAS 链路已验证。
+- 待办查询与 SSO 建会话的 query 凭证需在每次请求时生成；401 刷新后同时更新请求头和 `access_token` 参数，不能重用带旧 token 的 URL。失败提示应区分详情查询、登录票据兑换和浏览器打开阶段，并隐藏请求地址中的凭证。
+- `plugin-opener.openUrl` 已调用系统默认浏览器；浏览器没出现也可能是前置 CAS 请求失败。已解析出详情地址时，自动登录失败应降级为外部打开原始详情，并提示可能需要登录，不能让票据错误阻断打开页面。
+- 通知指定分类中已唯一匹配时立即使用该详情，不再强制查询其他分类；仅在找不到时回退到待阅／已办。离线回归应覆盖「待办已找到、后续无关接口返回 HTTP 500」的阻断场景，接口错误需标明具体路径。
+
+## 待办 CAS 免登录在本部署不可行
+
+- 现象：按官方 `create_session → TGT → POST {casTicketUrl}{TGT} → login?token=ST` 实现后，点击「查看待办」只弹「自动登录未完成」。
+- 实测：`oauth2/authorize` 只有用 `Basic clientId:clientSecret` 才成功（Bearer 必 401）；但返回的 token 域固定是 `www.bingolink.biz` 与 `linksso.yuexiu.com`，与 `/jump/cache` 给的 `casUrl`（`sso1.yuexiu.com` / `sso1.yuexiuproperty.cn`）不一致，官方 `getAppCookies(casHost)` 同样取不到值。
+- 实测：两套 `casTicketUrl` 拿 JWT 当 TGT POST 都是 401；直接 `POST https://sso1.yuexiu.com/cas/v1/tickets` 返回 `Restlet-Framework` 的 400（未按 Apereo 默认方式开放 REST）；`{casUrl}/login?token=<JWT>` 的 `#STAUTHENTICATE#` 只认真实 ST，JWT / `oauth2/logintoken` 全部回「验证ST票据失败」。
+- 做法：只在 token 域与 `casUrl` 主机匹配时才尝试兑换，避免发注定 401 的请求；否则直接打开该租户的 `{casUrl}/login?service=<详情>`，由浏览器复用已有 CAS 会话。整段自动登录最多等 4 秒，失败不阻止打开，也不要再复现 TGT 方案。
+
+## 待办直接外部打开优先
+
+- 用户已明确放弃客户端 AccessToken／CAS 免登录。解析出详情地址后立即用系统浏览器打开原始链接；不再查询 CAS 配置、创建 SSO 会话、兑换票据或预先跳转认证页。此前免登录与降级策略仅为历史记录，不应恢复。

@@ -17,6 +17,7 @@ export interface ImageMeta {
 
 export type MessageSegment =
   | { type: 'text'; text: string }
+  | { type: 'card'; title: string; brief: string; more: string; action: string }
   | ({ type: 'image' } & ImageMeta)
   | ({ type: 'file' } & ImageMeta)
 
@@ -178,6 +179,19 @@ export function toPlainText(msgType: number, content: any): string {
 
 /** 一条消息 → 可渲染片段（合并转发单独走卡片）。 */
 export function segmentsOf(msgType: number, content: any): MessageSegment[] {
+  if (msgType === MsgType.COMPLEX && Number(content?.type) === 5 && Array.isArray(content.contents)) {
+    const cards: MessageSegment[] = content.contents.map((item: any) => {
+      const card = item?.content
+      return {
+        type: 'card',
+        title: typeof card?.title === 'string' ? card.title : '',
+        brief: typeof card?.brief === 'string' ? card.brief : '',
+        more: typeof card?.more === 'string' ? card.more : '',
+        action: typeof item?.action_param === 'string' ? item.action_param : '',
+      }
+    })
+    if (cards.length) return cards
+  }
   if (msgType === MsgType.RICHTEXT) return richTextToSegments(content)
   if (msgType === MsgType.PHOTO) {
     return [{ type: 'image', ...imageMeta(content) }]

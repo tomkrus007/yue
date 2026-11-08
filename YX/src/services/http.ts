@@ -18,6 +18,8 @@ export interface HttpOptions {
   body?: unknown
   extraHeaders?: Record<string, string>
   retried?: boolean
+  /** 待办等接口还需 query 凭证；重试时使用刷新后的 token 重建 URL。 */
+  tokenInQuery?: boolean
 }
 
 export async function httpJson<T = any>(
@@ -38,7 +40,13 @@ export async function httpJson<T = any>(
   if (basic) headers.Authorization = 'Basic ' + basic
   if (body !== undefined) headers['Content-Type'] = 'application/json'
 
-  const resp = await fetch(url, {
+  let requestUrl = url
+  if (options.tokenInQuery && token) {
+    const target = new URL(url)
+    target.searchParams.set('access_token', token)
+    requestUrl = target.href
+  }
+  const resp = await fetch(requestUrl, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,

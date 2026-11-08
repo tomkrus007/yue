@@ -24,8 +24,14 @@
     <template v-else>
       <template v-if="segments.length">
         <template v-for="(seg, i) in segments" :key="i">
+          <div v-if="seg.type === 'card'" class="message-card">
+            <strong>{{ seg.title || '通知' }}</strong>
+            <div v-if="seg.brief" v-html="sanitizeHtml(seg.brief)"></div>
+            <details v-if="seg.more"><summary>更多</summary><div v-html="sanitizeHtml(seg.more)"></div></details>
+            <button v-if="todoTarget(seg.action) || todoUrl(seg.action)" class="card-action" title="在系统默认浏览器中打开" :disabled="openingTodo" @click.stop="openTodo(seg)">{{ openingTodo ? '正在打开…' : '查看' + (todoTarget(seg.action)?.tab === 'read' ? '待阅' : todoTarget(seg.action)?.tab === 'done' ? '已办' : '待办') }}</button>
+          </div>
           <span
-            v-if="seg.type === 'text'"
+            v-else-if="seg.type === 'text'"
             :class="{ html: looksLikeHtml(seg.text), ph: isPlaceholder(seg.text, segments.length) }"
           >
             <span v-if="looksLikeHtml(seg.text)" v-html="sanitizeHtml(seg.text)"></span>
@@ -48,11 +54,12 @@
       </template>
       <span v-else class="ph">[非文本消息]</span>
     </template>
+    <p v-if="todoError" class="todo-error" role="alert">{{ todoError }}</p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { replaceEmojiAliases } from '../services/im/emoji'
 import { MsgType } from '../services/im/types'
@@ -69,6 +76,27 @@ import {
 import { fileUrl } from '../services/im/media'
 import type { ImageMeta } from '../services/im/content'
 import MessageImage from './MessageImage.vue'
+import { openTodoInBrowser, resolveTodoNotice, todoTarget, todoUrl } from '../services/im/todo'
+
+const openingTodo = ref(false)
+const todoError = ref('')
+
+async function openTodo(card: Extract<MessageSegment, { type: 'card' }>) {
+  if (openingTodo.value) return
+  openingTodo.value = true
+  todoError.value = ''
+  let stage = '查询待办详情'
+  try {
+    const url = await resolveTodoNotice(card)
+    stage = '打开系统浏览器'
+    await openTodoInBrowser(url)
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : typeof e === 'string' ? e : '未知错误'
+    todoError.value = `打开待办失败（${stage}）：${detail.replace(/https?:\/\/[^\s)]+/g, '[请求地址]')}`
+  } finally {
+    openingTodo.value = false
+  }
+}
 
 const props = defineProps<{
   msgType: number
@@ -111,6 +139,10 @@ function download(seg: ImageMeta) {
 .msg-content :deep(.html div),
 .msg-content :deep(.html p) { margin: 0; }
 .msg-content .ph { color: var(--text-muted); }
+.message-card { display: flex; flex-direction: column; gap: 8px; min-width: 200px; padding: 8px; }
+.message-card details { font-size: 13px; }
+.card-action { align-self: flex-start; color: #1677ff; border: 0; background: transparent; padding: 4px 0; cursor: pointer; }
+.todo-error { color: var(--danger); font-size: 12px; margin-top: 8px; }
 .filechip {
   display: inline-block;
   padding: 8px 10px;
