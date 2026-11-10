@@ -6,10 +6,16 @@
  *   Authorization: Bearer <token>
  *   multipart: file / fileName / size
  *
+ * 上传不能在前端拼 FormData 直传：
+ * - `@tauri-apps/plugin-http` 的 fetch 会把整个 body 变成 JS 数字数组走 IPC，
+ *   600MB 文件直接把 WebView 进程顶到 100% CPU；
+ * - WebView 的 XHR 受存储服务 CORS 限制，拿不到进度。
+ * 现在改为分片写入 Rust 侧临时文件，再由 Rust 流式上传（见 src-tauri/src/store_upload.rs）。
+ *
  * 下载：{storeUri}v2/{download_url}/download?access_token=
  * 存储服务回 application/octet-stream + nosniff，图片必须取字节后转 blob URL。
  */
-import { fetch } from '@tauri-apps/plugin-http'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import { authService } from '../auth'
 import { getServerPaths } from '../config'
 import { httpArrayBuffer } from '../http'
@@ -104,57 +110,66 @@ export function storeUploadCandidates(): string[] {
   return urls
 }
 
-function buildUploadForm(file: File): FormData {
-  const fd = new FormData()
-  fd.append('file', file, file.name)
-  fd.append('fileName', file.name)
-  fd.append('size', String(file.size))
-  return fd
+/** 单次写入临时文件的分片大小：决定内存峰值，与文件大小无关。 */
+const SPOOL_CHUNK = 8 * 1024 * 1024
+/** 写临时文件占进度条的比重，其余留给真正的网络上传。 */
+const SPOOL_WEIGHT = 5
+
+interface UploadResponse {
+  status: number
+  text: string
+}
+
+function newUploadId(): string {
+  return `u${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function scaleProgress(
+  onProgress: ((pct: number) => void) | undefined,
+  base: number,
+  span: number,
+): ((pct: number) => void) | undefined {
+  if (!onProgress) return undefined
+  return (pct) => onProgress(Math.round(base + (Math.min(100, pct) * span) / 100))
 }
 
 /**
- * XHR 在 WebView 里可能被 CORS 挡住（Tauri 的 origin 与参考网页不同），
- * 这时退回 plugin-http 的 fetch：走 Rust 侧请求，不受 CORS 限制，只是没有进度。
+ * 分片读文件写进 Rust 侧临时文件。
+ * 全程只持有一个分片的字节，600MB 文件也不会把 WebView 撑爆。
  */
-async function uploadViaTauri(
-  url: string,
+async function spoolFile(
+  id: string,
   file: File,
-  token: string,
-): Promise<{ status: number; text: string }> {
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: token ? { Authorization: 'Bearer ' + token } : {},
-    body: buildUploadForm(file),
-  })
-  return { status: resp.status, text: await resp.text() }
+  onProgress?: (pct: number) => void,
+): Promise<void> {
+  for (let offset = 0; offset < file.size; offset += SPOOL_CHUNK) {
+    const end = Math.min(offset + SPOOL_CHUNK, file.size)
+    const bytes = new Uint8Array(await file.slice(offset, end).arrayBuffer())
+    // 原始字节通道：不要改成普通对象参数，否则会退化成 JSON 数字数组。
+    await invoke('store_upload_chunk', bytes, {
+      headers: { 'x-upload-id': id },
+    })
+    onProgress?.(Math.round((end / file.size) * 100))
+  }
 }
 
-function uploadOnce(
+/** 由 Rust 流式读临时文件上传，进度经 Channel 回传。 */
+async function commitUpload(
+  id: string,
   url: string,
   file: File,
-  token: string,
   onProgress?: (pct: number) => void,
-): Promise<{ status: number; text: string }> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', url, true)
-    xhr.timeout = 10 * 60 * 1000
-    if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token)
-    xhr.upload.onprogress = (e) => {
-      if (onProgress && e.lengthComputable) {
-        onProgress(Math.round((e.loaded / e.total) * 100))
-      }
-    }
-    xhr.onload = () =>
-      resolve({ status: xhr.status, text: xhr.responseText || '' })
-    xhr.onerror = () => {
-      uploadViaTauri(url, file, token).then(resolve, (e) =>
-        reject(new Error('网络错误（CORS 或连接失败）: ' + (e?.message || e))),
-      )
-    }
-    xhr.ontimeout = () => reject(new Error('上传超时'))
-    xhr.onabort = () => reject(new Error('上传已取消'))
-    xhr.send(buildUploadForm(file))
+): Promise<UploadResponse> {
+  const channel = new Channel<{ sent: number; total: number }>()
+  channel.onmessage = (p) => {
+    if (p.total > 0) onProgress?.(Math.floor((p.sent / p.total) * 100))
+  }
+  return invoke<UploadResponse>('store_upload_commit', {
+    id,
+    url,
+    token: authService.getAccessToken(),
+    fileName: file.name,
+    onProgress: channel,
   })
 }
 
@@ -189,31 +204,44 @@ export async function uploadToStore(
   if (!file || !file.size) throw new Error('不能发送空文件')
   const urls = storeUploadCandidates()
   if (!urls.length) throw new Error('缺少 storeUri（配置中心没下发存储地址）')
-  let lastErr: Error | null = null
-  for (const url of urls) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const token = authService.getAccessToken()
-        const res = await uploadOnce(url, file, token, onProgress)
-        if (res.status === 401) {
-          if (attempt === 0 && (await authService.refreshToken())) continue
-          lastErr = new Error('登录已过期，请重新登录')
+
+  const id = newUploadId()
+  await invoke('store_upload_begin', { id })
+  try {
+    await spoolFile(
+      id,
+      file,
+      scaleProgress(onProgress, 0, SPOOL_WEIGHT),
+    )
+    const uploadProgress = scaleProgress(onProgress, SPOOL_WEIGHT, 100 - SPOOL_WEIGHT)
+    let lastErr: Error | null = null
+    for (const url of urls) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const res = await commitUpload(id, url, file, uploadProgress)
+          if (res.status === 401) {
+            if (attempt === 0 && (await authService.refreshToken())) continue
+            lastErr = new Error('登录已过期，请重新登录')
+            break
+          }
+          if (res.status === 0 || res.status === 302) {
+            throw new Error('被重定向到登录页')
+          }
+          if (res.status < 200 || res.status >= 300) {
+            throw new Error('HTTP ' + res.status)
+          }
+          return parseUploadResult(res.text)
+        } catch (err: any) {
+          lastErr = err
           break
         }
-        if (res.status === 0 || res.status === 302) {
-          throw new Error('被重定向到登录页')
-        }
-        if (res.status < 200 || res.status >= 300) {
-          throw new Error('HTTP ' + res.status)
-        }
-        return parseUploadResult(res.text)
-      } catch (err: any) {
-        lastErr = err
-        break
       }
     }
+    throw lastErr || new Error('上传失败')
+  } finally {
+    // 成功或失败都清掉临时文件；失败后重试会重新分片写入。
+    void invoke('store_upload_cancel', { id }).catch(() => {})
   }
-  throw lastErr || new Error('上传失败')
 }
 
 /** 图片候选地址：配置里的 storeUri，以及网关同路径。 */

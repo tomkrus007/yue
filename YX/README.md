@@ -16,6 +16,7 @@
 - 心跳保活（Cmd.uBeats=6 / dBeats=16，30 秒间隔，3 次丢失重连）
 - 收发文本 / 图片 / 文件消息（Cmd.uSendMsg=3 / dRecMsg=3）
 - 附件上传 `store/putFile`，支持多选、粘贴、拖拽；图片内联显示
+- 大文件上传走 Rust 流式链路（前端 8MB 分片写临时文件，Rust 读文件发 multipart），600MB+ 文件不再撑爆 WebView 内存
 - 离线消息拉取（Cmd.uOfflineStart=102 / dEOFoffline=97 / dEOFonline=101）
 - 历史消息（`get/history/date`）与继续往前翻页
 - REST 会话列表（`emb/sessions/latest`）、未读数、置顶、折叠、免打扰
@@ -126,6 +127,7 @@ YX/
 │   └── main.ts
 └── src-tauri/
     ├── src/zt_sdk.rs            # 零信任：驱动官方客户端 SDK 的 JSON-RPC
+    ├── src/store_upload.rs      # 附件上传：Rust 流式读临时文件发 multipart（大文件不占 WebView 内存）
     ├── tauri.conf.json          # CSP 允许 blob/ws/wss/http/https
     └── capabilities/default.json  # http 域名白名单 *.bingolink.biz *.yuexiu.com
 ```

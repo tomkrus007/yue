@@ -42,8 +42,8 @@ pnpm tauri build   # 打包；需要关窗不退出的常驻版用 pnpm tauri bu
 
 ## 关键约束
 
-- 所有 HTTP 必须用 `@tauri-apps/plugin-http` 的 `fetch`，不要用浏览器 `fetch`；只有附件上传为了进度用 XHR，并在失败时回退到 plugin-http。
-- 新增域名必须同步 `src-tauri/capabilities/default.json` 的 http 白名单；CSP 在 `src-tauri/tauri.conf.json`。
+- 所有 HTTP 必须用 `@tauri-apps/plugin-http` 的 `fetch`，不要用浏览器 `fetch`；**上传是唯一例外**：plugin-http 的 `fetch` 会 `await req.arrayBuffer()` 后 `Array.from(new Uint8Array(...))` 把整个 body 变成 JS 数字数组走 IPC，600MB 文件直接把 WebView 进程顶到 100% CPU（界面卡死）。聊天附件与云盘上传一律走 `store_upload_begin/chunk/commit/cancel`：前端按 8MB 分片写临时文件，Rust 流式发 multipart（`src-tauri/src/store_upload.rs`）。分片必须用 `invoke(cmd, Uint8Array, { headers })` 的原始字节通道，不能塞进普通对象参数，否则同样退化成数字数组。
+- 新增域名必须同步 `src-tauri/capabilities/default.json` 的 http 白名单；CSP 在 `src-tauri/tauri.conf.json`，`connect-src` 要保留 `ipc:`（原始字节 IPC 走 `ipc://localhost`，被 CSP 挡掉会退化成 JSON 数字数组）。
 - 服务地址默认写死在 `src/services/config.ts`；登录时会先拉配置中心并写入 localStorage（`serverPaths`），运行时用 `getServerPaths()` 取真实地址。调试仍可用 localStorage 覆盖 `ssoUrl`、`microServiceUrl`、`embWebSocketUri`、`uamApiUri`、`diskOpenApiUrl`、`diskSiteUrl`、`diskStreamUrl`。
 - 登录是两步 OAuth2（v2 token 换 v3）+ RSA 加密密码。登录主流程只等 token；`getCurrentUser()` 必须保持异步/带超时，否则会卡住跳转（见 `LESSONS.md`）。
 - IM 是自定义二进制帧，不是 JSON/protobuf；`content` 的“加密”只是按位取反 + Base64。帧中“有无负载”看 byte 3（`operation`），不是 byte 2——注释已说明原版字段名写反，不要“修正”。

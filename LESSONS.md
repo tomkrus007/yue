@@ -64,3 +64,11 @@
 ## 待办直接外部打开优先
 
 - 用户已明确放弃客户端 AccessToken／CAS 免登录。解析出详情地址后立即用系统浏览器打开原始链接；不再查询 CAS 配置、创建 SSO 会话、兑换票据或预先跳转认证页。此前免登录与降级策略仅为历史记录，不应恢复。
+
+## 大文件上传不能把文件内容拼进 WebView 的请求体
+
+- **现象**：聊天窗口发送 600MB+ 文件，进度条停在「上传中 · 0%」，随后界面卡死，`tauri://localhost` 进程 CPU 100%。
+- **原因**：XHR 上传一失败就回退到 `@tauri-apps/plugin-http` 的 `fetch`，而它的实现是 `await req.arrayBuffer()` 后 `Array.from(new Uint8Array(buffer))`——把整个 body 变成「一个字节一个 JS 数字」的数组再走 IPC。600MB 就是 6 亿个元素，WebView 进程内存暴涨 + 主线程长时间 GC，表现为卡死。
+- **另一个坑**：`invoke` 若把分片塞进普通对象参数（`{ data: Uint8Array }`），`processIpcMessage` 同样 `Array.from` 化成数字数组；必须用 `invoke(cmd, uint8, { headers })` 的原始字节通道，且 CSP `connect-src` 要放行 `ipc:`，否则自定义协议 IPC 失败会整体退化成 JSON 字符串。
+- **做法**：`src-tauri/src/store_upload.rs` 提供 `store_upload_begin/chunk/commit/cancel`：前端 `file.slice()` 按 8MB 分片写临时文件，Rust 用 `reqwest` 从临时文件流式发 multipart（`Part::stream_with_length` 保证 Content-Length），进度经 `Channel` 回传。内存与文件大小无关；上传成功/失败都 `store_upload_cancel` 删临时文件，启动时清理残留。官方客户端也是走本机 Go 服务读文件，而不是浏览器直传。
+- **验证**：`cargo test store_upload` 用本地假存储服务校验 multipart 字段（`file/fileName/size`）、`Content-Length`、Bearer 头与正文完整性；`pnpm build` 只做类型检查，抓不到这类运行时卡死。

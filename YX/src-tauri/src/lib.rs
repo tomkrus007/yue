@@ -1,4 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+mod store_upload;
 mod zt_sdk;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 
@@ -108,6 +109,9 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // 上次异常退出留下的上传分片直接清掉
+            store_upload::cleanup_stale();
+            app.manage(store_upload::UploadSpool::default());
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出应用", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -141,7 +145,11 @@ pub fn run() {
             zt_sdk_status,
             zt_sdk_login,
             zt_sdk_logout,
-            zt_sdk_auth_types
+            zt_sdk_auth_types,
+            store_upload::store_upload_begin,
+            store_upload::store_upload_chunk,
+            store_upload::store_upload_commit,
+            store_upload::store_upload_cancel
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
