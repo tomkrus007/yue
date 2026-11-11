@@ -7,6 +7,7 @@
  * - GET  /v2/users/{id}/details   单个用户详情
  * - GET  /v1/contacts/list        联系人列表 → { code, data }
  * - GET  /v1/groups/joined        我加入的群组 → { code, data }
+ * - POST /v2/groups/create        建群（JSON）→ { code:200, data: 新群 id }
  */
 import { fetch } from '@tauri-apps/plugin-http'
 import { authService } from './auth'
@@ -278,16 +279,27 @@ export class ContactService {
     return []
   }
 
-  /** 当前群组的成员，不使用全员通讯录代替。 */
+  /**
+   * 当前群组的成员，不使用全员通讯录代替。
+   * v2/groups/{id}/users/page（limit=500、isCount、includeRole，对齐官方），
+   * 条目含 memberRole / nickName；名称缺失时用批量详情补齐。
+   */
   async getGroupMembers(groupId: string): Promise<LinkUserDetail[]> {
-    const resp = await fetch(this.base + `v1/groups/${encodeURIComponent(groupId)}/members`, {
-      method: 'GET',
-      headers: this.headers(),
+    const params = new URLSearchParams({
+      groupId,
+      offset: '0',
+      limit: '500',
+      isCount: 'true',
+      includeRole: 'true',
     })
+    const resp = await fetch(
+      this.base + `v2/groups/${encodeURIComponent(groupId)}/users/page?` + params.toString(),
+      { method: 'GET', headers: this.headers() },
+    )
     if (!resp.ok) throw new Error(`获取群成员失败: HTTP ${resp.status}`)
     const json = await resp.json()
     const data = json?.code !== undefined ? this.unwrapCode(json) : json
-    const list = Array.isArray(data) ? data : data?.members ?? data?.users ?? data?.ids
+    const list = Array.isArray(data) ? data : data?.users ?? data?.members ?? data?.ids
     if (!Array.isArray(list)) throw new Error('群成员接口返回格式异常')
     const members = list.map((item: any) => typeof item === 'string'
       ? { userId: item } : { ...item, ...(item.user || {}), userId: String(item.user?.userId || item.userId || item.id || '') })
@@ -301,9 +313,32 @@ export class ContactService {
     return [...new Map<string, LinkUserDetail>(members.map((item: LinkUserDetail) => [item.userId, item])).values()]
   }
 
-  /** 群组详情 */
+  /**
+   * 建群：POST {uamApiUri}/v2/groups/create（JSON）
+   * 官方流程：自己永远排第一且 memRole=2（群主），其余成员 memRole=0；成功时 data 即新群 id。
+   */
+  async createGroup(
+    name: string,
+    users: { memRole: number; id: string }[],
+  ): Promise<string> {
+    const resp = await fetch(this.base + 'v2/groups/create', {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, users }),
+    })
+    if (!resp.ok) throw new Error(`创建群组失败: HTTP ${resp.status}`)
+    const json = await resp.json().catch(() => null)
+    if (!json) throw new Error('创建群组失败：接口返回格式异常')
+    if (typeof json === 'string') return json
+    const data = this.unwrapCode(json)
+    const id = typeof data === 'string' ? data : data?.groupId || data?.id || ''
+    if (!id) throw new Error('创建群组失败：接口未返回群 id')
+    return String(id)
+  }
+
+  /** 群组详情（官方用 v2/groups/{id}/details，v1/detail 已不对齐） */
   async getGroupDetail(groupId: string): Promise<any> {
-    const resp = await fetch(this.base + `v1/groups/${groupId}/detail`, {
+    const resp = await fetch(this.base + `v2/groups/${groupId}/details`, {
       method: 'GET',
       headers: this.headers(),
     })

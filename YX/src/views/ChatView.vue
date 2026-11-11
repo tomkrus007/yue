@@ -145,6 +145,13 @@
             <span class="muted">{{ im.sessionTypeLabel(im.currentSession.type) }}</span>
           </div>
           <div class="head-actions">
+            <button
+              v-if="im.currentSession.type === 2"
+              class="small secondary"
+              @click="groupSettingsOpen = true"
+            >
+              群设置
+            </button>
             <button class="small secondary" @click="toggleSelection">{{ selecting ? '取消多选' : '多选转发' }}</button>
             <button class="small secondary" @click="historyOpen = true">历史</button>
             <button
@@ -234,7 +241,7 @@
           <button
             class="attach"
             title="添加待发送图片 / 文件"
-            :disabled="submitting || im.sending || !im.authed"
+            :disabled="submitting || im.sending || !im.authed || composerBlocked"
             @click="fileInput?.click()"
           >
             ＋
@@ -248,14 +255,17 @@
                 <button class="remove-attachment" :disabled="submitting" :aria-label="`删除待发送附件：${item.file.name}`" @click="removeAttachment(composerKey, item.id)">×</button>
               </div>
             </div>
+            <div v-if="composerBlocked" class="composer-blocked" role="status">
+              {{ composerBlockText }}
+            </div>
             <textarea
               ref="composerInput"
               v-model="draft"
               @input="onComposerInput"
               @compositionend="onComposerInput"
               :style="{ height: `${composerHeight}px` }"
-              :disabled="submitting"
-              placeholder="输入消息，Enter 发送，Shift+Enter 换行；可直接粘贴或拖入图片/文件"
+              :disabled="submitting || composerBlocked"
+              :placeholder="composerBlocked ? '' : '输入消息，Enter 发送，Shift+Enter 换行；可直接粘贴或拖入图片/文件'"
               @keydown.enter.exact="onComposerEnter"
               @paste="onPaste"
             ></textarea>
@@ -263,7 +273,10 @@
               {{ im.currentUploadText() }}
             </div>
           </div>
-          <button @click="onSend" :disabled="submitting || im.sending || !im.authed || (!draft.trim() && !pendingAttachments.length)">发送</button>
+          <button
+            @click="onSend"
+            :disabled="submitting || im.sending || !im.authed || composerBlocked || (!draft.trim() && !pendingAttachments.length)"
+          >发送</button>
         </footer>
       </template>
 
@@ -288,6 +301,16 @@
 
     <!-- 应用面板 -->
     <AppPanel v-model:open="appOpen" />
+
+    <!-- 群设置（仅群会话） -->
+    <GroupSettingsModal
+      v-if="groupSettingsOpen && im.currentSession"
+      :open="groupSettingsOpen"
+      :group-id="im.currentSession.id"
+      :group-name="im.currentSession.name"
+      @close="onGroupSettingsClose"
+      @left="onGroupLeft"
+    />
 
     <!-- 大图 -->
     <div v-if="previewUrl" class="imgview" @click="previewUrl = ''">
@@ -332,6 +355,8 @@ import AppPanel from '../components/AppPanel.vue'
 import ConnectionStatus from '../components/ConnectionStatus.vue'
 import ChatDrawer from '../components/ChatDrawer.vue'
 import MessageToolbar from '../components/MessageToolbar.vue'
+import GroupSettingsModal from '../components/GroupSettingsModal.vue'
+import { groupService } from '../services/group-client'
 
 const auth = useAuthStore()
 const im = useImStore()
@@ -482,7 +507,7 @@ function stopComposerResize(event: PointerEvent) {
 }
 
 function addAttachments(files: File[]) {
-  if (submitting.value || !im.currentSession) return
+  if (submitting.value || !im.currentSession || composerBlocked.value) return
   const items = files.map(file => ({
     id: ++attachmentId,
     file,
@@ -506,9 +531,63 @@ const appOpen = ref(false)
 const showLogs = ref(false)
 const drawerOpen = ref(false)
 const drawerAllowed = ref(false)
+const groupSettingsOpen = ref(false)
 const previewUrl = ref('')
 const previewName = ref('')
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 群发送拦截（对齐官方 isSilentMode 口径）：
+ * - 非群成员（memberRole === -1）：不能发送
+ * - 全员禁言开启且「我被禁言」：不能发送（禁言状态在成员列表里，按会话缓存于 im.groupSelfMuted）
+ */
+const composerBlocked = computed(() => {
+  const s = im.currentSession
+  if (!s || s.type !== 2) return false
+  if (Number(im.groupDetails.get(s.id)?.memberRole ?? 0) === -1) return true
+  return im.groupSelfMuted.has(s.id)
+})
+const composerBlockText = computed(() => {
+  const notMember =
+    Number(im.groupDetails.get(im.currentSession?.id || '')?.memberRole ?? 0) === -1
+  return notMember
+    ? '你不是该群成员，无法发送消息'
+    : `${im.currentSession?.name || '本'}群禁言中，无法发送消息，需解除禁言后才能发送消息`
+})
+
+/** 拉取群详情并按官方口径刷新「自己被禁言」标记（仅全员禁言开启时需要查成员列表） */
+async function syncGroupGate(groupId: string) {
+  try {
+    const d = await im.ensureGroupDetail(groupId)
+    if (!d || Number(d.silentStatus) !== 1) {
+      im.setSelfMuted(groupId, false)
+      return
+    }
+    const me = authService.getCurrentUserId()
+    const mine = (await groupService.getMembers(groupId)).find(m => m.userId === me)
+    im.setSelfMuted(
+      groupId,
+      !!mine &&
+        (Number(mine.silentExpireIn) > 0 ||
+          (Number(mine.silentStatus) === 1 && Number(mine.memberRole) === 0)),
+    )
+  } catch {
+    im.setSelfMuted(groupId, false)
+  }
+}
+
+function onGroupSettingsClose() {
+  groupSettingsOpen.value = false
+  const s = im.currentSession
+  // 面板内可能变更过禁言名单（如被加入允许发言名单），关闭时复查一次
+  if (s?.type === 2) void syncGroupGate(s.id)
+}
+
+function onGroupLeft() {
+  const s = im.currentSession
+  groupSettingsOpen.value = false
+  if (s?.type === 2) im.markLeftGroup(s.id)
+}
 
 const emptyHint = computed(() => {
   if (im.sessionTab === 'dm') return '还没有单聊'
@@ -589,6 +668,8 @@ watch(
     const s = im.currentSession
     if (!s) return
     drawerAllowed.value = await im.ensureTeam(s)
+    groupSettingsOpen.value = false
+    if (s.type === 2) void syncGroupGate(s.id)
   },
   { immediate: true },
 )
@@ -646,6 +727,7 @@ function onComposerEnter(event: KeyboardEvent) {
 
 async function onSend() {
   if (submitting.value || im.sending || !im.authed || !im.currentSession) return
+  if (composerBlocked.value) return
   const key = composerKey.value
   const text = draft.value.trim()
   const items = [...pendingAttachments.value]
@@ -954,6 +1036,11 @@ function openPreview(payload: { url: string; name: string }) {
 .pending-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; margin-top: 4px; }
 .remove-attachment { position: absolute; top: -5px; left: -5px; width: 20px; height: 20px; padding: 0; border-radius: 50%; background: #d94343; color: white; font-size: 16px; line-height: 20px; }
 .upload-state { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.composer-blocked {
+  padding: 6px 8px; margin: 6px 0;
+  background: #fdecec; color: var(--danger);
+  border-radius: 6px; font-size: 12px;
+}
 
 .empty-main {
   flex: 1;

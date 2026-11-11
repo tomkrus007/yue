@@ -175,6 +175,7 @@ export const STORAGE_KEYS = {
   imFolded: 'yl.im.folded',
   imMuted: 'yl.im.muted',
   imGroupMeta: 'yl.im.groupMeta',
+  imLeftGroups: 'yl.im.leftGroups',
   imTab: 'yl.im.tab',
   savedCreds: 'yl.creds',
 } as const

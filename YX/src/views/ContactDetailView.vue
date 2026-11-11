@@ -17,7 +17,10 @@
             <span v-if="detail.loginId || detail.userName" class="mono">{{ detail.loginId || detail.userName }}</span>
           </div>
         </div>
-        <button class="primary" @click="goChat">发消息</button>
+        <div class="hero-actions">
+          <button class="primary" @click="goChat">发消息</button>
+          <button v-if="kind === 'group'" class="secondary" @click="groupSettingsOpen = true">群设置</button>
+        </div>
       </div>
 
       <dl class="fields">
@@ -44,6 +47,15 @@
       <pre v-if="showRaw" class="raw">{{ JSON.stringify(detail, null, 2) }}</pre>
       <button class="link" @click="showRaw = !showRaw">{{ showRaw ? '收起原始数据' : '查看原始数据' }}</button>
     </div>
+
+    <GroupSettingsModal
+      v-if="groupSettingsOpen && kind === 'group'"
+      :open="groupSettingsOpen"
+      :group-id="id"
+      :group-name="name"
+      @close="groupSettingsOpen = false"
+      @left="onGroupLeft"
+    />
   </div>
 </template>
 
@@ -52,6 +64,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { contactService } from '../services/contact-client'
 import { useImStore } from '../stores/im'
+import GroupSettingsModal from '../components/GroupSettingsModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,6 +77,7 @@ const detail = ref<any>({})
 const loading = ref(true)
 const error = ref('')
 const showRaw = ref(false)
+const groupSettingsOpen = ref(false)
 
 const groupTypeLabel = computed(() => {
   switch (Number(detail.value.type)) {
@@ -102,6 +116,11 @@ function goChat() {
   im.openChat(id.value, name.value || id.value, kind.value === 'group' ? 2 : 1)
   router.push('/chat')
 }
+
+function onGroupLeft() {
+  groupSettingsOpen.value = false
+  im.markLeftGroup(id.value)
+}
 </script>
 
 <style scoped>
@@ -118,6 +137,7 @@ function goChat() {
   border-radius: 12px; padding: 24px;
 }
 .hero { display: flex; align-items: center; gap: 18px; margin-bottom: 24px; }
+.hero-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .big-avatar {
   width: 72px; height: 72px; border-radius: 12px;
   background: var(--primary); color: #fff;

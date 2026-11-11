@@ -17,6 +17,7 @@ import {
   fetchSessions,
 } from '../services/im/session-api'
 import { stripHtml, toPlainText } from '../services/im/content'
+import { groupService, type GroupDetail } from '../services/group-client'
 import {
   isServiceAccount,
   isTeamGroup,
@@ -103,6 +104,15 @@ export const useImStore = defineStore('im', () => {
   const pinned = ref<Record<string, number>>({})
   const directory = ref<Map<string, DirectoryEntry>>(new Map())
   const groupMeta = ref<Map<string, boolean>>(new Map())
+
+  /** 群详情缓存（群管理用）；memberRole=-1 非成员、groupJieSan 已解散都依赖它 */
+  const groupDetails = ref<Map<string, GroupDetail>>(new Map())
+  /** 本端已退群/已解散的群（防止服务端同步把旧会话加回来） */
+  const leftGroups = ref<Set<string>>(
+    new Set(readJson<string[]>(STORAGE_KEYS.imLeftGroups, [])),
+  )
+  /** 全员禁言群里「自己被禁言」的会话 id（禁言状态在成员列表里，按会话缓存） */
+  const groupSelfMuted = ref<Set<string>>(new Set())
 
   /** 每个会话各自的上传状态：key = type|id */
   const uploads = ref<Record<string, { count: number; text: string }>>({})
@@ -212,6 +222,10 @@ export const useImStore = defineStore('im', () => {
     writeJson(STORAGE_KEYS.imGroupMeta, [...groupMeta.value])
   }
 
+  function persistLeftGroups(): void {
+    writeJson(STORAGE_KEYS.imLeftGroups, [...leftGroups.value])
+  }
+
   loadLocal()
 
   /* ---------------- 会话聚合 ---------------- */
@@ -224,6 +238,27 @@ export const useImStore = defineStore('im', () => {
     lastTime?: number
     hasLocal?: boolean
   }): ChatSession {
+    // 已退群/解散的群不再回填会话（官方不删本地会话，复刻版显式清理）
+    if (input.type === 2 && leftGroups.value.has(input.id)) {
+      const found = sessions.value.find((s) => s.id === input.id)
+      if (found) {
+        sessions.value = sessions.value.filter((s) => s.id !== input.id)
+        delete unread.value[input.id]
+        delete unreadAt.value[input.id]
+        persistSessions()
+        persistUnread()
+        return found
+      }
+      // 会话不存在：返回一次性对象，避免调用方写入不存在的会话
+      return {
+        id: input.id,
+        type: 2,
+        name: input.name || input.id,
+        preview: '',
+        lastTime: 0,
+        hasLocal: false,
+      }
+    }
     let found = sessions.value.find((s) => s.id === input.id)
     if (found) {
       if (input.name) found.name = input.name
@@ -658,6 +693,9 @@ export const useImStore = defineStore('im', () => {
     pinned.value = {}
     directory.value = new Map()
     groupMeta.value = new Map()
+    groupDetails.value = new Map()
+    leftGroups.value = new Set()
+    groupSelfMuted.value = new Set()
     uploads.value = {}
     contacts.value = []
     friends.value = []
@@ -672,6 +710,7 @@ export const useImStore = defineStore('im', () => {
       STORAGE_KEYS.imFolded,
       STORAGE_KEYS.imMuted,
       STORAGE_KEYS.imGroupMeta,
+      STORAGE_KEYS.imLeftGroups,
     ]) {
       localStorage.removeItem(key)
     }
@@ -930,6 +969,65 @@ export const useImStore = defineStore('im', () => {
     return team
   }
 
+  /* ---------------- 群管理 ---------------- */
+
+  /** 群详情缓存（群设置/非成员与禁言判定依赖）；失败返回缓存或 null */
+  async function ensureGroupDetail(groupId: string): Promise<GroupDetail | null> {
+    const cached = groupDetails.value.get(groupId)
+    if (cached) return cached
+    try {
+      const d = await groupService.getGroupDetail(groupId)
+      if (d) groupDetails.value.set(groupId, d)
+      return d || cached || null
+    } catch (error) {
+      if (cached) return cached
+      throw error
+    }
+  }
+
+  function setGroupDetail(d: GroupDetail): void {
+    groupDetails.value.set(String(d.groupId), d)
+  }
+
+  /** 群改名后同步：会话名 + 联系人/群列表条目 */
+  function renameSession(id: string, name: string): void {
+    if (!name) return
+    const s = sessions.value.find((x) => x.id === id)
+    if (s) s.name = name
+    for (const c of contacts.value) {
+      if (c.id === id && c.kind === 'group') c.name = name
+    }
+    for (const g of groups.value) {
+      if (String(g.groupId || g.id) === id) {
+        g.name = name
+        g.groupName = name
+      }
+    }
+    persistSessions()
+  }
+
+  /** 退群/解散成功后：移除会话并标记，防止服务端同步把旧会话加回来 */
+  function markLeftGroup(id: string): void {
+    leftGroups.value.add(id)
+    persistLeftGroups()
+    const idx = sessions.value.findIndex((x) => x.id === id)
+    if (idx >= 0) {
+      sessions.value.splice(idx, 1)
+      delete unread.value[id]
+      delete unreadAt.value[id]
+      persistSessions()
+      persistUnread()
+    }
+    if (currentSessionId.value === id) currentSessionId.value = ''
+    groupDetails.value.delete(id)
+  }
+
+  /** 全员禁言群里「自己被禁言」的判定缓存（数据来自成员列表） */
+  function setSelfMuted(id: string, on: boolean): void {
+    if (on) groupSelfMuted.value.add(id)
+    else groupSelfMuted.value.delete(id)
+  }
+
   /* ---------------- 联系人 / 搜索 ---------------- */
 
   /** 过滤后的联系人列表 */
@@ -1028,6 +1126,9 @@ export const useImStore = defineStore('im', () => {
     pinned,
     directory,
     groupMeta,
+    groupDetails,
+    leftGroups,
+    groupSelfMuted,
     contacts,
     contactsLoading,
     contactKeyword,
@@ -1054,6 +1155,11 @@ export const useImStore = defineStore('im', () => {
     toggleMuteSession,
     toggleFoldSession,
     ensureTeam,
+    ensureGroupDetail,
+    setGroupDetail,
+    renameSession,
+    markLeftGroup,
+    setSelfMuted,
     sessionTypeLabel,
     loadContacts,
     searchAll,

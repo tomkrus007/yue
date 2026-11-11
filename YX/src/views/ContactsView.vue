@@ -28,7 +28,10 @@
 
     <main class="contacts-main">
       <header class="contacts-header">
-        <h2>通讯录</h2>
+        <div class="header-row">
+          <h2>通讯录</h2>
+          <button class="primary-btn" @click="createOpen = true">创建群组</button>
+        </div>
         <div class="search-box">
           <input
             v-model="keyword"
@@ -123,6 +126,11 @@
       </div>
     </main>
     <AppPanel v-model:open="appOpen" />
+    <CreateGroupModal
+      :open="createOpen"
+      @close="createOpen = false"
+      @created="onGroupCreated"
+    />
   </div>
 </template>
 
@@ -131,13 +139,16 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppPanel from '../components/AppPanel.vue'
 import ConnectionStatus from '../components/ConnectionStatus.vue'
+import CreateGroupModal from '../components/CreateGroupModal.vue'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
+import { FromType } from '../services/im/types'
 import type { ContactEntry } from '../services/contact-client'
 
 const auth = useAuthStore()
 const im = useImStore()
 const appOpen = ref(false)
+const createOpen = ref(false)
 const router = useRouter()
 const keyword = ref('')
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -179,6 +190,14 @@ function startChat(c: ContactEntry) {
   router.push('/chat')
 }
 
+/** 建群成功：本端本地补会话并直接打开聊天，再刷新通讯录群列表（对齐官方 OpenChat 行为） */
+function onGroupCreated(group: { id: string; name: string }) {
+  createOpen.value = false
+  im.openChat(group.id, group.name, FromType.GROUP)
+  im.loadContacts()
+  router.push('/chat')
+}
+
 function onLogout() {
   im.resetLocal()
   auth.logout()
@@ -210,7 +229,9 @@ function onLogout() {
 .contacts-header {
   background: var(--panel); padding: 16px 24px; border-bottom: 1px solid var(--border);
 }
-.contacts-header h2 { font-size: 18px; margin-bottom: 12px; }
+.contacts-header h2 { font-size: 18px; margin-bottom: 0; }
+.header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.primary-btn { padding: 6px 14px; font-size: 13px; }
 .search-box { position: relative; display: flex; align-items: center; }
 .search-box input { max-width: 520px; }
 .spinner { margin-left: 10px; font-size: 12px; color: var(--text-muted); }
