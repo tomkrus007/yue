@@ -18,7 +18,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { authService } from '../auth'
 import { getServerPaths } from '../config'
-import { httpArrayBuffer } from '../http'
+import { httpArrayBuffer, httpJson } from '../http'
 import type { ImageMeta } from './content'
 
 /** 官方只把这 5 种后缀当图片，其余（含 webp/heic）都按文件发送。 */
@@ -288,6 +288,29 @@ export function fileUrl(seg: ImageMeta): string {
     '/download?access_token=' +
     encodeURIComponent(authService.getAccessToken())
   )
+}
+
+/** 聊天附件走存储预览服务，不使用云盘文件的预览接口。 */
+export function canPreviewFile(seg: ImageMeta): boolean {
+  const ext = (seg.extension || seg.fileName.split('.').pop() || '').replace(/^\./, '').toLowerCase()
+  return !!seg.downloadUrl && !/^https?:/i.test(seg.downloadUrl) &&
+    ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'pdf'].includes(ext)
+}
+
+export async function filePreviewUrl(seg: ImageMeta): Promise<string> {
+  if (!canPreviewFile(seg)) throw new Error('该附件不支持在线预览')
+  const base = String(getServerPaths().storeUri || '').replace(/\/+$/, '')
+  if (!base) throw new Error('缺少存储服务地址')
+  const result = await httpJson<{ s: number; r?: string; m?: string }>(
+    base + '/store/getPreviewUrl?fileId=' + encodeURIComponent(seg.downloadUrl),
+    { tokenInQuery: true },
+  )
+  if (Number(result?.s) !== 1 || typeof result.r !== 'string' || !result.r.trim()) {
+    throw new Error(result?.m || '服务端暂不支持预览此文件，请下载后查看')
+  }
+  const url = new URL(result.r)
+  if (!['https:', 'http:'].includes(url.protocol)) throw new Error('预览地址无效')
+  return url.href
 }
 
 export function appIconUrl(key: string): string {

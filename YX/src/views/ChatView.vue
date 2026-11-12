@@ -124,6 +124,14 @@
               >
                 {{ im.folded.has(s.id) ? '展开' : '折叠' }}
               </button>
+              <button
+                class="icon-btn fold"
+                title="仅从列表移除，保留消息记录"
+                aria-label="移除历史对话"
+                @click.stop="im.removeSession(s.id)"
+              >
+                移除
+              </button>
               <span v-if="im.unreadOf(s.id) > 0" class="badge">
                 {{ im.unreadOf(s.id) > 99 ? '99+' : im.unreadOf(s.id) }}
               </span>
@@ -238,14 +246,21 @@
             hidden
             @change="onPick"
           />
-          <button
-            class="attach"
-            title="添加待发送图片 / 文件"
-            :disabled="submitting || im.sending || !im.authed || composerBlocked"
-            @click="fileInput?.click()"
-          >
-            ＋
-          </button>
+          <div class="composer-tools">
+            <div class="emoji-picker" @keydown.esc="emojiOpen = false">
+              <button class="composer-tool" title="表情" aria-label="选择表情" :aria-expanded="emojiOpen" :disabled="submitting || composerBlocked" @mousedown.prevent @click="emojiOpen = !emojiOpen">☺</button>
+              <template v-if="emojiOpen">
+                <div class="emoji-dismiss" @click="emojiOpen = false"></div>
+                <div class="emoji-panel" role="dialog" aria-label="选择表情">
+                  <div class="emoji-heading">常用表情 <button aria-label="关闭表情" @click="emojiOpen = false">×</button></div>
+                  <div class="composer-emojis">
+                    <button v-for="(emoji, name) in composerEmojis" :key="name" :title="name" :aria-label="name" @mousedown.prevent @click="insertEmoji(emoji)">{{ emoji }}</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <button class="composer-tool" title="添加图片 / 文件" aria-label="添加图片或文件" :disabled="submitting || im.sending || !im.authed || composerBlocked" @click="fileInput?.click()">＋</button>
+          </div>
           <div class="composer-main">
             <div v-if="pendingAttachments.length" class="pending-attachments">
               <div v-for="item in pendingAttachments" :key="item.id" class="pending-attachment" :title="item.file.name">
@@ -265,7 +280,7 @@
               @compositionend="onComposerInput"
               :style="{ height: `${composerHeight}px` }"
               :disabled="submitting || composerBlocked"
-              :placeholder="composerBlocked ? '' : '输入消息，Enter 发送，Shift+Enter 换行；可直接粘贴或拖入图片/文件'"
+              :placeholder="composerBlocked ? '' : '输入消息，可粘贴或拖入图片、文件'"
               @keydown.enter.exact="onComposerEnter"
               @paste="onPaste"
             ></textarea>
@@ -273,10 +288,13 @@
               {{ im.currentUploadText() }}
             </div>
           </div>
+          <div class="composer-actions">
+          <span>Enter 发送 · Shift+Enter 换行</span>
           <button
             @click="onSend"
             :disabled="submitting || im.sending || !im.authed || composerBlocked || (!draft.trim() && !pendingAttachments.length)"
           >发送</button>
+          </div>
         </footer>
       </template>
 
@@ -426,6 +444,26 @@ const draft = computed({
   get: () => drafts.value[composerKey.value] || '',
   set: (value: string) => { drafts.value[composerKey.value] = value },
 })
+const emojiOpen = ref(false)
+const composerEmojis = {
+  微笑: '🙂', 大笑: '😄', 笑哭: '😂', 偷笑: '🤭', 害羞: '😊', 喜爱: '🥰',
+  调皮: '😜', 眨眼: '😉', 酷: '😎', 思考: '🤔', 惊讶: '😮', 捂脸: '🤦',
+  流泪: '😢', 大哭: '😭', 委屈: '🥺', 生气: '😠', 尴尬: '😅', 困: '🥱',
+  点赞: '👍', 鼓掌: '👏', 握手: '🤝', 合十: '🙏', 加油: '💪', 胜利: '✌️',
+  好的: '👌', 爱心: '❤️', 玫瑰: '🌹', 庆祝: '🎉', 礼物: '🎁', 咖啡: '☕',
+}
+watch(composerKey, () => { emojiOpen.value = false })
+async function insertEmoji(emoji: string) {
+  if (submitting.value || composerBlocked.value) return
+  const input = composerInput.value
+  const start = input?.selectionStart ?? draft.value.length
+  const end = input?.selectionEnd ?? start
+  draft.value = draft.value.slice(0, start) + emoji + draft.value.slice(end)
+  emojiOpen.value = false
+  await nextTick()
+  input?.focus()
+  input?.setSelectionRange(start + emoji.length, start + emoji.length)
+}
 const composerInput = ref<HTMLTextAreaElement | null>(null)
 const mentionPosition = ref<number | null>(null)
 interface DraftMention { id: string; start: number; end: number }
@@ -993,7 +1031,8 @@ function openPreview(payload: { url: string; name: string }) {
   background: var(--panel);
   display: flex;
   gap: 10px;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: stretch;
 }
 .composer-resize-handle {
   position: absolute;
@@ -1020,14 +1059,19 @@ function openPreview(payload: { url: string; name: string }) {
   border-radius: 8px;
 }
 .attach:hover { background: #e3e7eb; }
-.composer-main { flex: 1; min-width: 0; }
+.composer-main { min-width: 0; }
 .composer textarea {
   width: 100%;
   resize: none;
   height: 100px;
   min-height: 60px;
   max-height: 45vh;
-  padding: 8px 12px;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
 }
 .pending-attachments { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 4px; max-height: 180px; overflow-y: auto; }
 .pending-attachment { position: relative; width: 90px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; }
@@ -1089,4 +1133,21 @@ function openPreview(payload: { url: string; name: string }) {
 <style scoped>
 .forward-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--border); }
 .detail-btn { flex-shrink: 0; }
+</style>
+
+<style scoped>
+.composer-tools { display: flex; align-items: center; gap: 8px; }
+.composer-tool { background: transparent; color: var(--text-muted); width: 32px; height: 30px; padding: 0; font-size: 25px; border-radius: 4px; }
+.composer-tool:hover { background: var(--bg); color: var(--text); }
+.composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
+.composer-actions span { font-size: 11px; color: var(--text-muted); }
+.composer-actions > button { min-width: 80px; }
+.emoji-picker { position: relative; }
+.emoji-dismiss { position: fixed; inset: 0; z-index: 49; }
+.emoji-panel { position: absolute; bottom: 38px; left: 0; width: min(320px, 70vw); padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px #0002; z-index: 50; }
+.emoji-heading { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.emoji-heading button { background: transparent; color: inherit; padding: 0 6px; }
+.composer-emojis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.composer-emojis button { background: transparent; padding: 6px; font-size: 24px; }
+.composer-emojis button:hover { background: var(--bg); }
 </style>

@@ -45,16 +45,19 @@
           <span
             v-else-if="seg.type === 'file'"
             class="imgchip filechip"
-            :title="seg.downloadUrl ? '点击下载' : '缺少下载地址'"
-            @click.stop="download(seg)"
+            :title="canPreviewFile(seg) ? '在浏览器中预览' : seg.downloadUrl ? '点击下载' : '缺少下载地址'"
+            @click.stop="canPreviewFile(seg) ? previewFile(seg) : download(seg)"
           >
             📎 {{ seg.fileName || '文件' }}{{ seg.size ? ' · ' + humanSize(seg.size) : '' }}
+            <button v-if="canPreviewFile(seg)" class="file-action" :disabled="openingFile" @click.stop="previewFile(seg)">{{ openingFile ? '正在打开…' : '预览' }}</button>
+            <button class="file-action" :disabled="!seg.downloadUrl" @click.stop="download(seg)">下载</button>
           </span>
         </template>
       </template>
       <span v-else class="ph">[非文本消息]</span>
     </template>
     <p v-if="todoError" class="todo-error" role="alert">{{ todoError }}</p>
+    <p v-if="fileError" class="todo-error" role="alert">{{ fileError }}</p>
   </div>
 </template>
 
@@ -73,13 +76,29 @@ import {
   segmentsOf,
   type MessageSegment,
 } from '../services/im/content'
-import { fileUrl } from '../services/im/media'
+import { canPreviewFile, filePreviewUrl, fileUrl } from '../services/im/media'
 import type { ImageMeta } from '../services/im/content'
 import MessageImage from './MessageImage.vue'
 import { openTodoInBrowser, resolveTodoNotice, todoTarget, todoUrl } from '../services/im/todo'
 
 const openingTodo = ref(false)
 const todoError = ref('')
+const openingFile = ref(false)
+const fileError = ref('')
+
+async function previewFile(seg: ImageMeta) {
+  if (openingFile.value) return
+  openingFile.value = true
+  fileError.value = ''
+  try {
+    await openUrl(await filePreviewUrl(seg))
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : '未知错误'
+    fileError.value = '打开预览失败：' + detail.replace(/https?:\/\/[^\s)]+/g, '[请求地址]')
+  } finally {
+    openingFile.value = false
+  }
+}
 
 async function openTodo(card: Extract<MessageSegment, { type: 'card' }>) {
   if (openingTodo.value) return
@@ -154,6 +173,8 @@ function download(seg: ImageMeta) {
   max-width: 100%;
 }
 .filechip:hover { background: #e8eaed; }
+.file-action { margin-left: 10px; border: 0; background: transparent; color: #1677ff; cursor: pointer; padding: 2px 0; }
+.file-action:disabled { cursor: default; opacity: 0.5; }
 
 .combine {
   border: 1px solid var(--border);

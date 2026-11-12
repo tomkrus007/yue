@@ -108,7 +108,7 @@ export async function fetchSessions(): Promise<RemoteSession[]> {
       type: Number(raw.chatType) || 1,
       name: raw.chatName || raw.chatId,
       preview: previewOf(raw.lastMessage),
-      lastTime: Number(raw.lastMessage?.send_time) || 0,
+      lastTime: Number(raw.lastMessage?.send_time ?? raw.lastMessage?.sendTime) || 0,
     })
   }
   return out

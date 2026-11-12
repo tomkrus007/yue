@@ -80,6 +80,7 @@ export const useImStore = defineStore('im', () => {
   const messages = ref<ChatMessage[]>([])
   const sessions = ref<ChatSession[]>([])
   const currentSessionId = ref('')
+  const hiddenSessions = ref<Record<string, number>>({})
   // 只有消息页所在窗口位于前台，才把当前会话视为正在阅读。
   const chatActive = ref(false)
   const sending = ref(false)
@@ -92,7 +93,7 @@ export const useImStore = defineStore('im', () => {
   const muted = ref<Set<string>>(new Set())
   const folded = ref<Set<string>>(new Set())
   const trayUnread = computed(() => Object.entries(unread.value)
-    .filter(([id]) => !muted.value.has(id) && !folded.value.has(id))
+    .filter(([id]) => !(id in hiddenSessions.value) && !muted.value.has(id) && !folded.value.has(id))
     .reduce((sum, [, count]) => sum + count, 0))
   watch(trayUnread, (count) => {
     invoke('set_tray_unread', { count })
@@ -142,6 +143,7 @@ export const useImStore = defineStore('im', () => {
   /* ---------------- 本地缓存 ---------------- */
 
   function loadLocal(): void {
+    hiddenSessions.value = readJson<Record<string, number>>(STORAGE_KEYS.imHiddenSessions, {})
     sessions.value = readJson<ChatSession[]>(STORAGE_KEYS.imSessions, []).map(
       (s) => ({
         id: String(s.id),
@@ -259,12 +261,16 @@ export const useImStore = defineStore('im', () => {
         hasLocal: false,
       }
     }
+    if (input.lastTime && input.lastTime > (hiddenSessions.value[input.id] ?? Infinity)) {
+      delete hiddenSessions.value[input.id]
+      writeJson(STORAGE_KEYS.imHiddenSessions, hiddenSessions.value)
+    }
     let found = sessions.value.find((s) => s.id === input.id)
     if (found) {
       if (input.name) found.name = input.name
       if (input.type) found.type = input.type
-      if (input.preview && !found.hasLocal) {
-        found.preview = input.preview
+      if (input.lastTime && input.lastTime >= found.lastTime) {
+        found.preview = input.preview ?? found.preview
         found.lastTime = input.lastTime || found.lastTime
       }
       if (input.hasLocal) found.hasLocal = true
@@ -387,13 +393,17 @@ export const useImStore = defineStore('im', () => {
       type: ref.type,
       name: ref.name || ref.id,
       hasLocal: true,
+      lastTime: msg.send_time || Date.now(),
     })
     const prefix =
       TO_MULTI_TYPES.has(ref.type) && msg.from_name && !isMine(msg)
         ? msg.from_name + '：'
         : ''
-    s.preview = prefix + previewOfMessage(msg)
-    s.lastTime = msg.send_time || Date.now()
+    const messageTime = msg.send_time || Date.now()
+    if (messageTime >= s.lastTime) {
+      s.preview = prefix + previewOfMessage(msg)
+      s.lastTime = messageTime
+    }
     s.hasLocal = true
     persistMessages()
     persistSessions()
@@ -685,6 +695,7 @@ export const useImStore = defineStore('im', () => {
     sessions.value = []
     messages.value = []
     currentSessionId.value = ''
+    hiddenSessions.value = {}
     unread.value = {}
     unreadAt.value = {}
     unreadIds.value = new Set()
@@ -703,6 +714,7 @@ export const useImStore = defineStore('im', () => {
     searchResults.value = []
     for (const key of [
       STORAGE_KEYS.imSessions,
+      STORAGE_KEYS.imHiddenSessions,
       STORAGE_KEYS.imMessages,
       STORAGE_KEYS.imUnread,
       STORAGE_KEYS.imUnreadAt,
@@ -735,14 +747,9 @@ export const useImStore = defineStore('im', () => {
   )
 
   const sortedSessions = computed(() =>
-    [...sessions.value].sort((a, b) => {
-      const pa = pinned.value[a.id] || 0
-      const pb = pinned.value[b.id] || 0
-      if (pa && pb) return pb - pa
-      if (pa) return -1
-      if (pb) return 1
-      return (b.lastTime || 0) - (a.lastTime || 0)
-    }),
+    sessions.value
+      .filter((s) => !(s.id in hiddenSessions.value))
+      .sort((a, b) => (b.lastTime || 0) - (a.lastTime || 0)),
   )
 
   const tabDefs: Array<{
@@ -794,7 +801,21 @@ export const useImStore = defineStore('im', () => {
     if (active && currentSessionId.value) clearUnread(currentSessionId.value)
   }
 
+  /** 仅隐藏列表项，保留会话信息和全部消息。 */
+  function removeSession(id: string): void {
+    const session = sessions.value.find((s) => s.id === id)
+    if (!session) return
+    hiddenSessions.value[id] = Math.max(Date.now(), session.lastTime)
+    writeJson(STORAGE_KEYS.imHiddenSessions, hiddenSessions.value)
+    clearUnread(id)
+    if (currentSessionId.value === id) currentSessionId.value = ''
+  }
+
   function selectSession(id: string): void {
+    if (id in hiddenSessions.value) {
+      delete hiddenSessions.value[id]
+      writeJson(STORAGE_KEYS.imHiddenSessions, hiddenSessions.value)
+    }
     currentSessionId.value = id
     if (chatActive.value) clearUnread(id)
     const s = sessions.value.find((x) => x.id === id)
@@ -1143,6 +1164,7 @@ export const useImStore = defineStore('im', () => {
     resetLocal,
     log,
     selectSession,
+    removeSession,
     setChatActive,
     setTab,
     clearUnread,

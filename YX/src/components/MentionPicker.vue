@@ -5,12 +5,18 @@
       <input ref="searchInput" v-model="keyword" placeholder="搜索姓名或账号" aria-label="搜索群成员" />
       <p v-if="loading">正在加载群成员…</p>
       <p v-else-if="error" role="alert">{{ error }} <button @click="load">重试</button></p>
-      <div v-else class="members">
+      <div v-else class="member-list">
+        <label v-if="filtered.length" class="select-all">
+          <input type="checkbox" :checked="allSelected" :indeterminate="partiallySelected" @change="toggleAll" />
+          <span>{{ keyword.trim() ? '全选搜索结果' : '全选' }}（{{ filtered.length }}）</span>
+        </label>
+        <div class="members">
         <label v-for="member in filtered" :key="member.userId">
           <input v-model="selected" type="checkbox" :value="member.userId" />
-          <span>{{ member.name || member.userName || member.userId }}<small>{{ member.orgName || member.loginId || member.userId }}</small></span>
+          <span>{{ member.name || member.userName || '未命名成员' }}<small v-if="member.orgName">{{ member.orgName }}</small></span>
         </label>
         <p v-if="!filtered.length">没有匹配的群成员</p>
+        </div>
       </div>
       <footer><button :disabled="loading || !!error || !selected.length" @click="confirm">确认（{{ selected.length }}）</button></footer>
     </section>
@@ -30,6 +36,14 @@ const error = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 const filtered = computed(() => members.value.filter(member =>
   [member.name, member.userName, member.loginId, member.userId].some(value => value?.toLowerCase().includes(keyword.value.trim().toLowerCase()))))
+const allSelected = computed(() => filtered.value.length > 0 && filtered.value.every(member => selected.value.includes(member.userId)))
+const partiallySelected = computed(() => !allSelected.value && filtered.value.some(member => selected.value.includes(member.userId)))
+function toggleAll() {
+  const visibleIds = new Set(filtered.value.map(member => member.userId))
+  selected.value = allSelected.value
+    ? selected.value.filter(id => !visibleIds.has(id))
+    : [...new Set([...selected.value, ...visibleIds])]
+}
 async function load() {
   loading.value = true
   error.value = ''
@@ -43,12 +57,16 @@ onMounted(() => { searchInput.value?.focus(); void load() })
 
 <style scoped>
 .mention-mask { position: fixed; inset: 0; z-index: 100; background: #0006; display: flex; align-items: center; justify-content: center; }
-section { width: 420px; max-width: 90vw; background: var(--panel); border-radius: 12px; padding: 20px; }
+section { box-sizing: border-box; width: 420px; max-width: 90vw; background: var(--panel); border-radius: 12px; padding: 20px; }
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 section > input { width: 100%; box-sizing: border-box; padding: 10px; }
 .members { max-height: 45vh; overflow-y: auto; margin: 12px 0; }
-label { display: flex; gap: 12px; padding: 10px; cursor: pointer; }
-small { display: block; color: var(--text-muted); }
+label { display: flex; align-items: center; justify-content: flex-start; gap: 12px; min-height: 44px; box-sizing: border-box; padding: 8px 10px; cursor: pointer; border-radius: 6px; }
+label:hover { background: var(--bg); }
+label > input[type="checkbox"] { flex: 0 0 16px; width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--primary); }
+label > span { flex: 1; min-width: 0; text-align: left; overflow-wrap: anywhere; line-height: 1.5; }
+.select-all { border-bottom: 1px solid var(--border); margin-top: 12px; }
+small { display: block; font-size: 12px; color: var(--text-muted); }
 footer { display: flex; justify-content: flex-end; margin-top: 16px; }
 p { padding: 12px 0; }
 </style>

@@ -168,6 +168,7 @@ export const STORAGE_KEYS = {
   loginId: 'LoginId',
   expiresAt: 'expires_at',
   imSessions: 'yl.im.sessions',
+  imHiddenSessions: 'yl.im.hiddenSessions',
   imMessages: 'yl.im.messages',
   imUnread: 'yl.im.unread',
   imUnreadAt: 'yl.im.unreadAt',
