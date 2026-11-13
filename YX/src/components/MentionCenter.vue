@@ -1,7 +1,7 @@
 <template>
   <div class="mention-center-mask" @click.self="emit('close')" @keydown.esc="emit('close')">
     <section ref="panel" role="dialog" aria-modal="true" aria-label="@ 提醒中心" tabindex="-1">
-      <header><h3>@ 提醒中心 · {{ mentions.pending.length }} 条待处理</h3><button class="secondary small" @click="emit('close')">关闭</button></header>
+      <header><h3>@ 提醒中心 · {{ mentions.pending.length }} 条待处理</h3><div class="actions"><button class="secondary small" :disabled="!mentions.pending.length" title="将当前账号的全部待处理提醒标记为已处理（包含搜索范围外的提醒）" @click="mentions.handleAll()">一键标记已处理</button><button class="secondary small" @click="emit('close')">关闭</button></div></header>
       <div class="filters"><input v-model="keyword" placeholder="搜索群聊、发送人或消息" aria-label="搜索提醒" /><select v-model="status" aria-label="提醒处理状态"><option value="pending">待处理</option><option value="done">已处理</option><option value="all">全部</option></select></div>
       <p class="hint">打开会话仅清除未读数；“收到”或回复发送成功后自动完成提醒，也可手动标记。记录按当前账号保存在本机。</p>
       <div class="notice-list">

@@ -64,6 +64,17 @@ export const useMentionsStore = defineStore('mentions', () => {
     notice.status = 'pending'; delete notice.handledBy; delete notice.handledAt
     persist()
   }
+  function handleAll() {
+    ensureAccount()
+    const handledAt = Date.now()
+    let changed = false
+    for (const notice of Object.values(notices.value)) {
+      if (notice.status !== 'pending') continue
+      notice.status = 'done'; notice.handledBy = 'manual'; notice.handledAt = handledAt
+      changed = true
+    }
+    if (changed) persist()
+  }
   function remove(id: string) {
     ensureAccount()
     if (removed.value[id]) return
@@ -75,5 +86,5 @@ export const useMentionsStore = defineStore('mentions', () => {
   ensureAccount()
   const all = computed(() => Object.values(notices.value).sort((a, b) => b.time - a.time || a.id.localeCompare(b.id)))
   const pending = computed(() => all.value.filter(notice => notice.status === 'pending'))
-  return { notices, all, pending, observe, handle, reopen, remove, ensureAccount, reset }
+  return { notices, all, pending, observe, handle, handleAll, reopen, remove, ensureAccount, reset }
 })

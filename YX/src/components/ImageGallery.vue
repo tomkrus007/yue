@@ -2,7 +2,7 @@
   <div class="image-gallery" role="dialog" aria-modal="true" aria-label="图片查看器" @click.self="emit('close')">
     <div class="gallery-tools"><span>{{ currentName }} · {{ index + 1 }} / {{ images.length }}</span><button @click="scale = Math.max(0.25, scale - 0.25)">缩小</button><button @click="scale = Math.min(4, scale + 0.25)">放大</button><button @click="rotation += 90">旋转</button><button @click="scale = 1; rotation = 0">复位</button><button @click="emit('close')">关闭</button></div>
     <button class="previous" :disabled="index <= 0 || loading" @click="move(-1)">‹ 上一张</button>
-    <div class="gallery-image"><img v-if="url && !loading" :src="url" :alt="currentName" :style="{ transform: `scale(${scale}) rotate(${rotation}deg)` }" /><p v-if="loading">图片加载中…</p><p v-if="error" role="alert">{{ error }} <button @click="load">重试</button></p></div>
+    <div class="gallery-image" @click.self="emit('close')"><img v-if="url && !loading" :src="url" :alt="currentName" :style="{ transform: `scale(${scale}) rotate(${rotation}deg)` }" /><p v-if="loading">图片加载中…</p><p v-if="error" role="alert">{{ error }} <button @click="load">重试</button></p></div>
     <button class="next" :disabled="index >= images.length - 1 || loading" @click="move(1)">下一张 ›</button>
   </div>
 </template>
