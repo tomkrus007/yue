@@ -1,31 +1,36 @@
 <template>
-  <div class="connection-status" :title="`消息服务：${label}`" role="status">
-    <span class="status-dot" :class="state" aria-hidden="true"></span>
-    <span>{{ label }}</span>
+  <div class="nav-avatar" :class="{ online: im.connected && im.authed }"
+    :title="`${auth.user?.name || '用户'} · 消息服务：${label}`" role="status"
+    :aria-label="`${auth.user?.name || '用户'} · 消息服务：${label}`">
+    {{ (auth.user?.name || '?').slice(0, 1) }}
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
 
+const auth = useAuthStore()
 const im = useImStore()
-const state = computed(() => !im.connected ? 'offline' : im.authed ? 'online' : 'connecting')
 const label = computed(() => !im.connected ? '未连接' : im.authed ? '已鉴权' : '连接中')
 </script>
 
 <style scoped>
-.connection-status {
+.nav-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-sizing: border-box;
+  border: 2px solid #8a9099;
+  color: #fff;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 5px;
-  padding: 8px 0;
-  color: #c5c8cc;
-  font-size: 10px;
+  justify-content: center;
+  font-weight: 600;
+  margin-bottom: 12px;
   flex-shrink: 0;
 }
-.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #8a9099; }
-.status-dot.online { background: var(--success); }
-.status-dot.connecting { background: var(--primary); }
+.nav-avatar.online { border-color: var(--success); }
 </style>

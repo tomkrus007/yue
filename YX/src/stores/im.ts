@@ -17,6 +17,13 @@ import {
   fetchSessions,
 } from '../services/im/session-api'
 import { stripHtml, toPlainText } from '../services/im/content'
+import { applyInteraction, emptyInteractions, mentionsUser, type MessageInteractions } from '../services/im/interactions'
+import { uploadForwardDetails } from '../services/im/media'
+import { MessageDelivery } from '../services/im/delivery'
+import { HistoryPager } from '../services/im/history'
+import { forwardEnvelope, hydrateForwardContent } from '../services/im/forwarding'
+import { useMentionsStore } from './mentions'
+import { useReceiptAudienceStore } from './receipts'
 import { groupService, type GroupDetail } from '../services/group-client'
 import {
   isServiceAccount,
@@ -76,8 +83,83 @@ export const useImStore = defineStore('im', () => {
   const authed = ref(false)
   const needLogin = ref('')
   const logs = ref<string[]>([])
+  const mentions = useMentionsStore()
+  const receiptAudiences = useReceiptAudienceStore()
 
   const messages = ref<ChatMessage[]>([])
+  const delivery = new MessageDelivery({
+    connected: () => imClient.authed,
+    resend: message => imClient.retryMessage(message),
+    changed: () => { persistMessages(); persistInteractions() },
+    confirmed: message => {
+      if (Number(message.msg_type) === MsgType.READED) {
+        for (const id of String(message.content?.readMsgIds || '').split(',').filter(Boolean)) localReadConfirmations.value[id] = true
+        delete pendingReadCommands.value[message.msg_id]
+        persistInteractions()
+      } else if (message.reply_msg_id) mentions.handle(message.reply_msg_id, 'reply')
+    },
+  })
+  function trackOutgoing(message: ImMessage) {
+    const local = messages.value.find(item => item.msg_id === message.msg_id)
+    if (local) {
+      delivery.track(local)
+      const session = sessions.value.find(item => item.id === local.sessionId)
+      if (session && (String(local.is_need_read_receipt) === 'true' || String(local.is_delete_after_read) === 'true' || Number(local.is_need_send_read) === 1)) void receiptAudiences.capture(local, session, { atSend: true })
+    }
+  }
+  function confirmOutgoing(message: ImMessage) {
+    delivery.acknowledge(message.msg_id, true)
+    message.__sent = true
+    delete message.__error
+    message.__delivery = { state: 'confirmed', attempts: message.__delivery?.attempts || 1, updatedAt: Date.now() }
+    if (message.reply_msg_id) mentions.handle(message.reply_msg_id, 'reply')
+  }
+  const interactions = ref<MessageInteractions>(emptyInteractions())
+  const pendingInteractions = ref<Record<string, ImMessage>>({})
+  const interactionTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const interactionErrors = ref<Record<string, string>>({})
+  const localReadConfirmations = ref<Record<string, boolean>>({})
+  const pendingReadCommands = ref<Record<string, ImMessage>>({})
+  const burnDeadlines = ref<Record<string, number>>({})
+  const interactionKey = () => `yl.im.interactions.${authService.getCurrentUserId()}`
+  function persistInteractions() {
+    writeJson(interactionKey(), { ...interactions.value, confirmations: localReadConfirmations.value, readCommands: pendingReadCommands.value, burnDeadlines: burnDeadlines.value })
+  }
+  function applyRecall(message: ImMessage) {
+    const recall = interactions.value.recalls[message.msg_id]
+    if (!recall) return
+    message.msg_type = recall.type
+    message.content = ''
+    message.reply_msg_id = ''
+    message.is_delete_after_read = false
+    message.is_need_read_receipt = false
+    delete interactions.value.reactions[message.msg_id]
+  }
+  function consumeInteraction(message: ImMessage): boolean {
+    if (Number(message.msg_type) === MsgType.READED && isMine(message) && pendingReadCommands.value[message.msg_id]) delivery.acknowledge(message.msg_id, true)
+    if (Number(message.msg_type) === MsgType.READED && message.content?.lastSendTime && !message.content?.readMsgIds) {
+      const multi = [2, 4, 8].includes(Number(message.content.toType))
+      const sessionId = multi || isMine(message) ? message.content.toId : message.from_id
+      const ids = messages.value.filter(item => item.sessionId === sessionId && isMine(item) && Number(item.send_time) <= Number(message.content.lastSendTime)).map(item => item.msg_id)
+      if (ids.length) message = { ...message, content: { ...message.content, readMsgIds: ids.join(',') } }
+    }
+    if (!applyInteraction(interactions.value, message)) return false
+    if (isMine(message)) delete interactionErrors.value[interactionTarget(message)]
+    delete pendingInteractions.value[message.msg_id]
+    clearTimeout(interactionTimers.get(message.msg_id))
+    interactionTimers.delete(message.msg_id)
+    for (const item of messages.value) applyRecall(item)
+    for (const id of Object.keys(interactions.value.recalls)) mentions.remove(id)
+    if (isMine(message) && Number(message.msg_type) === MsgType.CTRL && Number(message.content?.cmd) === 1000 && message.content?.params?.emoji === '[ok]') mentions.handle(message.content.params.msgId, 'received')
+    for (const session of sessions.value) {
+      const latest = messages.value.filter(item => item.sessionId === session.id).sort((a, b) => b.send_time - a.send_time)[0]
+      if (latest && latest.send_time >= session.lastTime && interactions.value.recalls[latest.msg_id]) session.preview = previewOfMessage(latest)
+    }
+    persistInteractions()
+    persistMessages()
+    persistSessions()
+    return true
+  }
   const sessions = ref<ChatSession[]>([])
   const currentSessionId = ref('')
   const hiddenSessions = ref<Record<string, number>>({})
@@ -85,6 +167,16 @@ export const useImStore = defineStore('im', () => {
   const chatActive = ref(false)
   const sending = ref(false)
   const loadingHistory = ref(false)
+  let historyLoads = 0
+  const olderPagers = new Map<string, HistoryPager>()
+  const forwardUploads = new Map<string, Promise<string>>()
+  const forwardLoads = new Map<string, Promise<void>>()
+  const historyProgress = ref<Record<string, { scanned: number; running: boolean; complete: boolean; cancelled: boolean; error: string }>>({})
+  const lookupProgress = ref({ scanned: 0, running: false })
+  const scans = new Map<string, { pager: HistoryPager; cancelled: boolean; promise?: Promise<void> }>()
+  const scanPagers = new Map<string, HistoryPager>()
+  const lookups = new Map<string, { pager: HistoryPager; cancelled: boolean }>()
+  let historyGeneration = 0
 
   /** 未读：会话 id → 条数；@我：会话 id → 条数 */
   const unread = ref<Record<string, number>>({})
@@ -143,6 +235,18 @@ export const useImStore = defineStore('im', () => {
   /* ---------------- 本地缓存 ---------------- */
 
   function loadLocal(): void {
+    const savedInteractions = readJson<MessageInteractions & { confirmations?: Record<string, boolean>; readCommands?: Record<string, ImMessage>; burnDeadlines?: Record<string, number> }>(interactionKey(), emptyInteractions())
+    interactions.value = { ...emptyInteractions(), ...savedInteractions }
+    localReadConfirmations.value = savedInteractions.confirmations || {}
+    pendingReadCommands.value = savedInteractions.readCommands || {}
+    burnDeadlines.value = savedInteractions.burnDeadlines || {}
+    // 重启不会重新展示已打开的阅后即焚正文，保留待重发的阅读确认。
+    for (const id of Object.keys(burnDeadlines.value)) interactions.value.recalls[id] = { type: MsgType.RECALL, time: Date.now(), hidden: true }
+    for (const [id, command] of Object.entries(pendingReadCommands.value)) {
+      if (!command.__sent) continue
+      for (const target of String(command.content?.readMsgIds || '').split(',').filter(Boolean)) localReadConfirmations.value[target] = true
+      delete pendingReadCommands.value[id]
+    }
     hiddenSessions.value = readJson<Record<string, number>>(STORAGE_KEYS.imHiddenSessions, {})
     sessions.value = readJson<ChatSession[]>(STORAGE_KEYS.imSessions, []).map(
       (s) => ({
@@ -156,6 +260,7 @@ export const useImStore = defineStore('im', () => {
     )
     const stored = readJson<ChatMessage[]>(STORAGE_KEYS.imMessages, [])
     messages.value = Array.isArray(stored) ? stored : []
+    for (const message of messages.value) applyRecall(message)
 
     const savedUnread = readJson<Record<string, number>>(
       STORAGE_KEYS.imUnread,
@@ -195,10 +300,13 @@ export const useImStore = defineStore('im', () => {
   }
 
   function persistMessages(): void {
-    if (messages.value.length > MAX_LOCAL_MESSAGES) {
-      messages.value.splice(0, messages.value.length - MAX_LOCAL_MESSAGES)
-    }
-    writeJson(STORAGE_KEYS.imMessages, messages.value)
+    // 持久化上限不应删掉用户刚向前加载、正在阅读的历史。
+    const recent = messages.value.length > MAX_LOCAL_MESSAGES
+      ? [...messages.value].sort((a, b) => a.send_time - b.send_time).slice(-MAX_LOCAL_MESSAGES)
+      : messages.value
+    const retained = new Map(recent.map(message => [message.msg_id, message]))
+    for (const message of messages.value) if (message.__delivery && message.__delivery.state !== 'confirmed') retained.set(message.msg_id, message)
+    writeJson(STORAGE_KEYS.imMessages, [...retained.values()])
   }
 
   function persistUnread(): void {
@@ -229,6 +337,7 @@ export const useImStore = defineStore('im', () => {
   }
 
   loadLocal()
+  delivery.restore([...messages.value.filter(isMine), ...Object.values(pendingReadCommands.value)])
 
   /* ---------------- 会话聚合 ---------------- */
 
@@ -301,6 +410,8 @@ export const useImStore = defineStore('im', () => {
 
   /** 会话预览文本（内存里的消息 content 已解码） */
   function previewOfMessage(msg: ImMessage): string {
+    if (interactions.value.recalls[msg.msg_id]) return interactions.value.recalls[msg.msg_id].hidden ? '[消息已移除]' : '[消息已撤回]'
+    if (String(msg.is_delete_after_read) === 'true' || String(msg.is_need_read_receipt) === 'true') return '[受保护消息]'
     return stripHtml(toPlainText(Number(msg.msg_type), msg.content))
       .replace(/\s+/g, ' ')
       .slice(0, 60)
@@ -313,9 +424,12 @@ export const useImStore = defineStore('im', () => {
   /** 单条消息进入本地：会话归属、未读、预览 */
   function addMessage(msg: ImMessage): void {
     if (!msg || !msg.msg_id) return
+    if (consumeInteraction(msg)) return
     // 已读/回执类不落库
     if ([0, 95, 97].includes(Number(msg.msg_type))) return
-    if (messages.value.some((m) => m.msg_id === msg.msg_id)) {
+    const existingMessage = messages.value.find(m => m.msg_id === msg.msg_id)
+    if (existingMessage) {
+      if (isMine(msg)) confirmOutgoing(existingMessage)
       if (!msg.offline) log('[提醒诊断] 收到实时推送，但本地已有该消息，已跳过去重')
       return
     }
@@ -332,7 +446,9 @@ export const useImStore = defineStore('im', () => {
       sessionId: ref.id,
       sessionType: ref.type || 1,
     }
+    applyRecall(item)
     messages.value.push(item)
+    mentions.observe(item, { id: ref.id, name: ref.name, type: ref.type })
 
     const fromThisDevice =
       !!msg.from_device && msg.from_device === authService.getDeviceId()
@@ -340,11 +456,7 @@ export const useImStore = defineStore('im', () => {
       msg.is_read === 0 || (msg.is_read === undefined && !msg.offline)
 
     // at_user_ids 是逗号分隔的 user id；@所有人 在服务端是字面量 "ALL"
-    const atList = String(msg.at_user_ids || '')
-      .split(',')
-      .map((x) => x.trim())
-      .filter(Boolean)
-    const atMe = atList.includes('ALL') || atList.includes(meId)
+    const atMe = mentionsUser(msg, meId)
     const sessionMuted = muted.value.has(ref.id)
 
     // 只记录提醒判断所需的状态，不记录消息内容、用户标识或凭据。
@@ -409,14 +521,24 @@ export const useImStore = defineStore('im', () => {
     persistSessions()
 
     if (chatActive.value && currentSessionId.value === ref.id) {
-      delete unread.value[ref.id]
-      delete unreadAt.value[ref.id]
-      persistUnread()
+      clearUnread(ref.id)
     }
   }
 
   /** 本地已读：切到会话就把该会话未读清掉 */
   function clearUnread(id: string): void {
+    const session = sessions.value.find(item => item.id === id)
+    if (session && imClient.authed) {
+      imClient.markSessionRead(id, session.type)
+      for (const message of messages.value.filter(item => item.sessionId === id)) {
+        if (isMine(message) || Number(message.is_need_send_read) !== 1 || String(message.is_need_read_receipt) === 'true' || String(message.is_delete_after_read) === 'true' || localReadConfirmations.value[message.msg_id]) continue
+        if (![1, 2, 7, 19, 28, 96].includes(Number(message.msg_type)) && !(Number(message.msg_type) === 99 && Number(message.content?.type) === 0)) continue
+        try {
+          queueReadConfirmation(message, session)
+        } catch { break }
+      }
+      persistInteractions()
+    }
     if (!(id in unread.value) && !(id in unreadAt.value)) return
     delete unread.value[id]
     delete unreadAt.value[id]
@@ -505,6 +627,22 @@ export const useImStore = defineStore('im', () => {
     await loadPreferenceStates()
   }
 
+  function mergeHistoryMessage(message: ImMessage, session: ChatSession): boolean {
+    if (consumeInteraction(message) || [0, 95, 97].includes(Number(message.msg_type))) return false
+    const existing = messages.value.find(item => item.msg_id === message.msg_id)
+    if (existing) {
+      if (isMine(existing)) confirmOutgoing(existing)
+      if (Number(existing.msg_type) === MsgType.COMBINE && Array.isArray(message.content?.msgs)) existing.content = message.content
+      applyRecall(existing)
+      return false
+    }
+    const item = { ...message, sessionId: session.id, sessionType: session.type }
+    applyRecall(item)
+    messages.value.push(item)
+    mentions.observe(item, session, true)
+    return true
+  }
+
   /** 按会话补最近历史，兜住离线推送的遗漏 */
   async function backfillRecent(
     sessionLimit = 20,
@@ -521,15 +659,7 @@ export const useImStore = defineStore('im', () => {
           dateTime: Date.now(),
         })
         for (const m of page.messages) {
-          if (!m.msg_id) continue
-          if ([0, 95, 97].includes(Number(m.msg_type))) continue
-          if (messages.value.some((x) => x.msg_id === m.msg_id)) continue
-          messages.value.push({
-            ...m,
-            sessionId: s.id,
-            sessionType: s.type,
-          })
-          added += 1
+          if (m.msg_id && mergeHistoryMessage(m, s)) added += 1
         }
         const newest = Math.max(0, ...page.messages.map((m) => m.send_time || 0))
         if (newest > (s.lastTime || 0)) {
@@ -555,22 +685,17 @@ export const useImStore = defineStore('im', () => {
   ): Promise<number> {
     const s = sessions.value.find((x) => x.id === sessionId)
     if (!s) return 0
-    loadingHistory.value = true
+    const generation = historyGeneration
+    loadingHistory.value = ++historyLoads > 0
     try {
       const page = await fetchHistory(s.id, s.type, {
         limit: options.limit ?? 50,
         dateTime: options.dateTime ?? Date.now(),
       })
+      if (generation !== historyGeneration) return 0
       let added = 0
       for (const m of page.messages) {
-        if (!m.msg_id) continue
-        if (messages.value.some((x) => x.msg_id === m.msg_id)) continue
-        messages.value.push({
-          ...m,
-          sessionId: s.id,
-          sessionType: s.type,
-        })
-        added += 1
+        if (m.msg_id && mergeHistoryMessage(m, s)) added += 1
       }
       const newest = Math.max(
         0,
@@ -585,21 +710,225 @@ export const useImStore = defineStore('im', () => {
       persistSessions()
       return added
     } finally {
-      loadingHistory.value = false
+      if (generation === historyGeneration) loadingHistory.value = --historyLoads > 0
     }
   }
 
-  /** 继续往前翻：用最早一条 send_time - 1 作为游标 */
+  /** 在固定时间上界下按 skip 翻页，重复缓存页不等于历史结束。 */
   async function loadOlderHistory(sessionId: string): Promise<number> {
-    const list = messages.value
-      .filter((m) => m.sessionId === sessionId)
-      .sort((a, b) => a.send_time - b.send_time)
-    const earliest = list[0]?.send_time
-    if (!earliest) return loadHistory(sessionId)
-    return loadHistory(sessionId, {
-      dateTime: Math.max(0, earliest - 1),
-      limit: 50,
-    })
+    const session = sessions.value.find(item => item.id === sessionId)
+    if (!session) return 0
+    let pager = olderPagers.get(sessionId)
+    if (!pager) {
+      const earliest = Math.min(...messages.value.filter(message => message.sessionId === sessionId).map(message => Number(message.send_time)).filter(time => time > 0))
+      pager = new HistoryPager(session.id, session.type, Number.isFinite(earliest) ? earliest + 1 : Date.now())
+      olderPagers.set(sessionId, pager)
+    }
+    const generation = historyGeneration
+    loadingHistory.value = ++historyLoads > 0
+    try {
+      const page = await pager.next(100)
+      if (generation !== historyGeneration) return 0
+      let added = 0
+      for (const message of page.messages) if (mergeHistoryMessage(message, session)) added++
+      persistMessages()
+      return added
+    } finally { if (generation === historyGeneration) loadingHistory.value = --historyLoads > 0 }
+  }
+  function olderHistoryComplete(sessionId: string): boolean { return !!historyProgress.value[sessionId]?.complete || !!olderPagers.get(sessionId)?.complete }
+
+  function cancelMessageLookup(sessionId: string) {
+    const job = lookups.get(sessionId)
+    if (job) { job.cancelled = true; job.pager.cancel() }
+  }
+
+  async function loadUntilMessage(sessionId: string, messageId: string): Promise<boolean> {
+    if (messages.value.some(message => message.sessionId === sessionId && message.msg_id === messageId)) return true
+    const session = sessions.value.find(item => item.id === sessionId)
+    if (!session) return false
+    cancelMessageLookup(sessionId)
+    const sourceTime = mentions.notices[messageId]?.time || messages.value.find(message => message.sessionId === sessionId && message.reply_msg_id === messageId)?.send_time
+    const job = { pager: new HistoryPager(session.id, session.type, sourceTime ? Number(sourceTime) + 1 : Date.now()), cancelled: false }
+    lookups.set(sessionId, job)
+    lookupProgress.value = { scanned: 0, running: true }
+    const generation = historyGeneration
+    try {
+      while (!job.pager.complete && !job.cancelled && generation === historyGeneration && currentSessionId.value === sessionId) {
+        const page = await job.pager.next()
+        if (job.cancelled || generation !== historyGeneration || currentSessionId.value !== sessionId) return false
+        for (const message of page.messages) mergeHistoryMessage(message, session)
+        lookupProgress.value.scanned = job.pager.offset
+        persistMessages()
+        if (messages.value.some(message => message.sessionId === sessionId && message.msg_id === messageId)) return true
+      }
+      return false
+    } finally {
+      if (lookups.get(sessionId) === job) { lookups.delete(sessionId); lookupProgress.value.running = false }
+    }
+  }
+
+  function cancelHistoryScan(sessionId: string) {
+    const job = scans.get(sessionId)
+    if (job) { job.cancelled = true; job.pager.cancel() }
+  }
+
+  async function completeReplyHistory(sessionId: string, refresh = false): Promise<void> {
+    const session = sessions.value.find(item => item.id === sessionId)
+    if (!session) throw new Error('会话不存在')
+    const running = scans.get(sessionId)
+    if (running && !running.cancelled) return running.promise
+    if (historyProgress.value[sessionId]?.complete && !refresh) return
+    const pager = !refresh && scanPagers.get(sessionId) || new HistoryPager(session.id, session.type)
+    scanPagers.set(sessionId, pager)
+    const job = { pager, cancelled: false, promise: undefined as Promise<void> | undefined }
+    scans.set(sessionId, job)
+    historyProgress.value[sessionId] = { scanned: pager.offset, running: true, complete: false, cancelled: false, error: '' }
+    const progress = historyProgress.value[sessionId]
+    const generation = historyGeneration
+    job.promise = (async () => {
+      try {
+        while (!job.pager.complete && !job.cancelled && generation === historyGeneration) {
+          const page = await job.pager.next()
+          if (generation !== historyGeneration) return
+          for (const message of page.messages) mergeHistoryMessage(message, session)
+          progress.scanned = job.pager.offset
+          persistMessages()
+        }
+        progress.complete = job.pager.complete
+      } catch (error) {
+        if (!job.cancelled) progress.error = error instanceof Error ? error.message.replace(/https?:\/\/[^\s)]+/g, '[请求地址]') : '历史补全失败，可重试'
+      } finally {
+        progress.running = false
+        progress.cancelled = job.cancelled
+        if (scans.get(sessionId) === job) scans.delete(sessionId)
+      }
+    })()
+    return job.promise
+  }
+
+  async function loadForwardDetails(message: ImMessage): Promise<void> {
+    const key = String(message.content?.forwardMsgDetailId || message.msg_id)
+    const pending = forwardLoads.get(key)
+    if (pending) return pending
+    const generation = historyGeneration
+    const task = (async () => {
+      const local = messages.value.find(item => item.msg_id === message.msg_id) || message
+      const hydrated = hydrateForwardContent(local.content, messages.value)
+      if (hydrated?.msgs?.length) { local.content = hydrated; persistMessages(); return }
+      const session = sessions.value.find(item => item.id === (message as ChatMessage).sessionId) || currentSession.value
+      if (!session) throw new Error('会话不存在')
+      const page = await fetchHistory(session.id, session.type, { dateTime: Number(message.send_time) + 1, limit: 100 })
+      if (generation !== historyGeneration) return
+      const remote = page.messages.find(item => item.msg_id === message.msg_id)
+      for (const item of page.messages) mergeHistoryMessage(item, session)
+      const content = hydrateForwardContent(remote?.content || local.content, messages.value)
+      if (!Array.isArray(content?.msgs) || !content.msgs.length) throw new Error('服务端历史未返回聊天记录明细，可在统一联调时核对原版响应')
+      local.content = content
+      persistMessages()
+    })().finally(() => forwardLoads.delete(key))
+    forwardLoads.set(key, task)
+    return task
+  }
+
+  function isAtMe(message: ImMessage): boolean {
+    return !isMine(message) && mentionsUser(message, authService.getCurrentUserId())
+  }
+
+  function replySource(message: ImMessage): ImMessage | undefined {
+    return messages.value.find(item => item.msg_id === message.reply_msg_id)
+  }
+
+  function repliesFor(messageId: string): ChatMessage[] {
+    return replyThreads.value.groups.get(replyThreads.value.roots.get(messageId) || messageId) || []
+  }
+
+  function reactionsFor(messageId: string) {
+    return (interactions.value.reactions[messageId] || []).filter(item => item.active)
+  }
+
+  function toggleReaction(message: ImMessage, emoji: string): void {
+    const session = sessions.value.find(item => item.id === (message as ChatMessage).sessionId) || currentSession.value
+    if (!session || [66, 67].includes(Number(message.msg_type))) throw new Error('原消息不可回应')
+    if (interactionPending(message.msg_id)) throw new Error('该消息的操作正在提交')
+    delete interactionErrors.value[message.msg_id]
+    const remove = reactionsFor(message.msg_id).some(item => item.userId === authService.getCurrentUserId() && item.emoji === emoji)
+    const control = imClient.sendReaction(message, session, emoji, remove)
+    queueInteraction(control)
+  }
+
+  function recallMessage(message: ImMessage, admin = false): void {
+    const session = sessions.value.find(item => item.id === (message as ChatMessage).sessionId) || currentSession.value
+    if (!session) throw new Error('会话不存在')
+    if (!admin && !isMine(message)) throw new Error('只能撤回自己发送的消息')
+    if (interactionPending(message.msg_id)) throw new Error('该消息的操作正在提交')
+    const control = imClient.sendRecall(message, session, admin)
+    delete interactionErrors.value[message.msg_id]
+    queueInteraction(control)
+    // 保留原文直到服务端广播撤回指令，避免服务端拒绝后本机误删。
+    log('撤回请求已提交，等待服务端确认')
+  }
+
+  function interactionTarget(message: ImMessage): string {
+    return Number(message.msg_type) === MsgType.CTRL ? message.content?.params?.msgId || '' : Number(message.msg_type) === MsgType.RECALL ? message.content : message.content?.msgId || ''
+  }
+
+  function queueInteraction(control: ImMessage) {
+    pendingInteractions.value[control.msg_id] = control
+    interactionTimers.set(control.msg_id, setTimeout(() => {
+      if (!pendingInteractions.value[control.msg_id]) return
+      interactionErrors.value[interactionTarget(control)] = '服务端确认超时，可检查连接后重试'
+      delete pendingInteractions.value[control.msg_id]
+      interactionTimers.delete(control.msg_id)
+    }, 15000))
+  }
+
+  function interactionPending(messageId: string): boolean {
+    return Object.values(pendingInteractions.value).some(message => interactionTarget(message) === messageId)
+  }
+
+  function retryMessage(message: ImMessage): void {
+    if (!isMine(message)) throw new Error('只能重发自己发送的消息')
+    delivery.retry(message)
+  }
+
+  function queueReadConfirmation(message: ImMessage, session: { id: string; type: number }) {
+    if (localReadConfirmations.value[message.msg_id]) return
+    const previous = Object.values(pendingReadCommands.value).find(command => String(command.content?.readMsgIds || '').split(',').includes(message.msg_id))
+    if (previous) {
+      if (previous.__delivery?.state === 'failed') delivery.retry(previous)
+      return
+    }
+    const isBurn = message.is_delete_after_read === true || String(message.is_delete_after_read) === 'true'
+    const receipt = String(message.is_need_read_receipt) === 'true'
+    const command = imClient.sendMessageRead(message, session, isBurn ? 1 : receipt ? 2 : undefined)
+    pendingReadCommands.value[command.msg_id] = command
+    delivery.track(pendingReadCommands.value[command.msg_id])
+    persistInteractions()
+  }
+
+  function readConfirmationError(id: string): string {
+    return Object.values(pendingReadCommands.value).find(command => String(command.content?.readMsgIds || '').split(',').includes(id))?.__error || ''
+  }
+
+  function confirmMessageRead(message: ImMessage): void {
+    const sessionId = (message as ChatMessage).sessionId
+    const session = sessions.value.find(item => item.id === sessionId) || currentSession.value
+    if (!session || isMine(message)) return
+    queueReadConfirmation(message, session)
+    if (String(message.is_delete_after_read) === 'true' && !burnDeadlines.value[message.msg_id]) {
+      burnDeadlines.value[message.msg_id] = Date.now() + 30000
+      persistInteractions()
+    }
+  }
+
+  function burnMessage(messageId: string): void {
+    const message = messages.value.find(item => item.msg_id === messageId)
+    interactions.value.recalls[messageId] = { type: MsgType.RECALL, time: Date.now(), hidden: true }
+    delete burnDeadlines.value[messageId]
+    if (message) applyRecall(message)
+    mentions.remove(messageId)
+    persistInteractions()
+    persistMessages()
   }
 
   /** 鉴权成功后的固定动作：会话列表、免打扰；离线结束后再补齐折叠/置顶/历史 */
@@ -611,6 +940,7 @@ export const useImStore = defineStore('im', () => {
   }
 
   function onOfflineEnd(): void {
+    delivery.resume()
     ensurePreferenceStates().catch(() => {})
     if (backfilledOnce) return
     backfilledOnce = true
@@ -635,6 +965,7 @@ export const useImStore = defineStore('im', () => {
         case 'close':
           connected.value = false
           authed.value = false
+          delivery.suspend()
           log(`连接关闭 ${e.data?.code ?? ''}`)
           break
         case 'authed':
@@ -648,8 +979,24 @@ export const useImStore = defineStore('im', () => {
         case 'receipt':
           {
             const r = e.data
-            const m = messages.value.find((x) => x.msg_id === r?.msg_id)
-            if (m) (m as any).__sent = true
+            // 官方成功回执的 content 是原消息 ID；失败回执才使用 msg_id。
+            const id = r?.success ? String(r.content || r.msg_id || '') : String(r?.msg_id || '')
+            const m = messages.value.find((x) => x.msg_id === id)
+            const control = pendingInteractions.value[id]
+            if (pendingReadCommands.value[id] && typeof r?.success === 'boolean') {
+              delivery.acknowledge(id, r.success, r.success ? undefined : '阅读确认被拒绝，请重新提交')
+            }
+            if (r?.success === true) {
+              if (m) { confirmOutgoing(m); if (Number(r.time)) m.send_time = Number(r.time) }
+              if (control) consumeInteraction({ ...control, send_time: Number(r.time) || control.send_time })
+            } else if (r?.success === false) {
+              const detail = (typeof r.content === 'string' ? r.content : '服务端拒绝消息')
+                .replace(/https?:\/\/[^\s)]+/g, '[请求地址]').slice(0, 200)
+              if (m && !m.__sent) { delivery.acknowledge(id, false, detail); m.__sent = false; m.__error = detail; m.__delivery = { state: 'failed', attempts: m.__delivery?.attempts || 1, updatedAt: Date.now() } }
+              if (control) { interactionErrors.value[interactionTarget(control)] = detail; delete pendingInteractions.value[id] }
+              log('消息提交失败：' + detail)
+            }
+            persistMessages()
           }
           break
         case 'offline_more':
@@ -675,6 +1022,20 @@ export const useImStore = defineStore('im', () => {
   }
 
   function stop(): void {
+    delivery.suspend()
+    historyGeneration++
+    for (const pager of olderPagers.values()) pager.cancel()
+    for (const id of scans.keys()) cancelHistoryScan(id)
+    for (const id of lookups.keys()) cancelMessageLookup(id)
+    scans.clear()
+    scanPagers.clear()
+    lookups.clear()
+    olderPagers.clear()
+    forwardLoads.clear()
+    forwardUploads.clear()
+    historyLoads = 0
+    loadingHistory.value = false
+    lookupProgress.value = { scanned: 0, running: false }
     imClient.close()
     if (unsub) {
       unsub()
@@ -682,6 +1043,9 @@ export const useImStore = defineStore('im', () => {
     }
     connected.value = false
     authed.value = false
+    for (const timer of interactionTimers.values()) clearTimeout(timer)
+    interactionTimers.clear()
+    pendingInteractions.value = {}
     syncingDone = false
     prefsLoaded = false
     backfilledOnce = false
@@ -689,11 +1053,24 @@ export const useImStore = defineStore('im', () => {
 
   /** 退出登录时清掉本地账号数据，避免换账号后串数据 */
   function resetLocal(): void {
+    const leavingAccount = authService.getCurrentUserId()
+    void import('./downloads').then(({ useDownloadsStore }) => useDownloadsStore().cancelAll(leavingAccount)).catch(() => log('退出时下载任务清理失败'))
     stop()
     needLogin.value = ''
     imClient.clearSession()
     sessions.value = []
     messages.value = []
+    interactions.value = emptyInteractions()
+    delivery.dispose()
+    mentions.reset()
+    historyProgress.value = {}
+    pendingInteractions.value = {}
+    interactionErrors.value = {}
+    localReadConfirmations.value = {}
+    pendingReadCommands.value = {}
+    burnDeadlines.value = {}
+    receiptAudiences.clear()
+    localStorage.removeItem(interactionKey())
     currentSessionId.value = ''
     hiddenSessions.value = {}
     unread.value = {}
@@ -742,9 +1119,36 @@ export const useImStore = defineStore('im', () => {
 
   const currentMessages = computed(() =>
     messages.value
-      .filter((m) => m.sessionId === currentSessionId.value)
+      .filter((m) => m.sessionId === currentSessionId.value && !interactions.value.recalls[m.msg_id]?.hidden)
       .sort((a, b) => a.send_time - b.send_time),
   )
+  const replyThreads = computed(() => {
+    const list = currentMessages.value
+    const byId = new Map(list.map(message => [message.msg_id, message]))
+    const roots = new Map<string, string>()
+    for (const message of list) {
+      const path: string[] = []
+      const visited = new Set<string>()
+      let id = message.msg_id
+      while (byId.get(id)?.reply_msg_id && !roots.has(id) && !visited.has(id)) {
+        visited.add(id)
+        path.push(id)
+        id = byId.get(id)!.reply_msg_id!
+      }
+      const root = roots.get(id) || (visited.has(id) ? [...visited].sort()[0] : id)
+      roots.set(id, root)
+      for (const child of path) roots.set(child, root)
+    }
+    const groups = new Map<string, ChatMessage[]>()
+    for (const message of list) {
+      const root = roots.get(message.msg_id) || message.msg_id
+      if (!message.reply_msg_id || message.msg_id === root) continue
+      const group = groups.get(root) || []
+      group.push(message)
+      groups.set(root, group)
+    }
+    return { roots, groups }
+  })
 
   const sortedSessions = computed(() =>
     sessions.value
@@ -836,40 +1240,45 @@ export const useImStore = defineStore('im', () => {
     selectSession(id)
   }
 
-  function sendText(text: string, atUserIds: string[] = []): void {
+  function sendText(text: string, atUserIds: string[] = [], replyMsgId?: string, options: { receipt?: boolean; deleteAfterRead?: boolean } = {}): void {
     const s = currentSession.value
     if (!s || !text.trim()) return
     if (!imClient.authed) {
-      log('长连接未就绪，消息未发送')
-      return
+      throw new Error('长连接未就绪，消息未发送')
     }
     sending.value = true
     try {
-      const msg = imClient.sendText(s.id, s.name, s.type, text, undefined, atUserIds)
+      const msg = imClient.sendText(s.id, s.name, s.type, text, replyMsgId, atUserIds, options)
       addMessage(msg)
+      trackOutgoing(msg)
     } finally {
       sending.value = false
     }
   }
 
   /** 调用方逐条推进，失败时不重发已成功写入连接的消息。 */
-  function forwardMessage(target: { id: string; name: string; type: number }, list: ImMessage[], combine: boolean): void {
+  async function forwardMessage(target: { id: string; name: string; type: number }, list: ImMessage[], combine: boolean): Promise<void> {
+    const generation = historyGeneration
     if (!list.length) throw new Error('请先选择消息或文件')
-    const ordered = [...list].sort((a, b) => a.send_time - b.send_time)
-    const first = ordered[0]
-    const content = combine ? {
-      brief: '[聊天记录]',
-      from_name: first.from_name,
-      to_name: first.to_name,
-      msgs: ordered.map(m => ({
-        msg_id: m.msg_id, msg_type: m.msg_type, content: m.content,
-        from_id: m.from_id, from_name: m.from_name, from_type: m.from_type,
-        to_id: m.to_id, to_name: m.to_name, to_type: m.to_type, send_time: m.send_time,
-      })),
-    } : first.content
+    if (list.some(message => String(message.is_need_read_receipt) === 'true' || String(message.is_delete_after_read) === 'true' || [66, 67].includes(Number(message.msg_type)))) throw new Error('受保护或已撤回消息不可转发')
+    const first = [...list].sort((a, b) => Number(a.send_time) - Number(b.send_time))[0]
+    const content = combine ? forwardEnvelope(list, messages.value) : first.content
+    if (combine) {
+      if (JSON.stringify(content).length > 20000) throw new Error('合并转发内容过长，请减少消息数量')
+      const key = JSON.stringify(content.msgs)
+      let upload = forwardUploads.get(key)
+      if (!upload) {
+        upload = uploadForwardDetails(content.msgs).catch(error => { forwardUploads.delete(key); throw error })
+        forwardUploads.set(key, upload)
+        if (forwardUploads.size > 32) forwardUploads.delete(forwardUploads.keys().next().value!)
+      }
+      content.forwardMsgDetailId = await upload
+    }
+    if (generation !== historyGeneration) throw new Error('账号会话已变化，转发已停止')
     const msg = imClient.sendForward(target.id, target.name, target.type,
       combine ? MsgType.COMBINE : first.msg_type, content)
     addMessage(msg)
+    trackOutgoing(msg)
   }
 
   function uploadKey(s: ChatSession): string {
@@ -896,14 +1305,14 @@ export const useImStore = defineStore('im', () => {
   }
 
   /** 发送图片 / 文件（可多选，逐个上传后按 msg_type 2/3 发送） */
-  async function sendFiles(files: File[] | FileList, onSent?: (file: File, index: number) => void): Promise<void> {
+  async function sendFiles(files: File[] | FileList, onSent?: (file: File, index: number) => void, replyMsgId?: string): Promise<void> {
+    const generation = historyGeneration
     const s = currentSession.value
     if (!s) return
     const list = Array.from(files)
     if (!list.length) return
     if (!imClient.authed) {
-      log('长连接未就绪，附件未上传')
-      return
+      throw new Error('长连接未就绪，附件未上传')
     }
     sending.value = true
     try {
@@ -917,20 +1326,24 @@ export const useImStore = defineStore('im', () => {
             s.id,
             s.name,
             s.type,
-            (pct) => setUpload(s, i, `上传中 ${label} · ${pct}%`),
+            (pct) => { if (generation === historyGeneration) setUpload(s, i, `上传中 ${label} · ${pct}%`) },
+            replyMsgId,
           )
+          if (generation !== historyGeneration) return
           addMessage(msg)
+          trackOutgoing(msg)
           onSent?.(f, i)
         } catch (e: any) {
+          if (generation !== historyGeneration) return
           setUpload(s, i, `上传失败：${f.name} · ${e?.message || e}`)
           log(`附件上传失败：${f.name} · ${e?.message || e}`)
           setTimeout(() => clearUpload(s), 4000)
-          return
+          throw e
         }
       }
-      clearUpload(s)
+      if (generation === historyGeneration) clearUpload(s)
     } finally {
-      sending.value = false
+      if (generation === historyGeneration) sending.value = false
     }
   }
 
@@ -1139,6 +1552,18 @@ export const useImStore = defineStore('im', () => {
     sessionTab,
     sending,
     loadingHistory,
+    historyProgress,
+    lookupProgress,
+    completeReplyHistory,
+    cancelHistoryScan,
+    cancelMessageLookup,
+    interactions,
+    pendingInteractions,
+    interactionErrors,
+    localReadConfirmations,
+    pendingReadCommands,
+    burnDeadlines,
+    readConfirmationError,
     uploads,
     unread,
     unreadAt,
@@ -1174,6 +1599,19 @@ export const useImStore = defineStore('im', () => {
     openChat,
     loadHistory,
     loadOlderHistory,
+    olderHistoryComplete,
+    loadUntilMessage,
+    loadForwardDetails,
+    isAtMe,
+    replySource,
+    repliesFor,
+    reactionsFor,
+    toggleReaction,
+    recallMessage,
+    interactionPending,
+    retryMessage,
+    confirmMessageRead,
+    burnMessage,
     toggleMuteSession,
     toggleFoldSession,
     ensureTeam,

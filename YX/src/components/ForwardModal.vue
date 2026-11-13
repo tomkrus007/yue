@@ -5,8 +5,8 @@
       <p>选择接收人或群组，文件沿用原附件，无需重新上传。</p>
       <fieldset class="forward-mode" :disabled="started">
         <legend>转发方式</legend>
-        <label><input v-model="combine" type="radio" :value="false" />逐一转发</label>
-        <label><input v-model="combine" type="radio" :value="true" />合并转发（聊天记录）</label>
+        <label :class="{ active: !combine }"><input v-model="combine" type="radio" :value="false" /><span>逐一转发</span></label>
+        <label :class="{ active: combine }"><input v-model="combine" type="radio" :value="true" /><span>合并转发<small>聊天记录</small></span></label>
       </fieldset>
       <input v-model="keyword" placeholder="搜索会话、联系人或群组" aria-label="搜索转发接收人" />
       <div v-if="selectedTargets.length" class="selected-targets">
@@ -42,6 +42,7 @@
         <p v-else-if="!targets.length">没有匹配的接收人</p>
       </div>
       <div class="preview"><div v-for="m in pending" :key="m.msg_id">{{ m.from_name }}：{{ toPlainText(m.msg_type, m.content) }}</div></div>
+      <p v-if="combine" class="hint">较大的记录会按原版大小限制拆为多条聊天记录；单条超限时可切换逐一转发。</p>
       <p v-if="error" role="alert">{{ error }}</p>
       <p v-if="done">已提交发送 {{ done }} 次</p>
       <footer><button :disabled="!selectedTargets.length || !im.authed || busy || !pending.length" @click="send">{{ busy ? '发送中…' : started ? '重试剩余转发' : `确认转发给 ${selectedTargets.length} 个接收人` }}</button></footer>
@@ -52,6 +53,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onUnmounted } from 'vue'
 import { contactService, type ContactEntry } from '../services/contact-client'
+import { splitForwardBatches } from '../services/im/forwarding'
 import { useImStore } from '../stores/im'
 import type { ImMessage } from '../services/im/im-client'
 import { toPlainText } from '../services/im/content'
@@ -163,23 +165,22 @@ async function send() {
   if (!selectedTargets.value.length || busy.value) return
   busy.value = true
   error.value = ''
-  if (!started.value) {
-    jobs.value = selectedTargets.value.flatMap(receiver => combine.value
-      ? [{ receiver: { ...receiver }, messages: [...pending.value] }]
-      : pending.value.map(message => ({ receiver: { ...receiver }, messages: [message] })))
-    started.value = true
-  }
   try {
+    if (!started.value) {
+      const batches = combine.value ? splitForwardBatches(pending.value, im.messages) : pending.value.map(message => [message])
+      jobs.value = selectedTargets.value.flatMap(receiver => batches.map(messages => ({ receiver: { ...receiver }, messages })))
+      started.value = true
+    }
     while (jobs.value.length) {
       const job = jobs.value[0]
-      im.forwardMessage(job.receiver, job.messages, combine.value)
+      await im.forwardMessage(job.receiver, job.messages, combine.value)
       jobs.value.shift()
       done.value += 1
       await new Promise(resolve => setTimeout(resolve, 0))
     }
     emit('sent')
   } catch (e: any) {
-    error.value = `转发中断：${e?.message || e}。可重试剩余消息。`
+    error.value = started.value ? `转发中断：${e?.message || e}。可重试剩余消息。` : String(e?.message || e)
   } finally { busy.value = false }
 }
 </script>
@@ -189,8 +190,15 @@ async function send() {
 .forward-dialog { width: min(520px, 90vw); max-height: 85vh; overflow: auto; background: var(--panel); padding: 20px; border-radius: 10px; }
 header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h3 { margin: 0; }
-.forward-mode { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; }
-.forward-mode label { display: flex; align-items: center; gap: 6px; }
+.forward-mode { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; margin: 16px 0; padding: 0; border: 0; }
+.forward-mode legend { padding: 0; margin-bottom: 8px; font-size: 13px; color: var(--text-muted); }
+.forward-mode label { flex: 1 1 180px; display: flex; align-items: center; gap: 10px; box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.forward-mode label.active { border-color: var(--primary); background: #fff5eb; }
+.forward-mode label:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
+.forward-mode input[type='radio'] { width: 16px; height: 16px; flex: 0 0 16px; padding: 0; margin: 0; accent-color: var(--primary); }
+.forward-mode label > span { white-space: nowrap; font-size: 14px; }
+.forward-mode small { margin-left: 8px; font-size: 12px; }
+.forward-mode:disabled label { opacity: 0.6; cursor: default; }
 p, small { color: var(--text-muted); font-size: 13px; }
 .targets { max-height: 280px; overflow-y: auto; margin: 12px 0; padding: 2px; }
 .target-row {

@@ -1,9 +1,7 @@
 <template>
   <div class="app-layout">
     <nav class="side-nav">
-      <div class="nav-avatar" :title="auth.user?.name">
-        {{ (auth.user?.name || '?').slice(0, 1) }}
-      </div>
+      <ConnectionStatus />
       <router-link to="/chat" class="nav-item" title="消息">
         <span class="icon">💬</span>
       </router-link>
@@ -20,7 +18,6 @@
         <span class="icon">🛡</span>
       </router-link>
       <div class="spacer"></div>
-      <ConnectionStatus />
       <button class="nav-item logout" @click="onLogout" title="退出">
         <span class="icon">⏻</span>
       </button>
@@ -211,12 +208,7 @@ function onLogout() {
   background: #2b2c2d; display: flex; flex-direction: column;
   align-items: center; padding: 12px 0; gap: 8px;
 }
-.nav-avatar {
-  width: 36px; height: 36px; border-radius: 50%;
-  background: var(--primary); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 600; margin-bottom: 12px;
-}
+
 .nav-item {
   width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
   border-radius: 8px; color: #fff; font-size: 18px; background: transparent; padding: 0;

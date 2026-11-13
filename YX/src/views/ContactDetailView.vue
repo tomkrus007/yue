@@ -42,6 +42,14 @@
           <div class="field"><dt>群简介</dt><dd>{{ detail.description || detail.remark || '-' }}</dd></div>
           <div class="field"><dt>群 ID</dt><dd class="mono">{{ detail.groupId || id }}</dd></div>
         </template>
+        <template v-else-if="kind === 'serviceno'">
+          <div class="field"><dt>服务号名称</dt><dd>{{ name }}</dd></div>
+          <div class="field"><dt>简介</dt><dd>{{ detail.description || detail.brief || detail.introduction || '-' }}</dd></div>
+          <div class="field"><dt>所属企业</dt><dd>{{ detail.eName || detail.eCode || '-' }}</dd></div>
+          <div class="field"><dt>关注状态</dt><dd>{{ Number(detail.isFollow) === 1 ? '已关注' : Number(detail.isFollow) === 0 ? '未关注' : '-' }}</dd></div>
+          <div class="field"><dt>允许回复</dt><dd>{{ Number(detail.isAllowReply) === 0 ? '不允许' : Number(detail.isAllowReply) === 1 ? '允许' : '-' }}</dd></div>
+          <div class="field"><dt>服务号 ID</dt><dd class="mono">{{ detail.accountId || id }}</dd></div>
+        </template>
       </dl>
 
       <pre v-if="showRaw" class="raw">{{ JSON.stringify(detail, null, 2) }}</pre>
@@ -63,6 +71,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { contactService } from '../services/contact-client'
+import { getServiceNoDetail } from '../services/im/service-no'
 import { useImStore } from '../stores/im'
 import GroupSettingsModal from '../components/GroupSettingsModal.vue'
 
@@ -94,6 +103,9 @@ onMounted(async () => {
     if (kind.value === 'group') {
       detail.value = (await contactService.getGroupDetail(id.value)) || {}
       if (!name.value) name.value = detail.value.groupName || detail.value.name || id.value
+    } else if (kind.value === 'serviceno') {
+      detail.value = await getServiceNoDetail(id.value)
+      if (!name.value) name.value = detail.value.name || id.value
     } else {
       const u = await contactService.getUserDetail(id.value)
       detail.value = u || {}
@@ -109,11 +121,11 @@ onMounted(async () => {
 })
 
 function kindLabel(k: string): string {
-  return k === 'group' ? '群组' : '用户'
+  return k === 'group' ? '群组' : k === 'serviceno' ? '服务号' : '用户'
 }
 
 function goChat() {
-  im.openChat(id.value, name.value || id.value, kind.value === 'group' ? 2 : 1)
+  im.openChat(id.value, name.value || id.value, kind.value === 'group' ? 2 : kind.value === 'serviceno' ? 5 : 1)
   router.push('/chat')
 }
 

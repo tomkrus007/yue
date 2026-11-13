@@ -189,24 +189,7 @@ export const useDiskStore = defineStore('disk', () => {
     error.value = ''
     try {
       const items = (await listDir(dirId)).map(toDiskFile)
-      // 根目录再合并旧 openapi 数据，避免 doc 服务未收录的历史文件在界面上消失
-      if (trail.value.length === 1 && currentDrive.value) {
-        const path = openapiRootPath(currentDrive.value, dirId)
-        if (path) {
-          try {
-            const r = await diskClient.list(
-              path,
-              100,
-              currentDrive.value.kind === 'public' ? currentDrive.value.classId : undefined,
-            )
-            for (const f of r.files) {
-              if (!items.some((x) => x.id === f.id || x.name === f.name)) items.push(f)
-            }
-          } catch {
-            /* 旧接口失败时保留 doc 服务列表 */
-          }
-        }
-      }
+      // 列表与写操作统一使用文档服务，旧 openapi 会返回已删除的历史条目。
       files.value = sortFiles(items)
       subEntries.value = []
     } catch (e: any) {
@@ -214,23 +197,6 @@ export const useDiskStore = defineStore('disk', () => {
       files.value = []
     } finally {
       loading.value = false
-    }
-  }
-
-  function openapiRootPath(drive: DiskDrive, dirId: string): string {
-    switch (drive.kind) {
-      case 'private':
-        return '/Private'
-      case 'team':
-        return dirId
-      case 'org':
-        return '/Org/' + dirId
-      case 'public':
-        return 'Public'
-      case 'group':
-        return ''
-      default:
-        return ''
     }
   }
 

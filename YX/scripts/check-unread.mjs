@@ -18,6 +18,7 @@ const ref = (value) => ({ value })
 const context = vm.createContext({
   prefsLoaded: false, prefsLoading: false,
   currentSessionId: ref(''), chatActive: ref(true),
+  hiddenSessions: ref({}), localReadConfirmations: ref({}), imClient: { authed: false },
   unread: ref({ a: 2, b: 3, c: 4 }), unreadAt: ref({ c: 1 }),
   muted: ref(new Set()), folded: ref(new Set()), pinned: ref({}), directory: ref(new Map()),
   sessions: ref(['a', 'b', 'c'].map((id) => ({ id, type: 1 }))),
@@ -26,7 +27,7 @@ const context = vm.createContext({
   loadFoldStates: async () => new Set(),
   loadMuteStates: async () => new Map([['b', true], ['c', true]]),
   fillNamesFromDirectory() {}, persistSessions() {}, persistFolded() {},
-  persistMuted() {}, persistUnread() {},
+  persistMuted() {}, persistUnread() {}, persistInteractions() {},
 })
 vm.runInContext(ts.transpileModule(functions.join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },

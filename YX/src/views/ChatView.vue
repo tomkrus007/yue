@@ -2,12 +2,11 @@
   <div class="chat-layout" :class="{ 'with-drawer': drawerOpen && drawerAllowed }">
     <!-- 左侧导航 -->
     <nav class="side-nav">
-      <div class="nav-avatar" :title="auth.user?.name">
-        {{ (auth.user?.name || '?').slice(0, 1) }}
-      </div>
+      <ConnectionStatus />
       <router-link to="/chat" class="nav-item active" title="消息">
         <span class="icon">💬</span>
       </router-link>
+      <button class="nav-item" :title="`@ 提醒中心 · ${mentions.pending.length} 条待处理`" @click="mentionsOpen = true">@<small v-if="mentions.pending.length">{{ mentions.pending.length }}</small></button>
       <router-link to="/contacts" class="nav-item" title="通讯录">
         <span class="icon">👥</span>
       </router-link>
@@ -21,7 +20,6 @@
         <span class="icon">🛡</span>
       </router-link>
       <div class="spacer"></div>
-      <ConnectionStatus />
       <button class="nav-item logout" @click="onLogout" title="退出">
         <span class="icon">⏻</span>
       </button>
@@ -32,7 +30,6 @@
       <div class="panel-header">
         <h3>消息</h3>
         <div class="head-actions">
-          <button class="small secondary" @click="appOpen = true">应用</button>
           <button class="small secondary" @click="showLogs = !showLogs">日志</button>
         </div>
       </div>
@@ -104,7 +101,7 @@
               <span v-if="im.pinned[s.id]" class="pin">📌</span>
               {{ s.name }}
             </div>
-            <div class="s-last">{{ s.preview || '暂无消息' }}</div>
+            <div class="s-last"><span v-if="im.unreadAt[s.id]" class="session-at">[有人@我]</span> {{ s.preview || '暂无消息' }}</div>
           </div>
           <div class="s-side">
             <div class="s-time">{{ fmtSessionTime(s.lastTime) }}</div>
@@ -160,8 +157,8 @@
             >
               群设置
             </button>
-            <button class="small secondary" @click="toggleSelection">{{ selecting ? '取消多选' : '多选转发' }}</button>
             <button class="small secondary" @click="historyOpen = true">历史</button>
+            <button v-if="[2, 4, 8].includes(im.currentSession.type)" class="small secondary" :disabled="locating" @click="mentionsOpen = true">待处理@（{{ currentPendingMentions.length }}）</button>
             <button
               v-if="drawerAllowed"
               class="small secondary"
@@ -172,37 +169,36 @@
           </div>
         </header>
 
+        <div v-if="activeMention" class="active-mention-bar">
+          <span>{{ activeMention.sessionName }} · {{ activeMention.status === 'pending' ? '待处理提醒' : '已处理提醒' }}</span>
+          <button class="secondary small" :disabled="locating || !mentions.pending.length" @click="nextMention(-1)">上一条</button><button class="secondary small" :disabled="locating || !mentions.pending.length" @click="nextMention(1)">下一条</button>
+          <button class="secondary small" :disabled="locating" @click="locateMention(activeMention, true)">回复</button>
+          <button v-if="activeMention.status === 'pending'" class="secondary small" @click="mentions.handle(activeMention.id)">标记已处理</button><button v-else class="secondary small" @click="mentions.reopen(activeMention.id)">重新待处理</button>
+          <button class="secondary small" @click="activeMentionId = ''">关闭</button>
+        </div>
+        <div v-if="locating" class="lookup-progress">正在定位，已检查 {{ im.lookupProgress.scanned }} 条历史消息 <button class="secondary small" @click="cancelLocate">停止</button></div>
+        <p v-if="actionError" class="chat-action-error" role="status">{{ actionError }}</p>
         <div
           ref="msgList"
           class="msg-list"
+          @scroll="onMessageScroll"
           @dragover.prevent="onDragOver"
           @drop.prevent="onDrop"
         >
+          <button v-if="messageWindowStart > 0" class="secondary small" @click="showEarlierMessages">显示更早已加载的消息（{{ messageWindowStart }} 条）</button>
           <div
             v-for="m in visibleMessages"
             :key="m.msg_id"
-            :class="['msg', im.isMine(m) ? 'mine' : 'theirs']"
+            :data-message-id="m.msg_id"
+            :class="['msg', im.isMine(m) ? 'mine' : 'theirs', { 'message-located': highlightedMessageId === m.msg_id, 'message-selectable': selecting && forwardable(m), 'message-selected': selecting && selectedIds.includes(m.msg_id) }]"
           >
-            <input v-if="selecting && canForward(m.msg_type)" v-model="selectedIds" type="checkbox" :value="m.msg_id" aria-label="选择消息或文件" />
+            <input v-if="selecting && forwardable(m)" v-model="selectedIds" type="checkbox" :value="m.msg_id" aria-label="选择消息或文件" />
             <div class="msg-body">
               <div class="msg-name">
                 {{ im.isMine(m) ? '我' : m.from_name || '未知' }}
                 · {{ fmtMsgTime(m.send_time) }}
               </div>
-              <div class="bubble-row">
-              <div class="bubble">
-                <MessageContent
-                  :msg-type="Number(m.msg_type)"
-                  :content="m.content"
-                  @preview="openPreview"
-                />
-              </div>
-              <MessageToolbar v-if="!selecting" :key="composerKey + m.msg_id" :reaction="messageState[m.msg_id]?.reaction" :favorite="!!messageState[m.msg_id]?.favorite" :forwardable="canForward(m.msg_type)" @action="messageAction(m, $event)" @react="setReaction(m.msg_id, $event)" />
-              </div>
-              <div v-if="messageState[m.msg_id]?.reaction || messageState[m.msg_id]?.favorite" class="message-marks">
-                <button v-if="messageState[m.msg_id]?.reaction" title="取消表情回应（本机）" @click="setReaction(m.msg_id, messageState[m.msg_id]!.reaction!)">{{ messageState[m.msg_id]?.reaction }}</button>
-                <span v-if="messageState[m.msg_id]?.favorite" title="已收藏到本机">☆ 已收藏</span>
-              </div>
+              <MessageBubble :message="m" :selecting="selecting" :favorite="favorites.isFavorite(m)" :favorite-status="favorites.status(m)" :forwardable="forwardable(m)" :admin-recallable="adminRecallable" :blocked="composerBlocked" @action="messageAction(m, $event)" @reply="beginReply" @thread="replyThreadId = $event" @receipt="receiptMessage = $event" @preview="openPreview" />
             </div>
           </div>
 
@@ -220,8 +216,10 @@
           </div>
         </div>
 
+        <button v-if="!nearBottom || messageWindowEnd < allVisibleMessages.length" class="new-messages" @click="scrollToLatest">{{ newMessageCount ? `${newMessageCount} 条新消息 · ` : '' }}返回最新消息</button>
         <div v-if="selecting" class="forward-toolbar">
-          <span>已选 {{ selectedMessages.length }} 条消息 / 文件</span>
+          <span>已选 <strong>{{ selectedMessages.length }}</strong> 条消息 / 文件</span>
+          <button class="small secondary" @click="cancelSelection">取消</button>
           <button class="small secondary" @click="selectAll">全选可转发消息</button>
           <button :disabled="!selectedMessages.length || !im.authed" @click="openForward(false)">逐一转发</button>
           <button :disabled="!selectedMessages.length || !im.authed" @click="openForward(true)">合并转发</button>
@@ -252,9 +250,9 @@
               <template v-if="emojiOpen">
                 <div class="emoji-dismiss" @click="emojiOpen = false"></div>
                 <div class="emoji-panel" role="dialog" aria-label="选择表情">
-                  <div class="emoji-heading">常用表情 <button aria-label="关闭表情" @click="emojiOpen = false">×</button></div>
+                  <div class="emoji-heading">表情 <button aria-label="关闭表情" @click="emojiOpen = false">×</button></div>
                   <div class="composer-emojis">
-                    <button v-for="(emoji, name) in composerEmojis" :key="name" :title="name" :aria-label="name" @mousedown.prevent @click="insertEmoji(emoji)">{{ emoji }}</button>
+                    <button v-for="face in OFFICIAL_FACES" :key="face.name" :title="face.name" :aria-label="face.name" @mousedown.prevent @click="insertEmoji(face.text)"><img :src="face.url" :alt="face.text" width="26" height="26" /></button>
                   </div>
                 </div>
               </template>
@@ -262,6 +260,7 @@
             <button class="composer-tool" title="添加图片 / 文件" aria-label="添加图片或文件" :disabled="submitting || im.sending || !im.authed || composerBlocked" @click="fileInput?.click()">＋</button>
           </div>
           <div class="composer-main">
+            <div v-if="replyDraft" class="reply-draft"><span>回复 {{ replyDraft.from_name }}：{{ protectedMessage(replyDraft) ? '[受保护消息]' : stripHtml(toPlainText(Number(replyDraft.msg_type), replyDraft.content)).slice(0, 160) }}</span><button class="secondary small" @click="cancelReply">取消引用</button></div>
             <div v-if="pendingAttachments.length" class="pending-attachments">
               <div v-for="item in pendingAttachments" :key="item.id" class="pending-attachment" :title="item.file.name">
                 <img v-if="item.preview" :src="item.preview" :alt="item.file.name" />
@@ -290,6 +289,8 @@
           </div>
           <div class="composer-actions">
           <span>Enter 发送 · Shift+Enter 换行</span>
+          <label><input v-model="receiptMode" type="checkbox" :disabled="submitting || burnMode" />要求回执</label>
+          <label><input v-model="burnMode" type="checkbox" :disabled="submitting || receiptMode" />阅后即焚</label>
           <button
             @click="onSend"
             :disabled="submitting || im.sending || !im.authed || composerBlocked || (!draft.trim() && !pendingAttachments.length)"
@@ -313,7 +314,11 @@
     <MentionPicker v-if="mentionPosition !== null && im.currentSession" :key="composerKey" :group-id="im.currentSession.id" @close="closeMention" @confirm="confirmMention" />
 
     <!-- 历史消息 -->
-    <HistoryModal v-model:open="historyOpen" @preview="openPreview" />
+    <HistoryModal v-model:open="historyOpen" @preview="openPreview" @locate="locateMessage" @reply="beginReply" />
+    <ReplyThread v-if="replyThreadId" :key="im.currentSessionId + replyThreadId" :message-id="replyThreadId" @close="replyThreadId = ''" @reply="beginReply" @locate="locateMessage" @preview="openPreview" />
+    <FavoritesModal v-if="favoritesOpen" :messages="favoriteLocations" @close="favoritesOpen = false" @preview="openPreview" @locate="locateFavorite" />
+    <ReceiptModal v-if="receiptMessage" :message="receiptMessage" :readers="im.interactions.readers[receiptMessage.msg_id] || {}" :read-times="im.interactions.readTimes[receiptMessage.msg_id] || {}" @close="receiptMessage = null" />
+    <MentionCenter v-if="mentionsOpen" @close="mentionsOpen = false" @locate="locateMention" @reply="locateMention($event, true)" />
 
     <ForwardModal v-if="forwardOpen" :messages="forwardMessages" :combine="forwardCombine" @close="forwardOpen = false" @sent="finishForward" />
 
@@ -330,11 +335,7 @@
       @left="onGroupLeft"
     />
 
-    <!-- 大图 -->
-    <div v-if="previewUrl" class="imgview" @click="previewUrl = ''">
-      <img :src="previewUrl" :alt="previewName" />
-      <div class="imgview-tip">{{ previewName }}</div>
-    </div>
+    <ImageGallery v-if="previewUrl" :images="galleryImages" :initial-index="galleryIndex" :initial-url="previewUrl" :initial-name="previewName" @close="previewUrl = ''" />
 
     <!-- 协议日志 -->
     <aside v-if="showLogs" class="log-panel">
@@ -360,24 +361,34 @@ import { useImStore } from '../stores/im'
 import MentionPicker from '../components/MentionPicker.vue'
 import type { LinkUserDetail } from '../services/contact-client'
 import type { ContactEntry } from '../services/contact-client'
-import { fmtMsgTime, fmtSessionTime, toPlainText, stripHtml } from '../services/im/content'
+import { fmtMsgTime, fmtSessionTime, toPlainText, stripHtml, segmentsOf, combineDetails, type ImageMeta } from '../services/im/content'
 import {
   normalizeClipboardImage,
 } from '../services/im/media'
 import { supportsMute } from '../services/im/prefs'
 import ForwardModal from '../components/ForwardModal.vue'
 import type { ImMessage } from '../services/im/im-client'
-import MessageContent from '../components/MessageContent.vue'
 import HistoryModal from '../components/HistoryModal.vue'
 import AppPanel from '../components/AppPanel.vue'
 import ConnectionStatus from '../components/ConnectionStatus.vue'
 import ChatDrawer from '../components/ChatDrawer.vue'
-import MessageToolbar from '../components/MessageToolbar.vue'
+import MessageBubble from '../components/MessageBubble.vue'
+import ImageGallery from '../components/ImageGallery.vue'
+import { OFFICIAL_FACES } from '../services/im/official-face'
+import ReplyThread from '../components/ReplyThread.vue'
+import FavoritesModal from '../components/FavoritesModal.vue'
+import type { FavoriteMessageLocation } from '../services/im/favorites'
+import { useFavoritesStore } from '../stores/favorites'
+import { useMentionsStore, type MentionNotice } from '../stores/mentions'
+import MentionCenter from '../components/MentionCenter.vue'
+import ReceiptModal from '../components/ReceiptModal.vue'
 import GroupSettingsModal from '../components/GroupSettingsModal.vue'
 import { groupService } from '../services/group-client'
 
 const auth = useAuthStore()
 const im = useImStore()
+const favorites = useFavoritesStore()
+const mentions = useMentionsStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -386,11 +397,11 @@ const selectedIds = ref<string[]>([])
 const forwardOpen = ref(false)
 const forwardCombine = ref(false)
 const forwardMessages = ref<ImMessage[]>([])
-const selectedMessages = computed(() => visibleMessages.value.filter(m => selectedIds.value.includes(m.msg_id) && canForward(m.msg_type)))
+const selectedMessages = computed(() => visibleMessages.value.filter(m => selectedIds.value.includes(m.msg_id) && forwardable(m)))
 function canForward(type: number) { return [1, 2, 3, 24, 25, 30, 96].includes(Number(type)) }
-function toggleSelection() { selecting.value = !selecting.value; selectedIds.value = [] }
+function cancelSelection() { selecting.value = false; selectedIds.value = [] }
 function selectOne(id: string) { selecting.value = true; selectedIds.value = [id] }
-function selectAll() { selectedIds.value = visibleMessages.value.filter(m => canForward(m.msg_type)).map(m => m.msg_id) }
+function selectAll() { selectedIds.value = visibleMessages.value.filter(m => forwardable(m)).map(m => m.msg_id) }
 function openForward(combine: boolean) {
   forwardCombine.value = combine
   forwardMessages.value = [...selectedMessages.value]
@@ -398,39 +409,142 @@ function openForward(combine: boolean) {
 }
 function finishForward() { forwardOpen.value = false; selecting.value = false; selectedIds.value = [] }
 watch(() => im.currentSessionId, () => { selecting.value = false; selectedIds.value = [] })
-interface MessageState { reaction?: string; favorite?: boolean; deleted?: boolean }
+interface MessageState { deleted?: boolean }
 const messageStateKey = `yl.message-actions.${authService.getCurrentUserId()}`
 function readMessageState(): Record<string, MessageState> {
   try { return JSON.parse(localStorage.getItem(messageStateKey) || '{}') || {} } catch { return {} }
 }
 const messageState = ref<Record<string, MessageState>>(readMessageState())
-const visibleMessages = computed(() => im.currentMessages.filter(m => !messageState.value[m.msg_id]?.deleted))
+const allVisibleMessages = computed(() => im.currentMessages.filter(m => !messageState.value[m.msg_id]?.deleted))
+const messageWindowEndId = ref('')
+const messageWindowEnd = computed(() => {
+  const index = messageWindowEndId.value ? allVisibleMessages.value.findIndex(message => message.msg_id === messageWindowEndId.value) : -1
+  return index < 0 ? allVisibleMessages.value.length : index + 1
+})
+const messageWindowStart = computed(() => Math.max(0, messageWindowEnd.value - 300))
+const visibleMessages = computed(() => allVisibleMessages.value.slice(messageWindowStart.value, messageWindowEnd.value))
+const favoriteLocations = computed<FavoriteMessageLocation[]>(() => im.messages.map(message => ({ ...message, sessionName: im.sessions.find(session => session.id === message.sessionId)?.name || message.to_name || message.from_name })))
 watch(messageState, value => localStorage.setItem(messageStateKey, JSON.stringify(value)), { deep: true })
-function setReaction(id: string, emoji: string) {
-  const state = messageState.value[id] ||= {}
-  state.reaction = state.reaction === emoji ? undefined : emoji
+const actionError = ref('')
+const actionPending = ref(false)
+const favoritesOpen = ref(false)
+const replyThreadId = ref('')
+const receiptMessage = ref<ImMessage | null>(null)
+const mentionsOpen = ref(false)
+const activeMentionId = ref('')
+const activeMention = computed(() => mentions.notices[activeMentionId.value])
+const currentPendingMentions = computed(() => mentions.pending.filter(notice => notice.sessionId === im.currentSessionId))
+const locating = ref(false)
+const highlightedMessageId = ref('')
+const nearBottom = ref(true)
+const newMessageCount = ref(0)
+const adminRecallable = computed(() => im.currentSession?.type === 2 && Number(im.groupDetails.get(im.currentSessionId)?.memberRole || 0) > 0)
+function protectedMessage(message: ImMessage): boolean {
+  return String(message.is_need_read_receipt) === 'true' || String(message.is_delete_after_read) === 'true'
+}
+function forwardable(message: ImMessage): boolean { return canForward(message.msg_type) && !protectedMessage(message) }
+async function locateFavorite(location: { messageId: string; sessionId: string; sessionType: number; sessionName: string }) {
+  favoritesOpen.value = false
+  im.openChat(location.sessionId, location.sessionName, location.sessionType)
+  await locateMessage(location.messageId)
+}
+async function locateMention(notice: MentionNotice, reply = false) {
+  mentionsOpen.value = false
+  activeMentionId.value = notice.id
+  im.openChat(notice.sessionId, notice.sessionName, notice.sessionType)
+  await locateMessage(notice.id)
+  const message = im.messages.find(item => item.msg_id === notice.id && item.sessionId === notice.sessionId)
+  if (reply && message) await beginReply(message)
+}
+function nextMention(direction: number) {
+  const pending = mentions.pending
+  if (!pending.length) return
+  const index = pending.findIndex(notice => notice.id === activeMentionId.value)
+  const next = index < 0 ? (direction > 0 ? 0 : pending.length - 1) : (index + direction + pending.length) % pending.length
+  void locateMention(pending[next])
+}
+function showEarlierMessages() {
+  const message = allVisibleMessages.value[Math.max(0, messageWindowStart.value)]
+  if (message) messageWindowEndId.value = message.msg_id
+  void nextTick(() => { if (msgList.value) msgList.value.scrollTop = msgList.value.scrollHeight })
 }
 async function messageAction(message: ImMessage, action: string) {
+  if (actionPending.value) return
   const text = stripHtml(toPlainText(Number(message.msg_type), message.content))
   const state = messageState.value[message.msg_id] ||= {}
-  switch (action) {
-    case 'copy':
-      try { await navigator.clipboard.writeText(text) } catch { window.alert('复制失败，请选中消息文字后复制。') }
-      break
-    case 'forward':
-      forwardMessages.value = [message]
-      forwardCombine.value = false
-      forwardOpen.value = true
-      break
-    case 'quote':
-      draft.value = `${draft.value}${draft.value ? '\n' : ''}> ${message.from_name || (im.isMine(message) ? '我' : '未知')}：${text.replace(/\n/g, '\n> ')}\n`
-      await nextTick()
-      document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus()
-      break
-    case 'delete': state.deleted = true; break
-    case 'favorite': state.favorite = !state.favorite; break
-    case 'more': selectOne(message.msg_id); break
-  }
+  actionError.value = ''
+  try {
+    switch (action) {
+      case 'copy':
+        try { await navigator.clipboard.writeText(text) }
+        catch { throw new Error('复制失败，请选中消息文字后复制') }
+        break
+      case 'forward':
+        forwardMessages.value = [message]
+        forwardCombine.value = false
+        forwardOpen.value = true
+        break
+      case 'quote': await beginReply(message); break
+      case 'delete': state.deleted = true; break
+      case 'favoriteSync':
+        actionPending.value = true
+        await favorites.sync()
+        break
+      case 'favorite':
+        actionPending.value = true
+        await favorites.toggle(message, im.currentSession || undefined)
+        break
+      case 'recall': case 'adminRecall':
+        im.recallMessage(message, action === 'adminRecall')
+        actionError.value = '撤回请求已提交，等待服务端确认'
+        break
+      case 'more': selectOne(message.msg_id); break
+    }
+  } catch (error) {
+    actionError.value = (error instanceof Error ? error.message : '操作失败，请重试').replace(/https?:\/\/[^\s)]+/g, '[请求地址]')
+  } finally { actionPending.value = false }
+}
+let locateGeneration = 0
+function cancelLocate() { locateGeneration++; im.cancelMessageLookup(im.currentSessionId); locating.value = false; actionError.value = '已停止定位' }
+async function locateMessage(id: string) {
+  const sessionId = im.currentSessionId
+  historyOpen.value = false
+  replyThreadId.value = ''
+  const request = ++locateGeneration
+  locating.value = true
+  actionError.value = ''
+  try {
+    if (!await im.loadUntilMessage(sessionId, id)) {
+      if (request === locateGeneration && im.currentSessionId === sessionId) actionError.value = '本次查找未找到原消息，可继续加载更早历史后重试'
+      return
+    }
+    if (request !== locateGeneration || im.currentSessionId !== sessionId) return
+    if (messageState.value[id]?.deleted) messageState.value[id]!.deleted = false
+    const index = allVisibleMessages.value.findIndex(message => message.msg_id === id)
+    messageWindowEndId.value = allVisibleMessages.value[Math.min(allVisibleMessages.value.length - 1, index + 149)]?.msg_id || ''
+    await nextTick()
+    const element = msgList.value?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`)
+    if (!element) { actionError.value = '原消息已不可显示'; return }
+    element.scrollIntoView({ block: 'center' })
+    highlightedMessageId.value = id
+    nearBottom.value = false
+  } catch { if (request === locateGeneration) actionError.value = '定位消息失败，请检查连接后重试' }
+  finally { if (request === locateGeneration) locating.value = false }
+}
+function onMessageScroll() {
+  const element = msgList.value
+  if (!element) return
+  const atLatest = !messageWindowEndId.value || messageWindowEndId.value === allVisibleMessages.value[allVisibleMessages.value.length - 1]?.msg_id
+  nearBottom.value = atLatest && element.scrollHeight - element.scrollTop - element.clientHeight < 80
+  if (nearBottom.value) { messageWindowEndId.value = ''; newMessageCount.value = 0 }
+  else if (!messageWindowEndId.value) messageWindowEndId.value = visibleMessages.value[visibleMessages.value.length - 1]?.msg_id || ''
+}
+async function scrollToLatest() {
+  messageWindowEndId.value = ''
+  nearBottom.value = true
+  newMessageCount.value = 0
+  await nextTick()
+  if (msgList.value) msgList.value.scrollTop = msgList.value.scrollHeight
 }
 interface PendingAttachment {
   id: number
@@ -439,19 +553,19 @@ interface PendingAttachment {
 }
 const composerKey = computed(() => `${im.currentSession?.type}|${im.currentSessionId}`)
 const drafts = ref<Record<string, string>>({})
+const replyDrafts = ref<Record<string, ImMessage | undefined>>({})
+const replyDraft = computed(() => replyDrafts.value[composerKey.value])
+const receiptModes = ref<Record<string, boolean>>({})
+const burnModes = ref<Record<string, boolean>>({})
+const receiptMode = computed({ get: () => receiptModes.value[composerKey.value] || false, set: value => { receiptModes.value[composerKey.value] = value } })
+const burnMode = computed({ get: () => burnModes.value[composerKey.value] || false, set: value => { burnModes.value[composerKey.value] = value } })
 const attachments = ref<Record<string, PendingAttachment[]>>({})
 const draft = computed({
   get: () => drafts.value[composerKey.value] || '',
   set: (value: string) => { drafts.value[composerKey.value] = value },
 })
 const emojiOpen = ref(false)
-const composerEmojis = {
-  微笑: '🙂', 大笑: '😄', 笑哭: '😂', 偷笑: '🤭', 害羞: '😊', 喜爱: '🥰',
-  调皮: '😜', 眨眼: '😉', 酷: '😎', 思考: '🤔', 惊讶: '😮', 捂脸: '🤦',
-  流泪: '😢', 大哭: '😭', 委屈: '🥺', 生气: '😠', 尴尬: '😅', 困: '🥱',
-  点赞: '👍', 鼓掌: '👏', 握手: '🤝', 合十: '🙏', 加油: '💪', 胜利: '✌️',
-  好的: '👌', 爱心: '❤️', 玫瑰: '🌹', 庆祝: '🎉', 礼物: '🎁', 咖啡: '☕',
-}
+
 watch(composerKey, () => { emojiOpen.value = false })
 async function insertEmoji(emoji: string) {
   if (submitting.value || composerBlocked.value) return
@@ -510,6 +624,23 @@ async function confirmMention(members: LinkUserDetail[]) {
   }
   await closeMention()
   composerInput.value?.setSelectionRange(offset, offset)
+}
+function cancelReply() { delete replyDrafts.value[composerKey.value] }
+async function beginReply(message: ImMessage) {
+  if (composerBlocked.value || [66, 67].includes(Number(message.msg_type)) || protectedMessage(message)) return
+  replyThreadId.value = ''
+  historyOpen.value = false
+  replyDrafts.value[composerKey.value] = message
+  if ([2, 4, 8].includes(im.currentSession?.type || 0) && !im.isMine(message) && !(draftMentions.value[composerKey.value] || []).some(item => item.id === message.from_id)) {
+    const mention = `@${message.from_name || message.from_id}`
+    const start = draft.value.length
+    const prefix = start && !/\s$/.test(draft.value) ? ' ' : ''
+    draft.value += prefix + mention + ' '
+    ;(draftMentions.value[composerKey.value] ||= []).push({ id: message.from_id, start: start + prefix.length, end: start + prefix.length + mention.length })
+  }
+  await nextTick()
+  composerInput.value?.focus()
+  composerInput.value?.setSelectionRange(draft.value.length, draft.value.length)
 }
 const pendingAttachments = computed(() => attachments.value[composerKey.value] || [])
 const submitting = ref(false)
@@ -641,7 +772,10 @@ async function trackWindowFocus(): Promise<void> {
   let focusChanged = false
   const unlisten = await appWindow.onFocusChanged(({ payload }) => {
     focusChanged = true
-    if (!disposed) im.setChatActive(payload)
+    if (!disposed) {
+      im.setChatActive(payload)
+      if (payload) { mentions.ensureAccount(); void favorites.sync().catch(() => {}) }
+    }
   })
   if (disposed) {
     unlisten()
@@ -658,6 +792,8 @@ onMounted(() => {
     router.replace('/login')
     return
   }
+  mentions.ensureAccount()
+  void favorites.sync().catch(() => {})
   const sid = String(route.query.session || '')
   if (sid) {
     const nm = String(route.query.name || '')
@@ -689,10 +825,22 @@ onUnmounted(() => {
 })
 
 watch(
-  () => im.currentMessages.length,
-  async () => {
+  () => im.currentMessages.map(message => ({ id: message.msg_id, time: message.send_time })),
+  async (messages, previous) => {
+    const sessionId = im.currentSessionId
+    const element = msgList.value
+    const follow = nearBottom.value
+    const height = element?.scrollHeight || 0
+    const top = element?.scrollTop || 0
+    const oldIds = new Set(previous.map(message => message.id))
+    const lastTime = previous[previous.length - 1]?.time || 0
+    const addedAtEnd = messages.filter(message => !oldIds.has(message.id) && message.time >= lastTime).length
+    const prepended = !!previous.length && messages[0]?.id !== previous[0]?.id && messages.some(message => message.id === previous[0].id)
     await nextTick()
-    if (msgList.value) msgList.value.scrollTop = msgList.value.scrollHeight
+    if (locating.value || im.currentSessionId !== sessionId || !msgList.value) return
+    if (!previous.length || (follow && addedAtEnd)) scrollToLatest()
+    else if (prepended) msgList.value.scrollTop = top + msgList.value.scrollHeight - height
+    if (!follow && addedAtEnd) newMessageCount.value += addedAtEnd
   },
 )
 
@@ -701,6 +849,11 @@ watch(
   async () => {
     await nextTick()
     if (msgList.value) msgList.value.scrollTop = msgList.value.scrollHeight
+    nearBottom.value = true
+    newMessageCount.value = 0
+    replyThreadId.value = ''
+    messageWindowEndId.value = ''
+    highlightedMessageId.value = ''
     drawerOpen.value = false
     drawerAllowed.value = false
     const s = im.currentSession
@@ -770,15 +923,25 @@ async function onSend() {
   const text = draft.value.trim()
   const items = [...pendingAttachments.value]
   if (!text && !items.length) return
+  if ((receiptMode.value || burnMode.value) && items.length) { actionError.value = '回执与阅后即焚目前仅支持文字，请先移除附件或关闭阅读模式'; return }
+  const replyId = replyDraft.value?.msg_id
+  const source = replyId ? im.messages.find(message => message.msg_id === replyId) : undefined
+  if (source && [66, 67].includes(Number(source.msg_type))) { actionError.value = '原消息已撤回，请取消引用后发送'; return }
   submitting.value = true
+  actionError.value = ''
   try {
     if (text) {
-      im.sendText(text, (draftMentions.value[key] || []).map(item => item.id))
+      im.sendText(text, (draftMentions.value[key] || []).map(item => item.id), replyId, { receipt: receiptMode.value, deleteAfterRead: burnMode.value })
       drafts.value[key] = ''
+      delete replyDrafts.value[key]
     }
     await im.sendFiles(items.map(item => item.file), (_, index) => {
       removeAttachment(key, items[index].id)
-    })
+      delete replyDrafts.value[key]
+    }, text ? undefined : replyId)
+    if (composerKey.value === key) scrollToLatest()
+  } catch (error) {
+    actionError.value = (error instanceof Error ? error.message : '发送失败，草稿已保留').replace(/https?:\/\/[^\s)]+/g, '[请求地址]')
   } finally {
     submitting.value = false
   }
@@ -817,7 +980,24 @@ function loadRecent() {
   im.loadHistory(s.id).catch(() => {})
 }
 
-function openPreview(payload: { url: string; name: string }) {
+const galleryImages = ref<ImageMeta[]>([])
+const galleryIndex = ref(0)
+function openPreview(payload: { url: string; name: string; image?: ImageMeta }) {
+  const images: ImageMeta[] = []
+  function collect(type: number, content: unknown, depth = 0) {
+    if (depth > 5) return
+    if (type === 24) {
+      for (const row of combineDetails(content)) collect(row.msgType, row.content, depth + 1)
+    } else for (const segment of segmentsOf(type, content)) if (segment.type === 'image') images.push(segment)
+  }
+  for (const message of allVisibleMessages.value) if (!protectedMessage(message)) collect(Number(message.msg_type), message.content)
+  let index = payload.image ? images.findIndex(image => image.downloadUrl === payload.image!.downloadUrl && image.fileName === payload.image!.fileName) : -1
+  if (index < 0) {
+    images.unshift(payload.image || { fileName: payload.name, downloadUrl: payload.url, extension: '', size: 0 })
+    index = 0
+  }
+  galleryImages.value = images
+  galleryIndex.value = index
   previewUrl.value = payload.url
   previewName.value = payload.name
 }
@@ -841,18 +1021,7 @@ function openPreview(payload: { url: string; name: string }) {
   padding: 12px 0;
   gap: 8px;
 }
-.nav-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--primary);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  margin-bottom: 12px;
-}
+
 .nav-item {
   width: 40px;
   height: 40px;
@@ -999,28 +1168,16 @@ function openPreview(payload: { url: string; name: string }) {
 
 .msg-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
 .msg { display: flex; margin-bottom: 14px; }
+.msg.message-selectable { align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; border: 1px solid transparent; }
+.msg.message-selected { background: #fff5eb; border-color: var(--primary); }
+.msg.message-selectable > input[type='checkbox'] { width: 18px; height: 18px; flex: 0 0 18px; padding: 0; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.msg.message-selectable:focus-within { outline: 2px solid var(--primary); outline-offset: 1px; }
 .msg.mine { justify-content: flex-end; }
+.msg.mine.message-selectable > input { margin-right: auto; }
 .msg.theirs { justify-content: flex-start; }
 .msg-body { max-width: 72%; }
 .msg.mine .msg-body { text-align: right; }
-.bubble-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.msg.mine .bubble-row { justify-content: flex-end; }
-.bubble-row .bubble { min-width: 0; }
-.message-marks { display: flex; gap: 6px; align-items: center; margin-top: 4px; font-size: 11px; color: var(--text-muted); }
-.msg.mine .message-marks { justify-content: flex-end; }
-.message-marks button { background: var(--panel); border: 1px solid var(--border); padding: 1px 6px; border-radius: 12px; }
 .msg-name { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
-.bubble {
-  display: inline-block;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 14px;
-  word-break: break-word;
-  text-align: left;
-  max-width: 100%;
-}
-.msg.theirs .bubble { background: var(--bubble-other); border: 1px solid var(--border); }
-.msg.mine .bubble { background: var(--bubble-me); }
 .history-btn { margin-top: 10px; }
 
 .composer {
@@ -1114,20 +1271,6 @@ function openPreview(payload: { url: string; name: string }) {
 .logs { list-style: none; padding: 8px; font-size: 11px; color: var(--text-muted); overflow-y: auto; flex: 1; }
 .logs li { padding: 3px 4px; border-bottom: 1px solid #f5f5f5; word-break: break-all; }
 
-.imgview {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.75);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  z-index: 70;
-  cursor: zoom-out;
-}
-.imgview img { max-width: 88vw; max-height: 82vh; border-radius: 6px; }
-.imgview-tip { color: #eee; font-size: 12px; }
 .detail-btn { flex-shrink: 0; }
 </style>
 <style scoped>
@@ -1147,7 +1290,26 @@ function openPreview(payload: { url: string; name: string }) {
 .emoji-panel { position: absolute; bottom: 38px; left: 0; width: min(320px, 70vw); padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px #0002; z-index: 50; }
 .emoji-heading { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
 .emoji-heading button { background: transparent; color: inherit; padding: 0 6px; }
-.composer-emojis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.composer-emojis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; max-height: 280px; overflow-y: auto; }
 .composer-emojis button { background: transparent; padding: 6px; font-size: 24px; }
 .composer-emojis button:hover { background: var(--bg); }
+</style>
+
+<style scoped>
+.session-at { color: #d97706; }
+.mention-messages { max-height: 220px; overflow: auto; padding: 10px 20px; border-bottom: 1px solid var(--border); }
+.mention-messages p { font-size: 12px; color: var(--text-muted); margin: 4px 0; }
+.mention-messages button { display: block; width: 100%; text-align: left; margin: 5px 0; }
+.chat-action-error { color: #b45309; font-size: 12px; padding: 8px 20px; }
+.reply-draft { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-left: 3px solid #9eafc5; background: #eef2f7; color: #526277; font-size: 12px; margin-bottom: 8px; }
+.reply-draft span { flex: 1; overflow-wrap: anywhere; }
+.composer-actions label { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; white-space: nowrap; }
+.composer-actions label input { width: auto; }
+.message-located { background: #fff0b8; border-radius: 8px; outline: 2px solid #f0b64d; }
+.new-messages { align-self: center; margin: 6px; background: #e2efff; color: #1668c7; }
+</style>
+
+<style scoped>
+.active-mention-bar, .lookup-progress { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 20px; font-size: 12px; background: #fff4d6; color: #855200; }
+.nav-item small { font-size: 10px; }
 </style>

@@ -10,7 +10,7 @@
       :alt="seg.fileName || '图片'"
       decoding="async"
       :title="(seg.fileName ? seg.fileName + ' · ' : '') + '点击查看大图'"
-      @click.stop="$emit('preview', { url, name: seg.fileName })"
+      @click.stop="$emit('preview', { url, name: seg.fileName, image: seg })"
     />
   </div>
 </template>
@@ -21,7 +21,7 @@ import { getImageUrl } from '../services/im/media'
 import type { ImageMeta } from '../services/im/content'
 
 const props = defineProps<{ seg: ImageMeta }>()
-defineEmits<{ preview: [payload: { url: string; name: string }] }>()
+defineEmits<{ preview: [payload: { url: string; name: string; image?: ImageMeta }] }>()
 
 const loading = ref(false)
 const error = ref('')

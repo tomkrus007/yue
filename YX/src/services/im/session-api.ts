@@ -79,16 +79,27 @@ export function normalizeImMessage(raw: any): ImMessage {
     create_time: pick('create_time', 'createTime'),
     is_read: pick('is_read', 'isRead'),
     at_user_ids: pick('at_user_ids', 'atUserIds'),
+    reply_msg_id: pick('reply_msg_id', 'replyMsgId'),
+    reply_from_id: pick('reply_from_id', 'replyFromId'),
+    reply_from_name: pick('reply_from_name', 'replyFromName'),
+    reply_msg_type: pick('reply_msg_type', 'replyMsgType'),
+    reply_content: pick('reply_content', 'replyContent'),
+    is_need_read_receipt: pick('is_need_read_receipt', 'isNeedReadReceipt'),
+    is_delete_after_read: pick('is_delete_after_read', 'isDeleteAfterRead'),
+    is_need_send_read: pick('is_need_send_read', 'isNeedSendRead'),
+    is_count_unread: pick('is_count_unread', 'isCountUnread'),
     talk_with_id: pick('talk_with_id', 'talkWithId'),
     talk_with_type: pick('talk_with_type', 'talkWithType'),
     talk_with_name: pick('talk_with_name', 'talkWithName'),
     offline: pick('offline'),
+    __sent: true,
   })
 }
 
 export function previewOf(msg: any): string {
   if (!msg) return ''
   const decoded = normalizeImMessage(msg)
+  if (String(decoded.is_delete_after_read) === 'true' || String(decoded.is_need_read_receipt) === 'true') return '[受保护消息]'
   return stripHtml(toPlainText(Number(decoded.msg_type), decoded.content))
     .replace(/\s+/g, ' ')
     .slice(0, 60)
@@ -122,7 +133,7 @@ export interface HistoryPage {
 export async function fetchHistory(
   targetId: string,
   targetType = 1,
-  options: { limit?: number; dateTime?: number; skip?: number } = {},
+  options: { limit?: number; dateTime?: number; skip?: number; signal?: AbortSignal } = {},
 ): Promise<HistoryPage> {
   const base = getServerPaths().embQueryUri.replace(/\/+$/, '')
   if (!base) throw new Error('缺少 embQueryUri，无法拉历史')
@@ -135,7 +146,7 @@ export async function fetchHistory(
     limit: String(limit),
     dateTime: String(dateTime),
   })
-  const data = await httpJson<any>(base + '/get/history/date?' + q.toString())
+  const data = await httpJson<any>(base + '/get/history/date?' + q.toString(), { signal: options.signal })
   const list = normalizeList(data)
   return {
     messages: list

@@ -1,6 +1,6 @@
 [package]
 name = "YX"
-version = "0.1.4"
+version = "0.1.5"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"
@@ -26,7 +26,7 @@ tauri-plugin-http = "2"
 tauri-plugin-notification = "2"
 # 附件上传：Rust 侧流式读临时文件（见 src/store_upload.rs）
 reqwest = { version = "0.12", features = ["stream", "multipart"] }
-tokio = { version = "1", features = ["fs", "io-util"] }
+tokio = { version = "1", features = ["fs", "io-util", "net", "time", "macros", "process"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 

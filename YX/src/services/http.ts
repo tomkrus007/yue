@@ -20,6 +20,7 @@ export interface HttpOptions {
   retried?: boolean
   /** 待办等接口还需 query 凭证；重试时使用刷新后的 token 重建 URL。 */
   tokenInQuery?: boolean
+  signal?: AbortSignal
 }
 
 export async function httpJson<T = any>(
@@ -50,6 +51,7 @@ export async function httpJson<T = any>(
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: options.signal,
   })
   const text = await resp.text()
   let data: any = null

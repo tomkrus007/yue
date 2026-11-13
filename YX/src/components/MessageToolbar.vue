@@ -3,36 +3,37 @@
   <Teleport to="body">
     <div v-if="opened" class="message-toolbar-backdrop" @click.self="close" @keydown.esc="close">
       <section ref="panel" class="message-toolbar" :style="position" role="dialog" aria-label="消息操作" tabindex="-1">
-        <div class="emoji-row">
-          <button v-for="emoji in quickEmojis" :key="emoji" :class="{ chosen: reaction === emoji }" :aria-label="`回应 ${emoji}`" @click="react(emoji)">{{ emoji }}</button>
+        <div v-if="!protectedMessage" class="emoji-row">
+          <button v-for="emoji in quickEmojis" :key="emoji" :class="{ chosen: reaction === emoji }" :aria-label="`回应 ${emoji}`" @click="react(emoji)" v-html="faceTextHtml(emoji)"></button>
           <button class="emoji-more" aria-label="更多表情" :aria-expanded="expanded" @click="expanded = !expanded">⊕</button>
         </div>
-        <div v-if="expanded" class="emoji-grid">
-          <button v-for="emoji in moreEmojis" :key="emoji" :aria-label="`回应 ${emoji}`" @click="react(emoji)">{{ emoji }}</button>
+        <div v-if="expanded && !protectedMessage" class="emoji-grid">
+          <button v-for="emoji in moreEmojis" :key="emoji" :aria-label="`回应 ${emoji}`" @click="react(emoji)" v-html="faceTextHtml(emoji)"></button>
         </div>
         <div class="action-row">
-          <button v-for="action in actions" :key="action.id" :disabled="action.id === 'forward' && !forwardable" @click="act(action.id)">
+          <button v-for="action in visibleActions" :key="action.id" :disabled="action.id === 'forward' && !forwardable" @click="act(action.id)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="action.path" /></svg>
-            <span>{{ action.id === 'favorite' && favorite ? '取消收藏' : action.label }}</span>
+            <span>{{ action.id === 'favorite' ? favoriteStatus === 'unknown' ? '同步状态' : favorite ? '取消收藏' : '收藏' : action.label }}</span>
           </button>
         </div>
-        <p>表情、收藏和删除仅保存在本机</p>
+        <p>回应与收藏同步到服务端；删除仅在本机隐藏</p>
       </section>
     </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref } from 'vue'
-defineProps<{ reaction?: string; favorite: boolean; forwardable: boolean }>()
+import { computed, nextTick, onUnmounted, ref } from 'vue'
+import { faceTextHtml } from '../services/im/official-face'
+const props = defineProps<{ reaction?: string; favorite: boolean; favoriteStatus?: 'saved' | 'unsaved' | 'unknown'; forwardable: boolean; recallable?: boolean; adminRecallable?: boolean; protectedMessage?: boolean }>()
 const emit = defineEmits<{ action: [name: string]; react: [emoji: string] }>()
 const trigger = ref<HTMLButtonElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
 const opened = ref(false)
 const expanded = ref(false)
 const position = ref({ left: '0px', top: '0px' })
-const quickEmojis = ['🙂', '🤞', '😁', '👍', '😂', '👌']
-const moreEmojis = ['❤️', '👏', '🎉', '🙏', '💪', '😊', '😍', '🤔', '😮', '😢', '😅', '🔥', '✅', '👀', '💯', '🚀']
+const quickEmojis = ['[微笑]', '[胜利]', '[咧嘴]', '[点赞]', '[呲牙]', '[ok]']
+const moreEmojis = ['[爱心]', '[鼓掌]', '[礼花]', '[祈祷]', '[奋斗]', '[害羞]', '[色]', '[疑问]', '[惊呆了]', '[流泪]', '[苦笑]', '[满分]', '[对]', '[玫瑰]', '[咖啡]', '[握手]']
 const actions = [
   { id: 'copy', label: '复制', path: 'M8 7V3h12v14h-4 M4 7h12v14H4Z' },
   { id: 'forward', label: '转发', path: 'm14 3 7 7-7 7v-5C7 12 4 16 3 20c0-9 3-14 11-14Z' },
@@ -40,7 +41,13 @@ const actions = [
   { id: 'delete', label: '删除', path: 'M3 6h18 M9 6V3h6v3 M6 6l1 15h10l1-15 M10 10v7 M14 10v7' },
   { id: 'favorite', label: '收藏', path: 'm12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z' },
   { id: 'more', label: '更多', path: 'M20 12v9H3V4h12 M9 10l4 4L22 3' },
+  { id: 'recall', label: '撤回', path: 'm9 4-6 6 6 6 M3 10h10a7 7 0 0 1 7 7' },
+  { id: 'adminRecall', label: '管理撤回', path: 'm9 4-6 6 6 6 M3 10h10a7 7 0 0 1 7 7' },
 ]
+const visibleActions = computed(() => actions.filter(action => {
+  if (props.protectedMessage && !['delete', 'recall', 'adminRecall'].includes(action.id)) return false
+  return action.id === 'recall' ? props.recallable : action.id === 'adminRecall' ? props.adminRecallable && !props.recallable : true
+}))
 async function toggle() {
   if (opened.value) return close()
   const rect = trigger.value!.getBoundingClientRect()
@@ -60,7 +67,7 @@ function close() {
   window.removeEventListener('resize', close)
   trigger.value?.focus()
 }
-function act(name: string) { emit('action', name); close() }
+function act(name: string) { emit('action', name === 'favorite' && props.favoriteStatus === 'unknown' ? 'favoriteSync' : name); close() }
 function react(emoji: string) { emit('react', emoji); close() }
 onUnmounted(() => window.removeEventListener('resize', close))
 </script>

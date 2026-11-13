@@ -91,6 +91,7 @@ function genDeviceId(): string {
 }
 
 export class AuthService {
+  private refreshing: { key: string; promise: Promise<string | null> } | null = null
   config: AppConfig
 
   constructor(config: AppConfig = DEFAULT_CONFIG) {
@@ -231,43 +232,52 @@ export class AuthService {
     const refreshToken = localStorage.getItem(STORAGE_KEYS.refreshToken)
     if (!refreshToken) return null
 
-    const basicAuth = 'Basic ' + btoa(this.config.clientId + ':' + this.config.clientSecret)
-    const body = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-    })
-    const ssoUrl = getServerPaths().ssoUri.replace(/\/+$/, '')
-
-    try {
-      const resp = await fetch(ssoUrl + '/oauth2/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': basicAuth,
-          'X-Requested-With': 'XMLHttpRequest',
-          'ClientType': 'pc',
-          'LoginMode': 'manual',
-        },
-        body: body.toString(),
+    const accountId = this.getCurrentUserId()
+    const scope = JSON.stringify([accountId, refreshToken, getServerPaths().ssoUri])
+    if (this.refreshing?.key === scope) return this.refreshing.promise
+    const promise = (async () => {
+      const basicAuth = 'Basic ' + btoa(this.config.clientId + ':' + this.config.clientSecret)
+      const body = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
       })
-      const json = await resp.json()
-      if (json.access_token) {
-        localStorage.setItem(STORAGE_KEYS.accessToken, json.access_token)
-        localStorage.setItem(STORAGE_KEYS.authAccessToken, json.access_token)
-        if (json.refresh_token)
-          localStorage.setItem(STORAGE_KEYS.refreshToken, json.refresh_token)
-        localStorage.setItem(
-          STORAGE_KEYS.expiresAt,
-          json.expires_in
-            ? String(Date.now() + Number(json.expires_in) * 1000)
-            : '0',
-        )
-        return json.access_token
+      const ssoUrl = getServerPaths().ssoUri.replace(/\/+$/, '')
+
+      try {
+        const resp = await fetch(ssoUrl + '/oauth2/token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': basicAuth,
+            'X-Requested-With': 'XMLHttpRequest',
+            'ClientType': 'pc',
+            'LoginMode': 'manual',
+          },
+          body: body.toString(),
+        })
+        const json = await resp.json()
+        if (accountId !== this.getCurrentUserId() || refreshToken !== localStorage.getItem(STORAGE_KEYS.refreshToken)) return null
+        if (resp.ok && json.access_token) {
+          localStorage.setItem(STORAGE_KEYS.accessToken, json.access_token)
+          localStorage.setItem(STORAGE_KEYS.authAccessToken, json.access_token)
+          if (json.refresh_token)
+            localStorage.setItem(STORAGE_KEYS.refreshToken, json.refresh_token)
+          localStorage.setItem(
+            STORAGE_KEYS.expiresAt,
+            json.expires_in
+              ? String(Date.now() + Number(json.expires_in) * 1000)
+              : '0',
+          )
+          return json.access_token
+        }
+      } catch (e) {
+        console.error('刷新 token 失败', e)
       }
-    } catch (e) {
-      console.error('刷新 token 失败', e)
-    }
-    return null
+      return null
+    })()
+    this.refreshing = { key: scope, promise }
+    try { return await promise }
+    finally { if (this.refreshing?.promise === promise) this.refreshing = null }
   }
 
   getAccessToken(): string {

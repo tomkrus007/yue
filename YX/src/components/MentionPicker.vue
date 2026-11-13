@@ -6,19 +6,20 @@
       <p v-if="loading">正在加载群成员…</p>
       <p v-else-if="error" role="alert">{{ error }} <button @click="load">重试</button></p>
       <div v-else class="member-list">
+        <label class="select-all"><input v-model="everyone" type="checkbox" /><span>@所有人<small>提醒群内所有成员</small></span></label>
         <label v-if="filtered.length" class="select-all">
-          <input type="checkbox" :checked="allSelected" :indeterminate="partiallySelected" @change="toggleAll" />
+          <input type="checkbox" :disabled="everyone" :checked="allSelected" :indeterminate="partiallySelected" @change="toggleAll" />
           <span>{{ keyword.trim() ? '全选搜索结果' : '全选' }}（{{ filtered.length }}）</span>
         </label>
         <div class="members">
         <label v-for="member in filtered" :key="member.userId">
-          <input v-model="selected" type="checkbox" :value="member.userId" />
+          <input v-model="selected" type="checkbox" :disabled="everyone" :value="member.userId" />
           <span>{{ member.name || member.userName || '未命名成员' }}<small v-if="member.orgName">{{ member.orgName }}</small></span>
         </label>
         <p v-if="!filtered.length">没有匹配的群成员</p>
         </div>
       </div>
-      <footer><button :disabled="loading || !!error || !selected.length" @click="confirm">确认（{{ selected.length }}）</button></footer>
+      <footer><button :disabled="loading || !!error || (!everyone && !selected.length)" @click="confirm">确认（{{ everyone ? '所有人' : selected.length }}）</button></footer>
     </section>
   </div>
 </template>
@@ -30,6 +31,7 @@ const props = defineProps<{ groupId: string }>()
 const emit = defineEmits<{ close: []; confirm: [members: LinkUserDetail[]] }>()
 const members = ref<LinkUserDetail[]>([])
 const selected = ref<string[]>([])
+const everyone = ref(false)
 const keyword = ref('')
 const loading = ref(false)
 const error = ref('')
@@ -51,7 +53,7 @@ async function load() {
   catch (e) { error.value = e instanceof Error ? e.message : '获取群成员失败' }
   finally { loading.value = false }
 }
-function confirm() { emit('confirm', members.value.filter(member => selected.value.includes(member.userId))) }
+function confirm() { emit('confirm', everyone.value ? [{ userId: 'ALL', name: '所有人' }] : members.value.filter(member => selected.value.includes(member.userId))) }
 onMounted(() => { searchInput.value?.focus(); void load() })
 </script>
 

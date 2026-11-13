@@ -18,8 +18,9 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { authService } from '../auth'
 import { getServerPaths } from '../config'
-import { httpArrayBuffer, httpJson } from '../http'
+import { httpArrayBuffer, httpJson, postForm } from '../http'
 import type { ImageMeta } from './content'
+import { createPreviewMappingCache, mapPreviewUrl } from './preview-mapping'
 
 /** 官方只把这 5 种后缀当图片，其余（含 webp/heic）都按文件发送。 */
 export const IMAGE_MSG_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp'])
@@ -290,6 +291,8 @@ export function fileUrl(seg: ImageMeta): string {
   )
 }
 
+const getPreviewMapping = createPreviewMappingCache()
+
 /** 聊天附件走存储预览服务，不使用云盘文件的预览接口。 */
 export function canPreviewFile(seg: ImageMeta): boolean {
   const ext = (seg.extension || seg.fileName.split('.').pop() || '').replace(/^\./, '').toLowerCase()
@@ -309,8 +312,18 @@ export async function filePreviewUrl(seg: ImageMeta): Promise<string> {
     throw new Error(result?.m || '服务端暂不支持预览此文件，请下载后查看')
   }
   const url = new URL(result.r)
-  if (!['https:', 'http:'].includes(url.protocol)) throw new Error('预览地址无效')
-  return url.href
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('预览地址无效')
+  if (!url.searchParams.has('furl')) return url.href
+  const eCode = localStorage.getItem('CurrentECode') || ''
+  const uam = getServerPaths().uamApiUri.replace(/\/+$/, '')
+  if (!eCode || !uam) return url.href
+  const key = JSON.stringify([authService.getCurrentUserId(), eCode, uam])
+  const mapping = await getPreviewMapping(key, async () => {
+    const enterprise = await httpJson<any>(uam + '/v1/enterprises/info?eCode=' + encodeURIComponent(eCode))
+    if (!enterprise?.data?.details) throw new Error('企业配置未返回')
+    return enterprise.data.details.indiviConfig
+  })
+  return mapPreviewUrl(url.href, mapping)
 }
 
 export function appIconUrl(key: string): string {
@@ -361,8 +374,9 @@ let preferredHost = ''
 /** 取图片字节并转 blob URL；同一张图只取一次。 */
 export async function getImageUrl(seg: ImageMeta): Promise<string> {
   const key = seg.downloadUrl || ''
+  if (seg.storeV1) return getAppIconUrl(key)
   if (!key) throw new Error('缺少图片地址')
-  if (/^https?:/i.test(key)) return key
+  if (/^blob:/i.test(key)) return key
   const cached = imgCache.get(key)
   if (cached) return cached
   const pending = imgPending.get(key)
@@ -381,6 +395,11 @@ export async function getImageUrl(seg: ImageMeta): Promise<string> {
     let lastErr: Error | null = null
     for (const url of candidates) {
       for (const withHeader of [false, true]) {
+        if (withHeader && /^https?:/i.test(key)) {
+          const origin = new URL(key).origin
+          const paths = getServerPaths()
+          if (![paths.storeUri, paths.uamApiUri].some(base => base && new URL(base).origin === origin)) continue
+        }
         try {
           const buf = await httpArrayBuffer(url, {
             token: withHeader ? authService.getAccessToken() : undefined,
@@ -448,4 +467,19 @@ export function normalizeClipboardImage(file: File, mime: string): File {
   } catch {
     return file
   }
+}
+
+/** 官方合并转发先上传明细，再在消息中携带详情 ID。 */
+export async function uploadForwardDetails(messages: unknown[]): Promise<string> {
+  if (JSON.stringify(messages).length > 20000) throw new Error('合并转发内容过长，请减少消息数量')
+  const base = getServerPaths().embHttpUri.replace(/\/+$/, '')
+  const result = await postForm<any>(base + '/emb/upload/forwardMsgDetail', {
+    forwardMsgDetail: JSON.stringify(messages),
+  })
+  if ((result?.success === false) || (result?.s !== undefined && Number(result.s) !== 1)) {
+    throw new Error(result?.m || result?.message || '上传合并转发详情失败')
+  }
+  const id = result?.data
+  if (typeof id !== 'string' || !id.trim()) throw new Error('服务端未返回合并转发详情 ID')
+  return id
 }

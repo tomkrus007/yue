@@ -4,9 +4,11 @@
  */
 import { getServerPaths } from './config'
 import { httpJson } from './http'
+import { actionUrl, instructionParams } from './im/card-actions'
 
 export interface AppEntry {
   id: string
+  code?: string
   name: string
   category: string
   icon: string
@@ -30,10 +32,11 @@ export async function loadApps(): Promise<AppEntry[]> {
     .filter((a: any) => a && a.name)
     .map((a: any) => ({
       id: String(a.appId || a.id || ''),
+      code: String(a.appCode || a.code || ''),
       name: a.name,
       category: a.categoryName || '其他',
       icon: String(a.icon || '').split('||')[0],
-      url: (String(a.actionParams || '').match(/url=(\S+)/) || [])[1] || '',
+      url: applicationUrl(a.actionParams),
       order: Number(a.orderNo) || 0,
     }))
     .sort(
@@ -41,6 +44,13 @@ export async function loadApps(): Promise<AppEntry[]> {
         a.order - b.order || a.name.localeCompare(b.name, 'zh'),
     )
   return cache || []
+}
+
+function applicationUrl(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  const text = /[\r\n]/.test(value) ? value : value.replace(/\\n/g, '\n')
+  const params = instructionParams(text)
+  try { return actionUrl(params.pcHomeUrl || params.url || '', getServerPaths()) } catch { return '' }
 }
 
 export function groupByCategory(

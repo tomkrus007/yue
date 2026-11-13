@@ -19,6 +19,7 @@ import {
 import { authService } from '../auth'
 import { getServerPaths, DEFAULT_CONFIG, type AppConfig } from '../config'
 import { buildMediaContent, uploadToStore } from './media'
+import type { DeliveryState } from './delivery'
 
 export interface ImMessage {
   msg_id: string
@@ -44,6 +45,15 @@ export interface ImMessage {
   is_need_send_read?: number
   at_user_ids?: any
   reply_msg_id?: string
+  reply_from_id?: string
+  reply_from_name?: string
+  reply_msg_type?: number
+  reply_content?: any
+  protocol_version_since?: number
+  is_hint_4_old_client?: boolean
+  __sent?: boolean
+  __error?: string
+  __delivery?: DeliveryState
   e_code?: string
   offline?: boolean
   _send_times?: number
@@ -126,6 +136,8 @@ export class ImClient {
   private manualClose = false
   private listeners = new Set<ImEventListener>()
   private _connected = false
+  private mediaUploads = new WeakMap<File, Promise<string>>()
+  private sessionGeneration = 0
 
   constructor(config: AppConfig = DEFAULT_CONFIG) {
     this.config = config
@@ -295,9 +307,11 @@ export class ImClient {
         }
         break
 
-      case Cmd.dRefreshToken:
+      case Cmd.dRefreshToken: {
         // 通知刷新 token：换到之后重连一次
+        const generation = this.sessionGeneration
         authService.refreshToken().then((t) => {
+          if (generation !== this.sessionGeneration) return
           if (!t) {
             this.emit({ type: 'need_login', data: '登录已失效，请重新登录' })
             return
@@ -306,11 +320,13 @@ export class ImClient {
           this.manualClose = true
           this.close()
           setTimeout(() => {
+            if (generation !== this.sessionGeneration) return
             this.manualClose = false
             this.init()
           }, 200)
         })
         break
+      }
 
       case Cmd.dSleep:
         this.emit({ type: 'need_login', data: '登录已失效（服务端要求重新认证）' })
@@ -337,7 +353,7 @@ export class ImClient {
       const raw = typeof msg.content === 'string' ? msg.content : ''
       if (raw) {
         let decoded = decryptContent(raw)
-        if (!isPlainTextMsg(msg.msg_type)) {
+        if (!isPlainTextMsg(Number(msg.msg_type))) {
           try {
             decoded = JSON.parse(decoded)
           } catch {
@@ -423,6 +439,8 @@ export class ImClient {
   clearSession(): void {
     this.offlineCursor = 0
     this.offlinePages = 0
+    this.sessionGeneration++
+    this.mediaUploads = new WeakMap()
   }
 
   private scheduleReconnect(): void {
@@ -485,6 +503,7 @@ export class ImClient {
     text: string,
     replyMsgId?: string,
     atUserIds: string[] = [],
+    options: { receipt?: boolean; deleteAfterRead?: boolean } = {},
   ): ImMessage {
     const msg = this.baseMessage(
       MsgType.TEXT,
@@ -495,7 +514,53 @@ export class ImClient {
       replyMsgId,
     )
     msg.at_user_ids = [...new Set(atUserIds)].join(',')
-    this.send(Cmd.uSendMsg, 1, msg)
+    msg.is_need_read_receipt = !!options.receipt
+    msg.is_delete_after_read = !!options.deleteAfterRead
+    msg.is_need_send_read = !options.receipt && !options.deleteAfterRead && toType === FromType.USER && toId !== authService.getCurrentUserId() && !toId.includes('@') ? 1 : 0
+    if (!this.authed || !this.send(Cmd.uSendMsg, 1, msg)) throw new Error('连接已断开，消息未发送')
+    return msg
+  }
+
+  /** 原版 CTRL 1000 添加表情回应，1001 取消；不计入未读。 */
+  sendReaction(target: ImMessage, session: { id: string; name: string; type: number }, emoji: string, remove: boolean): ImMessage {
+    const msg = this.baseMessage(MsgType.CTRL, {
+      cmd: remove ? 1001 : 1000,
+      params: { emoji, msgId: target.msg_id, sourceMsgFromId: target.from_id },
+    }, session.id, session.name, session.type)
+    msg.protocol_version_since = 2.4
+    msg.is_hint_4_old_client = false
+    msg.is_count_unread = false
+    if (!this.authed || !this.send(Cmd.uSendMsg, 1, msg)) throw new Error('连接已断开，回应未发送')
+    return msg
+  }
+
+  sendRecall(target: ImMessage, session: { id: string; name: string; type: number }, admin = false): ImMessage {
+    const msg = this.baseMessage(admin ? MsgType.ADMINRECALL : MsgType.RECALL,
+      admin ? { msgId: target.msg_id } : target.msg_id, session.id, session.name, session.type)
+    msg.is_count_unread = false
+    if (!this.authed || !this.send(Cmd.uSendMsg, 1, msg)) throw new Error('连接已断开，撤回未发送')
+    return msg
+  }
+
+  retryMessage(message: ImMessage): void {
+    const wire = Object.fromEntries(Object.entries(message).filter(([key]) => !key.startsWith('__') && !['sessionId', 'sessionType', 'offline'].includes(key)))
+    if (Number(message.msg_type) === MsgType.COMBINE && message.content?.forwardMsgDetailId) {
+      wire.content = { ...message.content }
+      delete (wire.content as Record<string, unknown>).msgs
+    }
+    const attempts = (message._send_times || 1) + 1
+    if (!this.authed || !this.send(Cmd.uSendMsg, 1, { ...wire, _send_times: attempts, is_resend: true })) throw new Error('连接已断开，消息未重发')
+    message._send_times = attempts
+  }
+
+  /** 单条阅读确认是普通 95 消息，不是会话级 command=19。 */
+  sendMessageRead(target: ImMessage, session: { id: string; type: number }, cmd?: 1 | 2): ImMessage {
+    const msg = this.baseMessage(MsgType.READED, {
+      readMsgIds: target.msg_id, readMsgTypes: target.msg_type,
+      toId: session.id, toType: session.type, ...(cmd ? { cmd } : {}),
+    }, target.from_id, target.from_name, FromType.USER)
+    msg.is_count_unread = false
+    if (!this.authed || !this.send(Cmd.uSendMsg, 1, msg)) throw new Error('连接已断开，阅读确认未发送')
     return msg
   }
 
@@ -509,11 +574,21 @@ export class ImClient {
     toName: string,
     toType: number,
     onProgress?: (pct: number) => void,
+    replyMsgId?: string,
   ): Promise<ImMessage> {
-    const fileId = await uploadToStore(file, onProgress)
+    const generation = this.sessionGeneration
+    const accountId = authService.getCurrentUserId()
+    let upload = this.mediaUploads.get(file)
+    if (!upload) {
+      upload = uploadToStore(file, onProgress).catch(error => { this.mediaUploads.delete(file); throw error })
+      this.mediaUploads.set(file, upload)
+    }
+    const fileId = await upload
+    if (generation !== this.sessionGeneration || accountId !== authService.getCurrentUserId()) throw new Error('账号会话已变化，附件未发送')
+    onProgress?.(100)
     const { msgType, content } = buildMediaContent(file.name, file.size, fileId)
-    const msg = this.baseMessage(msgType, content, toId, toName, toType)
-    this.send(Cmd.uSendMsg, 1, msg)
+    const msg = this.baseMessage(msgType, content, toId, toName, toType, replyMsgId)
+    if (!this.authed || !this.send(Cmd.uSendMsg, 1, msg)) throw new Error('连接已断开，附件消息未发送')
     return msg
   }
 
@@ -521,7 +596,12 @@ export class ImClient {
   sendForward(toId: string, toName: string, toType: number, msgType: number, content: any): ImMessage {
     if (!this.authed) throw new Error('长连接未就绪，请稍后重试')
     const msg = this.baseMessage(msgType, JSON.parse(JSON.stringify(content)), toId, toName, toType)
-    if (!this.send(Cmd.uSendMsg, 1, msg)) throw new Error('连接已断开，消息未发送')
+    const wire = { ...msg, content: msg.content }
+    if (msgType === MsgType.COMBINE && wire.content.forwardMsgDetailId) {
+      wire.content = { ...wire.content }
+      delete wire.content.msgs
+    }
+    if (!this.send(Cmd.uSendMsg, 1, wire)) throw new Error('连接已断开，消息未发送')
     return msg
   }
 

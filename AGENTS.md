@@ -4,7 +4,7 @@
 
 - `YX/`：Tauri v2 + Vue 3 + TS 客户端，直连生产服务端。
 - `doc/`：逆向报告与协议规格；`LESSONS.md`：踩坑记录，开工前先看。
-- 使用web技术复刻的版本见`/Users/tom/Downloads/yx-cloud-kb`，请主要参考此项目。
+- 使用web技术复刻的版本见`./yx-cloud-kb`，原版云上越秀安装包见`./yx-packages`。
 
 ## 命令（全部在 `YX/` 执行）
 

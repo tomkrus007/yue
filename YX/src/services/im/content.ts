@@ -6,9 +6,11 @@
  *   24 COMBINE  → {brief, msgs:[...]}
  */
 import { MsgType } from './types'
-import { replaceEmojiAliases } from './emoji'
+import { appendFaceText } from './official-face'
+import type { ImMessage } from './im-client'
 
 export interface ImageMeta {
+  storeV1?: boolean
   downloadUrl: string
   extension: string
   size: number
@@ -20,6 +22,7 @@ export type MessageSegment =
   | { type: 'card'; title: string; brief: string; more: string; action: string }
   | ({ type: 'image' } & ImageMeta)
   | ({ type: 'file' } & ImageMeta)
+  | ({ type: 'audio' | 'video' } & ImageMeta)
 
 export function richTextToPlain(content: any): string {
   let blocks = content
@@ -162,7 +165,7 @@ export function toPlainText(msgType: number, content: any): string {
     case MsgType.TEMPLATECARD:
       return c?.brief || '[卡片消息]'
     case MsgType.EMOJI:
-      return '[表情]'
+      return typeof c === 'string' ? c : c?.brief || '[表情]'
     case MsgType.NEWDISKSHARE:
       return c?.file_name ? `[云盘文件] ${c.file_name}` : '[云盘文件]'
     case MsgType.RECALL:
@@ -192,6 +195,10 @@ export function segmentsOf(msgType: number, content: any): MessageSegment[] {
     })
     if (cards.length) return cards
   }
+  if (msgType === MsgType.EMOJI && content?.emojiUrl) return [{ type: 'image', downloadUrl: String(content.emojiUrl), extension: String(content.emojiExt || ''), fileName: String(content.brief || '表情'), size: 0, storeV1: true }]
+  if ([MsgType.AUDIO, MsgType.VOICE, MsgType.VEDIO, MsgType.BIGVIDEO].includes(msgType)) {
+    return [{ type: msgType === MsgType.AUDIO || msgType === MsgType.VOICE ? 'audio' : 'video', ...imageMeta(content) }]
+  }
   if (msgType === MsgType.RICHTEXT) return richTextToSegments(content)
   if (msgType === MsgType.PHOTO) {
     return [{ type: 'image', ...imageMeta(content) }]
@@ -214,6 +221,7 @@ export interface CombineRow {
   text: string
   segments: MessageSegment[]
   time: number
+  message?: ImMessage
 }
 
 export function combineDetails(content: any): CombineRow[] {
@@ -225,6 +233,7 @@ export function combineDetails(content: any): CombineRow[] {
     text: toPlainText(m.msg_type, m.content),
     segments: segmentsOf(m.msg_type, m.content),
     time: m.send_time || 0,
+    message: m.msg_id ? { ...m, msg_type: Number(m.msg_type), content: m.content } : undefined,
   }))
 }
 
@@ -297,7 +306,7 @@ export function sanitizeHtml(html: string): string {
   const walk = (node: Node, parent: HTMLElement) => {
     for (const child of Array.from(node.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) {
-        parent.appendChild(document.createTextNode(replaceEmojiAliases(child.nodeValue || '')))
+        appendFaceText(parent, child.nodeValue || '')
         continue
       }
       if (child.nodeType !== Node.ELEMENT_NODE) continue

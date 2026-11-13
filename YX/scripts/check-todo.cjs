@@ -2,9 +2,9 @@ const fs = require('fs');
 const ts = require(process.cwd() + '/node_modules/typescript');
 const path = require('path');
 function load(file) {
-  const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+  const code = ts.transpileModule(fs.readFileSync(file, 'utf8').replace(/import\.meta\.glob/g, '__assetGlob'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const module = {exports:{}};
-  new Function('require','module','exports',code)(id => load(path.resolve(path.dirname(file),id+'.ts')),module,module.exports);
+  new Function('require','module','exports','__assetGlob',code)(id => load(path.resolve(path.dirname(file),id+'.ts')),module,module.exports,() => ({}));
   return module.exports;
 }
 const assert = require('assert/strict');

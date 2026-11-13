@@ -1,5 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod store_upload;
+mod store_download;
+mod media_stream;
 mod zt_sdk;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 
@@ -112,6 +114,9 @@ pub fn run() {
             // 上次异常退出留下的上传分片直接清掉
             store_upload::cleanup_stale();
             app.manage(store_upload::UploadSpool::default());
+            if let Ok(directory) = app.path().download_dir() { store_download::cleanup_stale(&directory.join("YX")); }
+            app.manage(store_download::Downloads::default());
+            app.manage(media_stream::MediaStreams::default());
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出应用", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -149,7 +154,20 @@ pub fn run() {
             store_upload::store_upload_begin,
             store_upload::store_upload_chunk,
             store_upload::store_upload_commit,
-            store_upload::store_upload_cancel
+            store_upload::store_upload_cancel,
+            store_download::attachment_download_begin,
+            store_download::attachment_download_chunk,
+            store_download::attachment_download_commit,
+            store_download::attachment_download_cancel,
+            store_download::attachment_download_open,
+            store_download::attachment_transcode,
+            store_download::media_codec_support,
+            media_stream::media_stream_open,
+            media_stream::media_local_open,
+            media_stream::media_stream_close,
+            media_stream::media_response_head,
+            media_stream::media_response_chunk,
+            media_stream::media_response_end,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

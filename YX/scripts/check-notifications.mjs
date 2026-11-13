@@ -21,12 +21,18 @@ const ref = (value) => ({ value })
 const calls = []
 const context = vm.createContext({
   messages: ref([]), unread: ref({}), unreadAt: ref({}), unreadIds: ref(new Set()),
+  hiddenSessions: ref({}), sessions: ref([{ id: 'peer', type: 1 }]), localReadConfirmations: ref({}),
   muted: ref(new Set()), folded: ref(new Set()), currentSessionId: ref(''), chatActive: ref(true), lastSoundAt: 0,
   authService: { getCurrentUserId: () => 'me', getDeviceId: () => 'local' },
   sessionOfMsg: () => ({ id: 'peer', type: 1, name: '测试会话' }),
   isMine: (m) => m.from_id === 'me', isServiceAccount: () => false,
   upsertSession: () => ({}), previewOfMessage: () => '', TO_MULTI_TYPES: new Set([2, 4, 8]),
-  persistUnread() {}, persistMessages() {}, persistSessions() {}, log() {},
+  // 本脚本只验证普通消息提醒；控制消息交互由 check-message-store.cjs 运行真实集成逻辑。
+  consumeInteraction: () => false, applyRecall() {},
+  mentions: { observe() {} },
+  mentionsUser: (message, userId) => String(message.at_user_ids || '').split(',').some(id => id.trim() === userId || id.trim() === 'ALL'),
+  imClient: { authed: false },
+  persistUnread() {}, persistMessages() {}, persistSessions() {}, persistInteractions() {}, log() {},
   invoke: async (command) => { calls.push(command) },
   computed: (getter) => ({ get value() { return getter() } }),
 })
