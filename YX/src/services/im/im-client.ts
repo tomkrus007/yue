@@ -7,6 +7,11 @@
  * - 离线游标是「已收到离线消息的 max(send_time)」，不是最早时间
  * - 101 表示还有下一批（要续拉），97 才是真正结束
  * - 收到 99（刷新 token）时换 token 后重连
+ *
+ * 及时性优化（2026-11）：
+ * - 死链判定改为「距最近下行帧 > 2.5 个心跳周期」，不再等心跳丢失计数凑满 3 次
+ * - 监听 window online 事件，网络恢复立即重连并重置退避
+ * - 登出（clearSession）后移除监听，网络事件不会把死连接拉起来
  */
 import { Cmd } from './cmd'
 import { MsgType, FromType, isPlainTextMsg } from './types'
@@ -126,7 +131,8 @@ export class ImClient {
   private ws: WebSocket | null = null
   private beatTimer: ReturnType<typeof setInterval> | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private beatLoss = 0
+  /** 最近一次收到下行帧的时间：0 = 本次连接尚未收到过，用于死链判定 */
+  private lastFrameAt = 0
   authed = false
   /** 离线拉取游标：已收到离线消息的 max(send_time)，0 表示从头拉 */
   private offlineCursor = 0
@@ -134,6 +140,7 @@ export class ImClient {
   private reconnectAttempt = 0
   private authFailures = 0
   private manualClose = false
+  private onlineHandler: (() => void) | null = null
   private listeners = new Set<ImEventListener>()
   private _connected = false
   private mediaUploads = new WeakMap<File, Promise<string>>()
@@ -179,6 +186,7 @@ export class ImClient {
   async init(): Promise<void> {
     if (this.ws) this.close()
     this.manualClose = false
+    this.registerOnlineListener()
     const url = getServerPaths().embWebSocketUri
     this.emit({ type: 'log', data: `连接 ${url}` })
     const ws = new WebSocket(url)
@@ -187,7 +195,7 @@ export class ImClient {
 
     ws.onopen = () => {
       this._connected = true
-      this.beatLoss = 0
+      this.lastFrameAt = Date.now()
       this.emit({ type: 'open' })
       this.emit({ type: 'state_change', data: { state: 'connecting' } })
       // 连接后立即鉴权
@@ -214,6 +222,27 @@ export class ImClient {
       this.scheduleReconnect()
     }
     ws.onmessage = (ev) => this.onMessage(ev.data)
+  }
+
+  /**
+   * 网络恢复监听：断网期间指数退避最长 30s 一次，
+   * 网络一恢复立即重连（重置退避），不等下一次退避计时。
+   */
+  private registerOnlineListener(): void {
+    if (this.onlineHandler) return
+    this.onlineHandler = () => {
+      // 用户主动关闭（登出）后不应被网络事件拉起
+      if (this.manualClose) return
+      if (this.authed) return
+      this.reconnectAttempt = 0
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer)
+        this.reconnectTimer = null
+      }
+      this.emit({ type: 'log', data: '网络已恢复，立即重连' })
+      this.init()
+    }
+    window.addEventListener('online', this.onlineHandler)
   }
 
   /** 鉴权 */
@@ -251,14 +280,15 @@ export class ImClient {
   private onMessage(data: ArrayBuffer | string): void {
     if (typeof data === 'string') return
     const frame = decodeFrame(data)
-    // 收到任意包：重置心跳丢失计数
-    this.beatLoss = 0
+    // 收到任意包：记录最近下行时间，作为连接存活依据
+    this.lastFrameAt = Date.now()
 
     switch (frame.command) {
       case Cmd.dAuthDone:
         this.authed = true
         this.authFailures = 0
         this.reconnectAttempt = 0
+        this.lastFrameAt = Date.now()
         this.startBeat()
         this.emit({ type: 'authed' })
         this.emit({ type: 'state_change', data: { state: 'ready' } })
@@ -378,11 +408,15 @@ export class ImClient {
   /** 启动心跳 */
   startBeat(): void {
     this.stopBeat()
+    this.lastFrameAt = Date.now()
     const interval = this.config.heartbeatInterval
     this.beatTimer = setInterval(() => {
       if (!this.authed) return
-      if (this.beatLoss >= 3) {
-        this.emit({ type: 'log', data: '心跳累计 3 次未收到回执，重连' })
+      // 死链判定：距最近一次下行帧超过 2 个心跳周期（一个周期的回执缺失
+      // 由下一个周期兜底），说明对端已不可达，立即重建连接。
+      // （休眠唤醒后这里会立即命中，不再等心跳回执计数凑满 3 次）
+      if (this.lastFrameAt && Date.now() - this.lastFrameAt > 2000 * interval) {
+        this.emit({ type: 'log', data: '连接静默超时，立即重连' })
         this.manualClose = true
         this.close()
         this.manualClose = false
@@ -390,7 +424,6 @@ export class ImClient {
         return
       }
       this.beat()
-      this.beatLoss++
     }, 1000 * interval)
   }
 
@@ -406,8 +439,9 @@ export class ImClient {
     this.send(Cmd.uBeats, 0)
   }
 
-  /** 关闭连接 */
-  close(): void {
+  /** 关闭连接；manual=true 表示用户主动断开（登出/换号），不触发自动重连 */
+  close(manual = true): void {
+    if (manual) this.manualClose = true
     this.stopBeat()
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -429,10 +463,11 @@ export class ImClient {
     }
   }
 
-  /** 重连 */
+  /** 手动重连：清掉退避计数立即重连 */
   reconnect(): void {
     this.close()
     this.manualClose = false
+    this.reconnectAttempt = 0
     this.init()
   }
 
@@ -441,6 +476,10 @@ export class ImClient {
     this.offlinePages = 0
     this.sessionGeneration++
     this.mediaUploads = new WeakMap()
+    if (this.onlineHandler) {
+      window.removeEventListener('online', this.onlineHandler)
+      this.onlineHandler = null
+    }
   }
 
   private scheduleReconnect(): void {

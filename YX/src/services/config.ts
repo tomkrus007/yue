@@ -93,7 +93,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   embProtocolVersion: 2.8,
   version: '5.2.97',
   version2: '5.2.4',
-  heartbeatInterval: 30,
+  heartbeatInterval: 25,
 }
 
 /**

@@ -227,10 +227,8 @@ export const useImStore = defineStore('im', () => {
   const searching = ref(false)
 
   let unsub: (() => void) | null = null
-  let syncingDone = false
   let prefsLoaded = false
   let prefsLoading = false
-  let backfilledOnce = false
 
   /* ---------------- 本地缓存 ---------------- */
 
@@ -931,19 +929,21 @@ export const useImStore = defineStore('im', () => {
     persistMessages()
   }
 
-  /** 鉴权成功后的固定动作：会话列表、免打扰；离线结束后再补齐折叠/置顶/历史 */
+  /** 鉴权成功后的固定动作：每次（含重连）都拉一次会话列表；偏好只在首次拉 */
   function onAuthed(): void {
-    if (syncingDone) return
-    syncingDone = true
     loadSessionsFromServer()
     ensurePreferenceStates().catch(() => {})
   }
 
+  let lastBackfillAt = 0
+
   function onOfflineEnd(): void {
     delivery.resume()
     ensurePreferenceStates().catch(() => {})
-    if (backfilledOnce) return
-    backfilledOnce = true
+    // 每次重连都回填最近历史兜住离线推送遗漏（离线队列按设备投递，漏发不可重放）。
+    // 60 秒限流：频繁断连时不重复请求。
+    if (Date.now() - lastBackfillAt < 60000) return
+    lastBackfillAt = Date.now()
     backfillRecent(20, 30)
       .then((n) => {
         if (n) log(`历史补齐 ${n} 条`)
@@ -1046,9 +1046,8 @@ export const useImStore = defineStore('im', () => {
     for (const timer of interactionTimers.values()) clearTimeout(timer)
     interactionTimers.clear()
     pendingInteractions.value = {}
-    syncingDone = false
     prefsLoaded = false
-    backfilledOnce = false
+    lastBackfillAt = 0
   }
 
   /** 退出登录时清掉本地账号数据，避免换账号后串数据 */
