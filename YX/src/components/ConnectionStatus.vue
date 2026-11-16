@@ -21,9 +21,8 @@ const label = computed(() => !im.connected ? '未连接' : im.authed ? '已鉴�
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: var(--primary);
+  background: #b6bbc2;
   box-sizing: border-box;
-  border: 2px solid #8a9099;
   color: #fff;
   display: flex;
   align-items: center;
@@ -31,6 +30,7 @@ const label = computed(() => !im.connected ? '未连接' : im.authed ? '已鉴�
   font-weight: 600;
   margin-bottom: 12px;
   flex-shrink: 0;
+  transition: background-color 0.2s;
 }
-.nav-avatar.online { border-color: var(--success); }
+.nav-avatar.online { background: var(--primary); }
 </style>

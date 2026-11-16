@@ -178,45 +178,46 @@
         </div>
         <div v-if="locating" class="lookup-progress">正在定位，已检查 {{ im.lookupProgress.scanned }} 条历史消息 <button class="secondary small" @click="cancelLocate">停止</button></div>
         <p v-if="actionError" class="chat-action-error" role="status">{{ actionError }}</p>
-        <div
-          ref="msgList"
-          class="msg-list"
-          @scroll="onMessageScroll"
-          @dragover.prevent="onDragOver"
-          @drop.prevent="onDrop"
-        >
-          <button v-if="messageWindowStart > 0" class="secondary small" @click="showEarlierMessages">显示更早已加载的消息（{{ messageWindowStart }} 条）</button>
+        <div class="msg-area">
           <div
-            v-for="m in visibleMessages"
-            :key="m.msg_id"
-            :data-message-id="m.msg_id"
-            :class="['msg', im.isMine(m) ? 'mine' : 'theirs', { 'message-located': highlightedMessageId === m.msg_id, 'message-selectable': selecting && forwardable(m), 'message-selected': selecting && selectedIds.includes(m.msg_id) }]"
+            ref="msgList"
+            class="msg-list"
+            @scroll="onMessageScroll"
+            @dragover.prevent="onDragOver"
+            @drop.prevent="onDrop"
           >
-            <input v-if="selecting && forwardable(m)" v-model="selectedIds" type="checkbox" :value="m.msg_id" aria-label="选择消息或文件" />
-            <div class="msg-body">
-              <div class="msg-name">
-                {{ im.isMine(m) ? '我' : m.from_name || '未知' }}
-                · {{ fmtMsgTime(m.send_time) }}
+            <button v-if="messageWindowStart > 0" class="secondary small" @click="showEarlierMessages">显示更早已加载的消息（{{ messageWindowStart }} 条）</button>
+            <div
+              v-for="m in visibleMessages"
+              :key="m.msg_id"
+              :data-message-id="m.msg_id"
+              :class="['msg', im.isMine(m) ? 'mine' : 'theirs', { 'message-located': highlightedMessageId === m.msg_id, 'message-selectable': selecting && forwardable(m), 'message-selected': selecting && selectedIds.includes(m.msg_id) }]"
+            >
+              <input v-if="selecting && forwardable(m)" v-model="selectedIds" type="checkbox" :value="m.msg_id" aria-label="选择消息或文件" />
+              <div class="msg-body">
+                <div class="msg-name">
+                  {{ im.isMine(m) ? '我' : m.from_name || '未知' }}
+                  · {{ fmtMsgTime(m.send_time) }}
+                </div>
+                <MessageBubble :message="m" :selecting="selecting" :favorite="favorites.isFavorite(m)" :favorite-status="favorites.status(m)" :forwardable="forwardable(m)" :admin-recallable="adminRecallable" :blocked="composerBlocked" @action="messageAction(m, $event)" @reply="beginReply" @thread="replyThreadId = $event" @receipt="receiptMessage = $event" @preview="openPreview" />
               </div>
-              <MessageBubble :message="m" :selecting="selecting" :favorite="favorites.isFavorite(m)" :favorite-status="favorites.status(m)" :forwardable="forwardable(m)" :admin-recallable="adminRecallable" :blocked="composerBlocked" @action="messageAction(m, $event)" @reply="beginReply" @thread="replyThreadId = $event" @receipt="receiptMessage = $event" @preview="openPreview" />
             </div>
-          </div>
 
-          <div v-if="visibleMessages.length === 0" class="empty-main">
-            <div>
-              <div>还没有消息</div>
-              <button
-                class="secondary small history-btn"
-                :disabled="im.loadingHistory"
-                @click="loadRecent"
-              >
-                {{ im.loadingHistory ? '加载中…' : '从服务端拉取历史' }}
-              </button>
+            <div v-if="visibleMessages.length === 0" class="empty-main">
+              <div>
+                <div>还没有消息</div>
+                <button
+                  class="secondary small history-btn"
+                  :disabled="im.loadingHistory"
+                  @click="loadRecent"
+                >
+                  {{ im.loadingHistory ? '加载中…' : '从服务端拉取历史' }}
+                </button>
+              </div>
             </div>
           </div>
+          <button v-if="!nearBottom || messageWindowEnd < allVisibleMessages.length" class="new-messages" @click="scrollToLatest">{{ newMessageCount ? `${newMessageCount} 条新消息 · ` : '' }}返回最新消息</button>
         </div>
-
-        <button v-if="!nearBottom || messageWindowEnd < allVisibleMessages.length" class="new-messages" @click="scrollToLatest">{{ newMessageCount ? `${newMessageCount} 条新消息 · ` : '' }}返回最新消息</button>
         <div v-if="selecting" class="forward-toolbar">
           <span>已选 <strong>{{ selectedMessages.length }}</strong> 条消息 / 文件</span>
           <button class="small secondary" @click="cancelSelection">取消</button>
@@ -1166,6 +1167,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .chat-title h3 { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .muted { color: var(--text-muted); font-size: 12px; }
 
+.msg-area { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .msg-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
 .msg { display: flex; margin-bottom: 14px; }
 .msg.message-selectable { align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; border: 1px solid transparent; }
@@ -1306,7 +1308,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .composer-actions label { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; white-space: nowrap; }
 .composer-actions label input { width: auto; }
 .message-located { background: #fff0b8; border-radius: 8px; outline: 2px solid #f0b64d; }
-.new-messages { align-self: center; margin: 6px; background: #e2efff; color: #1668c7; }
+.new-messages { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2; margin: 0; background: #e2efff; color: #1668c7; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); }
 </style>
 
 <style scoped>

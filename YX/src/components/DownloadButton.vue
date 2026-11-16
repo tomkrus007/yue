@@ -25,7 +25,7 @@ async function start() { await downloads.start(props.seg).catch(() => {}) }
 async function cancel() { await downloads.cancel(props.seg).catch(() => {}) }
 </script>
 <style scoped>
-.download-control { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.download-control { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: 10px; font-size: 12px; }
 .file-action { border: 0; background: transparent; color: #1677ff; padding: 2px 0; }
 progress { width: 80px; height: 8px; }
 .error { color: var(--danger); }
