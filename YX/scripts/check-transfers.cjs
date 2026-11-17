@@ -21,7 +21,7 @@ const dependencies = {
     if (command === 'media_stream_open') { channel = args.onRequest; return {id: 'opaque-lease', url: 'http://127.0.0.1:32123/opaque-lease'}; }
     if (command === 'media_response_chunk') assert.ok(args instanceof Uint8Array, '媒体响应须走原始字节通道');
   } },
-  '@tauri-apps/plugin-http': { fetch: async (url, options) => { requests.push({url, options}); const next=responses.shift(); if (next instanceof Error) throw next; return typeof next === 'function' ? await next(url, options) : await next; } },
+  '@tauri-apps/plugin-http': { fetch: async (url, options) => { requests.push({url, options}); const next=responses.shift(); if (next instanceof Error || typeof next === 'string') throw next; return typeof next === 'function' ? await next(url, options) : await next; } },
   './media': { downloadCandidates: seg => ['https://store.example/'+seg.downloadUrl+'?access_token=current', 'https://gw.example/store/v2/'+seg.downloadUrl+'/download?access_token=current'] },
   '../auth': { authService: { getCurrentUserId: () => account, refreshToken: async () => { refreshes++; refreshHook(); return 'fresh'; } } },
 };
@@ -49,8 +49,8 @@ const waitFor=async predicate=>{ for(let i=0;i<100;i++){if(predicate())return; a
  await assert.rejects(()=>api.saveAttachment(seg,'cancel',cancelled,()=>{}),/已取消/);
  written.length=0; responses.push(new Response(null,{status:401}),new Response('ok'));
  await api.saveAttachment(seg,'refresh',new AbortController(),()=>{}); assert.equal(refreshes,1);
- // 网络层失败（证书/DNS）自动切换到下一个候选地址完成下载。
- written.length=0; responses.push(Error('Network Error: ssl certificate mismatch'),new Response('fallback-ok'));
+ // 网络层失败（证书/DNS，plugin-http 按字符串 reject）自动切换到下一个候选地址完成下载。
+ written.length=0; responses.push('error sending request for url (https://store.example/file-id)',new Response('fallback-ok'));
  await api.saveAttachment(seg,'fallback',new AbortController(),()=>{});
  assert.equal(requests.at(-1).url,'https://gw.example/store/v2/file-id/download?access_token=current');
  assert.equal(Buffer.concat(written.map(Buffer.from)).toString(),'fallback-ok');
@@ -58,6 +58,9 @@ const waitFor=async predicate=>{ for(let i=0;i<100;i++){if(predicate())return; a
  responses.push(new Response(null,{status:404}));
  await assert.rejects(()=>api.saveAttachment(seg,'http-error',new AbortController(),()=>{}),/HTTP 404/);
  assert.equal(requests.filter(r=>r.url.includes('gw.example')).length,1);
+ // 所有候选都网络失败时，向上抛出最后一个错误。
+ responses.push('error sending request for url (https://store.example/file-id)','error sending request for url (https://gw.example/file-id)');
+ await assert.rejects(()=>api.saveAttachment(seg,'all-network-error',new AbortController(),()=>{}),/error sending request/);
  const lease=await api.openMediaStream(seg,true);
  assert.ok(!lease.url.includes('access_token'), '本机播放器地址不得携带账号凭据');
  responses.push(new Response('456',{status:206,headers:{'Content-Range':'bytes 4-6/10','Content-Length':'3'}}));

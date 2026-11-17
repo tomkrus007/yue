@@ -20,12 +20,7 @@ function ensureAccount(accountId: string, controller: AbortController): void {
   }
   if (controller.signal.aborted) throw new Error('下载已取消')
 }
-/** 网络层错误（TLS/证书/超时/连接失败）：值得换候选地址重试；HTTP 层错误交给上层处理。 */
-function isNetworkError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return /certificate|ssl|tls|network|timeout|timed?\s*out|aborted|failed to fetch|connection/i.test(message)
-}
-async function remoteResponse(seg: ImageMeta, controller: AbortController, accountId: string, range?: string | null, method = 'GET'): Promise<Response> {
+ async function remoteResponse(seg: ImageMeta, controller: AbortController, accountId: string, range?: string | null, method = 'GET'): Promise<Response> {
   const signal = controller.signal
   const request = async (url: string) => {
     ensureAccount(accountId, controller)
@@ -51,8 +46,11 @@ async function remoteResponse(seg: ImageMeta, controller: AbortController, accou
       return response
     } catch (error) {
       if (controller.signal.aborted || authService.getCurrentUserId() !== accountId) throw error
+      // 能到这里说明 fetch 本身 reject 了（TLS/证书/DNS/超时等网络层错误）。
+      // plugin-http 的错误按 Display 字符串序列化（如 "error sending request for url (...)"），
+      // 不能靠关键词识别，一律视为网络错误换下一个候选；HTTP 层错误走上面的 return 分支。
+      // 例外：读取响应体中途的失败（response 已返回）已在读流处抛出，不会进入这里。
       lastError = error
-      if (!isNetworkError(error)) throw error
     }
   }
   throw lastError

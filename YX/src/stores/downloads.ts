@@ -30,7 +30,9 @@ export const useDownloadsStore = defineStore('downloads', () => {
       Object.assign(jobs.value[identity], { state: 'done', path: saved.path, error: '' })
       return saved
     }).catch(error => {
-      Object.assign(jobs.value[identity], { state: controller.signal.aborted ? 'cancelled' : 'failed', error: String(error instanceof Error ? error.message : '下载失败').replace(/https?:\/\/[^\s)]+/g, '[请求地址]') })
+      // plugin-http 的网络错误按字符串 reject（非 Error 实例），要显示真实文本而不是吞成「下载失败」。
+      const message = error instanceof Error ? error.message : (typeof error === 'string' && error.trim()) || '下载失败'
+      Object.assign(jobs.value[identity], { state: controller.signal.aborted ? 'cancelled' : 'failed', error: String(message).replace(/https?:\/\/[^\s)]+/g, '[请求地址]') })
       throw error
     }).finally(() => { pending.delete(identity); controllers.delete(identity) })
     pending.set(identity, task)
