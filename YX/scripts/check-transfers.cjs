@@ -22,7 +22,7 @@ const dependencies = {
     if (command === 'media_response_chunk') assert.ok(args instanceof Uint8Array, '媒体响应须走原始字节通道');
   } },
   '@tauri-apps/plugin-http': { fetch: async (url, options) => { requests.push({url, options}); const next=responses.shift(); if (next instanceof Error) throw next; return typeof next === 'function' ? await next(url, options) : await next; } },
-  './media': { fileUrl: seg => 'https://store.example/'+seg.downloadUrl+'?access_token=current' },
+  './media': { downloadCandidates: seg => ['https://store.example/'+seg.downloadUrl+'?access_token=current', 'https://gw.example/store/v2/'+seg.downloadUrl+'/download?access_token=current'] },
   '../auth': { authService: { getCurrentUserId: () => account, refreshToken: async () => { refreshes++; refreshHook(); return 'fresh'; } } },
 };
 const m={exports:{}};
@@ -49,6 +49,15 @@ const waitFor=async predicate=>{ for(let i=0;i<100;i++){if(predicate())return; a
  await assert.rejects(()=>api.saveAttachment(seg,'cancel',cancelled,()=>{}),/已取消/);
  written.length=0; responses.push(new Response(null,{status:401}),new Response('ok'));
  await api.saveAttachment(seg,'refresh',new AbortController(),()=>{}); assert.equal(refreshes,1);
+ // 网络层失败（证书/DNS）自动切换到下一个候选地址完成下载。
+ written.length=0; responses.push(Error('Network Error: ssl certificate mismatch'),new Response('fallback-ok'));
+ await api.saveAttachment(seg,'fallback',new AbortController(),()=>{});
+ assert.equal(requests.at(-1).url,'https://gw.example/store/v2/file-id/download?access_token=current');
+ assert.equal(Buffer.concat(written.map(Buffer.from)).toString(),'fallback-ok');
+ // HTTP 层错误不消耗其他候选，直接交给上层报错。
+ responses.push(new Response(null,{status:404}));
+ await assert.rejects(()=>api.saveAttachment(seg,'http-error',new AbortController(),()=>{}),/HTTP 404/);
+ assert.equal(requests.filter(r=>r.url.includes('gw.example')).length,1);
  const lease=await api.openMediaStream(seg,true);
  assert.ok(!lease.url.includes('access_token'), '本机播放器地址不得携带账号凭据');
  responses.push(new Response('456',{status:206,headers:{'Content-Range':'bytes 4-6/10','Content-Length':'3'}}));
@@ -101,5 +110,5 @@ const waitFor=async predicate=>{ for(let i=0;i<100;i++){if(predicate())return; a
  const newJob=store.jobFor(seg);assert.equal(oldJob.state,'cancelled');assert.equal(newJob.state,'done');
  const nativeCancelCount=calls.filter(c=>c.command==='attachment_download_cancel'&&c.args.id===newJob.id).length;
  await store.cancelAll();assert.equal(calls.filter(c=>c.command==='attachment_download_cancel'&&c.args.id===newJob.id).length,nativeCancelCount);
- console.log('下载与媒体流回归通过：分块原始IPC、背压边界、进度、取消/磁盘失败清理、401刷新、Range206、租约账号绑定及退出取消隔离。');
+ console.log('下载与媒体流回归通过：分块原始IPC、背压边界、进度、取消/磁盘失败清理、401刷新、候选地址切换、Range206、租约账号绑定及退出取消隔离。');
 })().catch(error=>{console.error(error);process.exitCode=1});

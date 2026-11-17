@@ -1,7 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { fetch } from '@tauri-apps/plugin-http'
 import type { ImageMeta } from './content'
-import { fileUrl } from './media'
+import { downloadCandidates } from './media'
 import { authService } from '../auth'
 
 export interface SavedDownload { id: string; path: string }
@@ -20,24 +20,42 @@ function ensureAccount(accountId: string, controller: AbortController): void {
   }
   if (controller.signal.aborted) throw new Error('下载已取消')
 }
+/** 网络层错误（TLS/证书/超时/连接失败）：值得换候选地址重试；HTTP 层错误交给上层处理。 */
+function isNetworkError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /certificate|ssl|tls|network|timeout|timed?\s*out|aborted|failed to fetch|connection/i.test(message)
+}
 async function remoteResponse(seg: ImageMeta, controller: AbortController, accountId: string, range?: string | null, method = 'GET'): Promise<Response> {
   const signal = controller.signal
-  const request = async () => {
+  const request = async (url: string) => {
     ensureAccount(accountId, controller)
-    const response = await fetch(fileUrl(seg), { method, signal, headers: { 'Accept-Encoding': 'identity', ...(range ? { Range: range } : {}) } })
+    const response = await fetch(url, { method, signal, headers: { 'Accept-Encoding': 'identity', ...(range ? { Range: range } : {}) } })
     try { ensureAccount(accountId, controller) }
     catch (error) { await response.body?.cancel().catch(() => {}); throw error }
     return response
   }
-  let response = await request()
-  if (response.status === 401 && !signal.aborted) {
-    await response.body?.cancel()
-    ensureAccount(accountId, controller)
-    const fresh = await authService.refreshToken()
-    ensureAccount(accountId, controller)
-    if (fresh) response = await request()
+  // store 主机遇证书/DNS 问题时换网关同路径重试；每个候选内再处理 401 刷新。
+  const candidates = downloadCandidates(seg)
+  if (!candidates.length) throw new Error('缺少下载地址')
+  let lastError: unknown
+  for (const url of candidates) {
+    try {
+      let response = await request(url)
+      if (response.status === 401 && !signal.aborted) {
+        await response.body?.cancel()
+        ensureAccount(accountId, controller)
+        const fresh = await authService.refreshToken()
+        ensureAccount(accountId, controller)
+        if (fresh) response = await request(url)
+      }
+      return response
+    } catch (error) {
+      if (controller.signal.aborted || authService.getCurrentUserId() !== accountId) throw error
+      lastError = error
+      if (!isNetworkError(error)) throw error
+    }
   }
-  return response
+  throw lastError
 }
 /** plugin-http 的响应体按 pull 读取；每次原始字节 IPC 完成后再取下一块，避免大文件内存累计。 */
 export async function readResponse(response: Response, signal: AbortSignal, write: (bytes: Uint8Array) => Promise<unknown>): Promise<number> {

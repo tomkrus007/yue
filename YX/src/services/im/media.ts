@@ -14,6 +14,10 @@
  *
  * 下载：{storeUri}v2/{download_url}/download?access_token=
  * 存储服务回 application/octet-stream + nosniff，图片必须取字节后转 blob URL。
+ *
+ * 下载地址不止 storeUri 一个候选：本机 DNS 把 store 域名解析到内网入口时，
+ * 该入口只持有 *.yuexiu.com 证书，TLS 主机名校验会失败（表现为文件时好时坏）。
+ * 网关（uamApiUri 同源 + /store 路径）实测可达且证书正常，作为兜底候选。
  */
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { authService } from '../auth'
@@ -245,18 +249,17 @@ export async function uploadToStore(
   }
 }
 
-/** 图片候选地址：配置里的 storeUri，以及网关同路径。 */
-export function imageCandidates(seg: ImageMeta, size = '0x1080'): string[] {
+/** 文件/图片下载候选地址：storeUri 优先，网关同路径兜底。 */
+export function downloadCandidates(seg: ImageMeta): string[] {
   const key = seg.downloadUrl
   if (!key) return []
   if (/^https?:/i.test(key)) return [key]
   const token = encodeURIComponent(authService.getAccessToken())
-  const q = `size=${size}&access_token=${token}`
   const out: string[] = []
   const push = (origin?: string, pathname?: string) => {
     if (!origin) return
     const path = String(pathname || '/store').replace(/\/+$/, '')
-    const url = origin.replace(/\/+$/, '') + path + '/v2/' + key + '/download?' + q
+    const url = origin.replace(/\/+$/, '') + path + '/v2/' + key + '/download?access_token=' + token
     if (!out.includes(url)) out.push(url)
   }
   const paths = getServerPaths()
@@ -275,20 +278,17 @@ export function imageCandidates(seg: ImageMeta, size = '0x1080'): string[] {
   return out
 }
 
-export function fileUrl(seg: ImageMeta): string {
-  const key = seg.downloadUrl
-  if (!key) return ''
-  if (/^https?:/i.test(key)) return key
-  const paths = getServerPaths()
-  const base = String(paths.storeUri || '').replace(/\/+$/, '')
-  if (!base) return ''
-  return (
-    base +
-    '/v2/' +
-    key +
-    '/download?access_token=' +
-    encodeURIComponent(authService.getAccessToken())
-  )
+/** 图片候选地址：复用 downloadCandidates，只是多带缩放参数。 */
+export function imageCandidates(seg: ImageMeta, size = '0x1080'): string[] {
+  return downloadCandidates(seg).map(url => {
+    try {
+      const u = new URL(url)
+      u.searchParams.set('size', size)
+      return u.href
+    } catch {
+      return url
+    }
+  })
 }
 
 const getPreviewMapping = createPreviewMappingCache()
