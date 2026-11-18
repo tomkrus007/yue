@@ -55,7 +55,7 @@ export interface ChatMessage extends ImMessage {
   sessionType: number
 }
 
-export type SessionTab = 'all' | 'dm' | 'group' | 'folded'
+export type SessionTab = 'all' | 'folded'
 
 const TO_MULTI_TYPES = new Set([2, 4, 8])
 const MAX_LOCAL_MESSAGES = 5000
@@ -1173,17 +1173,6 @@ export const useImStore = defineStore('im', () => {
       id: 'all',
       label: '全部',
       match: (s) => !folded.value.has(s.id),
-    },
-    {
-      id: 'dm',
-      label: '单人',
-      match: (s) => !folded.value.has(s.id) && (s.type === 1 || s.type === 5),
-    },
-    {
-      id: 'group',
-      label: '群聊',
-      match: (s) =>
-        !folded.value.has(s.id) && (s.type === 2 || s.type === 4 || s.type === 8),
     },
     {
       id: 'folded',

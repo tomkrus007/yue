@@ -763,8 +763,6 @@ function onGroupLeft() {
 
 const emptyHint = computed(() => {
   if (im.sessionTab === 'all') return '还没有会话'
-  if (im.sessionTab === 'dm') return '还没有单聊'
-  if (im.sessionTab === 'group') return '还没有群聊'
   return '没有折叠的会话'
 })
 
