@@ -126,6 +126,7 @@ export async function postForm<T = any>(
 export async function tokenGet<T = any>(
   url: string,
   token = authService.getAccessToken(),
+  retried = false,
 ): Promise<T> {
   const join = url.includes('?') ? '&' : '?'
   const resp = await fetch(
@@ -138,10 +139,29 @@ export async function tokenGet<T = any>(
   } catch {
     data = null
   }
-  if (!resp.ok || (data && data.code && data.code !== 200)) {
+  // 与 httpJson 一致：token 过期时换新 token 重放一次。pan / taskapi 只认
+  // query 凭证，此前没有这条重试，过期后要等别的请求刷新 token 才能恢复。
+  if (resp.status === 401 && token && !retried) {
+    const fresh = await authService.refreshToken()
+    if (fresh) return tokenGet<T>(url, fresh, true)
+  }
+  if (
+    !resp.ok ||
+    (data && typeof data === 'object' && data.code && data.code !== 200)
+  ) {
     throw new Error(
-      (data && (data.message || data.msg)) || 'HTTP ' + resp.status,
+      (data &&
+        (data.message ||
+          data.msg ||
+          data.error_description ||
+          data.error)) ||
+        'HTTP ' + resp.status,
     )
+  }
+  // 200 但正文不是 JSON（例如被 SSO 登录页顶替）不能返回 null：调用方会把
+  // 它当成「没有数据」，界面就显示成「文件夹是空的」而不是报错。
+  if (data === null) {
+    throw new Error('响应不是有效 JSON: ' + String(text || '').slice(0, 80))
   }
   return data as T
 }

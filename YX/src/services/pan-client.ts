@@ -37,13 +37,7 @@ function panDocBase(): string {
   return String(getServerPaths().panDocUri || '').replace(/\/+$/, '')
 }
 
-export async function listDir(dirId: string): Promise<PanItem[]> {
-  const base = panBase()
-  if (!base) throw new Error('缺少 panServerUri')
-  const d = await tokenGet<any>(
-    base + '/v1/directories/' + encodeURIComponent(dirId) + '/items',
-  )
-  const list = Array.isArray(d && d.data) ? d.data : []
+function normalize(list: any[]): PanItem[] {
   return list
     .map((it: any) => ({
       id: String(it.id),
@@ -60,6 +54,41 @@ export async function listDir(dirId: string): Promise<PanItem[]> {
           ? -1
           : 1,
     )
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * 列目录。
+ *
+ * 品高云盘偶发对同一目录返回空列表（重进抽屉再查就正常），因此空结果和
+ * 请求失败都会自动重试；只有连续多次都为空才当真实空目录返回 []。
+ */
+export async function listDir(dirId: string): Promise<PanItem[]> {
+  const base = panBase()
+  if (!base) throw new Error('缺少 panServerUri')
+  const url =
+    base + '/v1/directories/' + encodeURIComponent(dirId) + '/items'
+  const attempts = 3
+  let lastError: unknown = null
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (attempt > 1) await sleep(attempt === 2 ? 250 : 500)
+    let list: any[]
+    try {
+      const d = await tokenGet<any>(url)
+      if (!Array.isArray(d && d.data)) throw new Error('目录列表响应格式异常')
+      list = d.data
+    } catch (e) {
+      lastError = e
+      continue
+    }
+    if (list.length || attempt === attempts) return normalize(list)
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(String(lastError || '目录加载失败'))
 }
 
 export async function signDownload(fileId: string): Promise<string> {

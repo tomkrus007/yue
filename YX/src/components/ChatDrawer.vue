@@ -164,6 +164,8 @@ const dragging = ref(false)
 const pendingDeleteId = ref('')
 const deleting = ref(false)
 const foot = ref('团队任务 · 只读')
+/** 目录请求序号：只接受最后一次请求的结果，避免慢响应覆盖当前目录。 */
+let panRequestId = 0
 
 const taskCount = computed(() =>
   taskGroups.value.reduce((n, g) => n + g.tasks.length, 0),
@@ -173,6 +175,9 @@ const crumb = computed(
 )
 
 function reset() {
+  // 作废在途请求：切会话后旧的目录结果不能落到新的抽屉上。
+  panRequestId += 1
+  panLoading.value = false
   taskGroups.value = []
   tasksError.value = ''
   panItems.value = []
@@ -201,15 +206,19 @@ async function loadTasks() {
 async function loadPanDir() {
   const top = panStack.value[panStack.value.length - 1]
   if (!top) return
+  const requestId = ++panRequestId
   panLoading.value = true
   panError.value = ''
   try {
-    panItems.value = await listDir(top.id)
+    const items = await listDir(top.id)
+    if (requestId !== panRequestId) return
+    panItems.value = items
   } catch (e: any) {
+    if (requestId !== panRequestId) return
     panItems.value = []
     panError.value = '文档加载失败：' + (e?.message || e)
   } finally {
-    panLoading.value = false
+    if (requestId === panRequestId) panLoading.value = false
   }
 }
 
