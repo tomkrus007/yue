@@ -54,9 +54,9 @@
           </div>
           <span
             v-else-if="seg.type === 'text'"
-            :class="{ html: looksLikeHtml(seg.text), ph: isPlaceholder(seg.text, segments.length) }"
+            :class="{ html: isHtml(seg), ph: isPlaceholder(seg.text, segments.length) }"
           >
-            <span v-if="looksLikeHtml(seg.text)" v-html="sanitizeHtml(seg.text)"></span>
+            <span v-if="isHtml(seg)" v-html="sanitizeHtml(seg.text)"></span>
             <span v-else v-html="faceTextHtml(seg.text)"></span>
           </span>
           <MessageImage
@@ -101,7 +101,6 @@ import {
   combineToPlain,
   fmtMsgTime,
   humanSize,
-  looksLikeHtml,
   sanitizeHtml,
   segmentsOf,
   type MessageSegment,
@@ -228,6 +227,11 @@ function complexCardAction(card: Extract<MessageSegment, { type: 'card' }>) {
 
 function isPlaceholder(text: string, total: number): boolean {
   return total === 1 && /^\[[^\]]*\]$/.test(replaceEmojiAliases(text))
+}
+
+/** 只有片段明确标记为 HTML（富文本/复合富文本）才解析标签，普通文本按字面显示。 */
+function isHtml(seg: MessageSegment): boolean {
+  return seg.type === 'text' && seg.html === true
 }
 
 function download(seg: ImageMeta) {

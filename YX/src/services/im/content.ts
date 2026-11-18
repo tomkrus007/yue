@@ -18,7 +18,8 @@ export interface ImageMeta {
 }
 
 export type MessageSegment =
-  | { type: 'text'; text: string }
+  /** html 为 true 时按富文本渲染；普通文本保持字面内容，标签原样显示。 */
+  | { type: 'text'; text: string; html?: boolean }
   | { type: 'card'; title: string; brief: string; more: string; action: string }
   | ({ type: 'image' } & ImageMeta)
   | ({ type: 'file' } & ImageMeta)
@@ -99,7 +100,7 @@ export function richTextToSegments(content: any): MessageSegment[] {
     try {
       blocks = JSON.parse(blocks)
     } catch {
-      return [{ type: 'text', text: blocks }]
+      return [{ type: 'text', text: blocks, html: looksLikeHtml(blocks) }]
     }
   }
   if (!Array.isArray(blocks)) {
@@ -110,7 +111,7 @@ export function richTextToSegments(content: any): MessageSegment[] {
     if (!block) continue
     if (block.msg_type === 1) {
       if (typeof block.content === 'string') {
-        out.push({ type: 'text', text: block.content })
+        out.push({ type: 'text', text: block.content, html: looksLikeHtml(block.content) })
       }
     } else if (block.msg_type === 2) {
       out.push({ type: 'image', ...imageMeta(block.content) })
@@ -195,6 +196,14 @@ export function segmentsOf(msgType: number, content: any): MessageSegment[] {
     })
     if (cards.length) return cards
   }
+  // 官方 99/type 0、1 才把 contents[].content 当 HTML；其余分支按字面文本。
+  if (msgType === MsgType.COMPLEX && rendersHtml(msgType, content) && Array.isArray(content?.contents)) {
+    const html = content.contents
+      .map((item: any) => (typeof item?.content === 'string' ? item.content : ''))
+      .filter(Boolean)
+      .join('')
+    if (html) return [{ type: 'text', text: html, html: true }]
+  }
   if (msgType === MsgType.EMOJI && content?.emojiUrl) return [{ type: 'image', downloadUrl: String(content.emojiUrl), extension: String(content.emojiExt || ''), fileName: String(content.brief || '表情'), size: 0, storeV1: true }]
   if ([MsgType.AUDIO, MsgType.VOICE, MsgType.VEDIO, MsgType.BIGVIDEO].includes(msgType)) {
     return [{ type: msgType === MsgType.AUDIO || msgType === MsgType.VOICE ? 'audio' : 'video', ...imageMeta(content) }]
@@ -253,6 +262,19 @@ export function stripHtml(text: string): string {
       .replace(/\s+/g, ' ')
       .trim()
   }
+}
+
+/** 与官方一致：只有富文本与复合消息的 type 0/1 把内容当 HTML，普通文本按字面显示。 */
+export function rendersHtml(msgType: number, content?: any): boolean {
+  if (msgType === MsgType.RICHTEXT) return true
+  if (msgType === MsgType.COMPLEX) return [0, 1].includes(Number(content?.type))
+  return false
+}
+
+/** 摘要、复制、引用预览用：只对 HTML 消息去标签，避免吃掉普通文本里的代码。 */
+export function messageText(msgType: number, content: any): string {
+  const text = toPlainText(msgType, content)
+  return rendersHtml(msgType, content) ? stripHtml(text) : text
 }
 
 const SAFE_TAGS = new Set([

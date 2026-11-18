@@ -36,7 +36,7 @@ import { computed, ref } from 'vue'
 import { useImStore } from '../stores/im'
 import { authService } from '../services/auth'
 import type { ImMessage } from '../services/im/im-client'
-import { stripHtml, toPlainText } from '../services/im/content'
+import { messageText } from '../services/im/content'
 import { replaceEmojiAliases } from '../services/im/emoji'
 import MessageContent from './MessageContent.vue'
 import MessageToolbar from './MessageToolbar.vue'
@@ -68,7 +68,7 @@ const quoteBrief = computed(() => {
   const source = im.replySource(props.message)
   if (!source) return '引用的原消息尚未加载 · 点击查看'
   if (String(source.is_delete_after_read) === 'true' || String(source.is_need_read_receipt) === 'true') return `${source.from_name}：[受保护消息]`
-  return `${source.from_name || '未知'}：${stripHtml(toPlainText(Number(source.msg_type), source.content)).slice(0, 160)}`
+  return `${source.from_name || '未知'}：${messageText(Number(source.msg_type), source.content).slice(0, 160)}`
 })
 function emojiText(emoji: string) { return emoji === '[ok]' ? '👌' : replaceEmojiAliases(emoji) }
 function react(emoji: string) {

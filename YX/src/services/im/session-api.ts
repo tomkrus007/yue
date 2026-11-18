@@ -10,7 +10,7 @@ import { getServerPaths } from '../config'
 import { httpJson } from '../http'
 import type { ImMessage } from './im-client'
 import { decryptContent } from './protocol'
-import { stripHtml, toPlainText } from './content'
+import { messageText } from './content'
 import { MsgType } from './types'
 
 const PLAIN_TYPES = new Set<number>([
@@ -100,7 +100,7 @@ export function previewOf(msg: any): string {
   if (!msg) return ''
   const decoded = normalizeImMessage(msg)
   if (String(decoded.is_delete_after_read) === 'true' || String(decoded.is_need_read_receipt) === 'true') return '[受保护消息]'
-  return stripHtml(toPlainText(Number(decoded.msg_type), decoded.content))
+  return messageText(Number(decoded.msg_type), decoded.content)
     .replace(/\s+/g, ' ')
     .slice(0, 60)
 }

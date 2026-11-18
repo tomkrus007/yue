@@ -16,7 +16,7 @@ import {
   fetchHistory,
   fetchSessions,
 } from '../services/im/session-api'
-import { stripHtml, toPlainText } from '../services/im/content'
+import { messageText } from '../services/im/content'
 import { applyInteraction, emptyInteractions, mentionsUser, type MessageInteractions } from '../services/im/interactions'
 import { uploadForwardDetails } from '../services/im/media'
 import { MessageDelivery } from '../services/im/delivery'
@@ -411,7 +411,7 @@ export const useImStore = defineStore('im', () => {
   function previewOfMessage(msg: ImMessage): string {
     if (interactions.value.recalls[msg.msg_id]) return interactions.value.recalls[msg.msg_id].hidden ? '[消息已移除]' : '[消息已撤回]'
     if (String(msg.is_delete_after_read) === 'true' || String(msg.is_need_read_receipt) === 'true') return '[受保护消息]'
-    return stripHtml(toPlainText(Number(msg.msg_type), msg.content))
+    return messageText(Number(msg.msg_type), msg.content)
       .replace(/\s+/g, ' ')
       .slice(0, 60)
   }

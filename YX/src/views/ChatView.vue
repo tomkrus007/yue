@@ -261,7 +261,7 @@
             <button class="composer-tool" title="添加图片 / 文件" aria-label="添加图片或文件" :disabled="submitting || im.sending || !im.authed || composerBlocked" @click="fileInput?.click()">＋</button>
           </div>
           <div class="composer-main">
-            <div v-if="replyDraft" class="reply-draft"><span>回复 {{ replyDraft.from_name }}：{{ protectedMessage(replyDraft) ? '[受保护消息]' : stripHtml(toPlainText(Number(replyDraft.msg_type), replyDraft.content)).slice(0, 160) }}</span><button class="secondary small" @click="cancelReply">取消引用</button></div>
+            <div v-if="replyDraft" class="reply-draft"><span>回复 {{ replyDraft.from_name }}：{{ protectedMessage(replyDraft) ? '[受保护消息]' : messageText(Number(replyDraft.msg_type), replyDraft.content).slice(0, 160) }}</span><button class="secondary small" @click="cancelReply">取消引用</button></div>
             <div v-if="pendingAttachments.length" class="pending-attachments">
               <div v-for="item in pendingAttachments" :key="item.id" class="pending-attachment" :title="item.file.name">
                 <img v-if="item.preview" :src="item.preview" :alt="item.file.name" />
@@ -362,7 +362,7 @@ import { useImStore } from '../stores/im'
 import MentionPicker from '../components/MentionPicker.vue'
 import type { LinkUserDetail } from '../services/contact-client'
 import type { ContactEntry } from '../services/contact-client'
-import { fmtMsgTime, fmtSessionTime, toPlainText, stripHtml, segmentsOf, combineDetails, type ImageMeta } from '../services/im/content'
+import { fmtMsgTime, fmtSessionTime, messageText, segmentsOf, combineDetails, type ImageMeta } from '../services/im/content'
 import {
   normalizeClipboardImage,
 } from '../services/im/media'
@@ -473,7 +473,7 @@ function showEarlierMessages() {
 }
 async function messageAction(message: ImMessage, action: string) {
   if (actionPending.value) return
-  const text = stripHtml(toPlainText(Number(message.msg_type), message.content))
+  const text = messageText(Number(message.msg_type), message.content)
   const state = messageState.value[message.msg_id] ||= {}
   actionError.value = ''
   try {

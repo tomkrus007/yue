@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { authService } from '../services/auth'
 import type { ImMessage } from '../services/im/im-client'
 import { mentionsUser } from '../services/im/interactions'
-import { stripHtml, toPlainText } from '../services/im/content'
+import { messageText } from '../services/im/content'
 
 export interface MentionNotice {
   id: string
@@ -45,7 +45,7 @@ export const useMentionsStore = defineStore('mentions', () => {
     notices.value[message.msg_id] = {
       ...previous, id: message.msg_id, sessionId: session.id, sessionName: session.name, sessionType: session.type,
       sender: message.from_name || '未知', time: Number(message.send_time) || 0,
-      preview: protectedMessage ? '[受保护消息]' : stripHtml(toPlainText(Number(message.msg_type), message.content)).slice(0, 200),
+      preview: protectedMessage ? '[受保护消息]' : messageText(Number(message.msg_type), message.content).slice(0, 200),
       status: previous?.status || 'pending',
     }
     persist()

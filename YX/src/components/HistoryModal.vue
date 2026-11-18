@@ -72,7 +72,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useImStore } from '../stores/im'
-import { combineDetails, fmtMsgTime, stripHtml, toPlainText } from '../services/im/content'
+import { combineDetails, fmtMsgTime, messageText } from '../services/im/content'
 import type { ImMessage } from '../services/im/im-client'
 import MessageContent from './MessageContent.vue'
 import MessageGuard from './MessageGuard.vue'
@@ -103,7 +103,7 @@ const kindTypes: Record<string, number[]> = {
   combine: [24],
 }
 function searchText(message: Pick<ImMessage, 'msg_type' | 'content' | 'from_name'>, depth = 0): string {
-  const plain = `${message.from_name || ''} ${stripHtml(toPlainText(Number(message.msg_type), message.content))}`
+  const plain = `${message.from_name || ''} ${messageText(Number(message.msg_type), message.content)}`
   if (Number(message.msg_type) !== 24 || depth >= 5) return plain
   return plain + ' ' + combineDetails(message.content).map(row => searchText({
     msg_type: row.msgType, content: row.content, from_name: row.name,
@@ -121,7 +121,7 @@ function isProtected(message: ImMessage) { return String(message.is_delete_after
 function replyBrief(id: string): string {
   const source = messages.value.find(message => message.msg_id === id)
   if (source && isProtected(source)) return `${source.from_name}：[受保护消息]`
-  return source ? `${source.from_name || '未知'}：${stripHtml(toPlainText(Number(source.msg_type), source.content)).slice(0, 160)}` : '原消息尚未加载，点击尝试定位'
+  return source ? `${source.from_name || '未知'}：${messageText(Number(source.msg_type), source.content).slice(0, 160)}` : '原消息尚未加载，点击尝试定位'
 }
 
 function locate(id: string) {
