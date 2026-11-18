@@ -55,7 +55,7 @@ export interface ChatMessage extends ImMessage {
   sessionType: number
 }
 
-export type SessionTab = 'dm' | 'group' | 'folded'
+export type SessionTab = 'all' | 'dm' | 'group' | 'folded'
 
 const TO_MULTI_TYPES = new Set([2, 4, 8])
 const MAX_LOCAL_MESSAGES = 5000
@@ -210,9 +210,10 @@ export const useImStore = defineStore('im', () => {
   /** 每个会话各自的上传状态：key = type|id */
   const uploads = ref<Record<string, { count: number; text: string }>>({})
 
-  const sessionTab = ref<SessionTab>(
-    (localStorage.getItem(STORAGE_KEYS.imTab) as SessionTab) || 'dm',
-  )
+  /** 分栏默认「全部」且不持久化：重启后若停在某个筛选栏，会出现「右侧在聊、左侧找不到人」 */
+  const sessionTab = ref<SessionTab>('all')
+  // 清掉旧版本持久化的分栏值（旧值还会跨账号残留）
+  localStorage.removeItem(STORAGE_KEYS.imTab)
 
   /** 联系人（好友+群组） */
   const contacts = ref<ContactEntry[]>([])
@@ -450,8 +451,14 @@ export const useImStore = defineStore('im', () => {
 
     const fromThisDevice =
       !!msg.from_device && msg.from_device === authService.getDeviceId()
-    const unreadFlag =
-      msg.is_read === 0 || (msg.is_read === undefined && !msg.offline)
+    const selfChat = ref.id === meId
+    // 自聊（文件传输助手）里 from_id 永远是自己，只能按发送设备区分是不是本机发的。
+    // 其他会话里，本账号在别的设备上发出的消息属于「自己发的」，不提醒也不计未读。
+    const incoming = selfChat ? !fromThisDevice : !isMine(msg)
+    const isRead = msg.is_read === undefined ? undefined : Number(msg.is_read)
+    const unreadFlag = isRead === 0 || (isRead === undefined && !msg.offline)
+    // 手机端发送自聊消息时服务端可能已把 is_read 置 1；另一台设备仍应提示。
+    const notifyFlag = unreadFlag || (selfChat && !fromThisDevice && !msg.offline)
 
     // at_user_ids 是逗号分隔的 user id；@所有人 在服务端是字面量 "ALL"
     const atMe = mentionsUser(msg, meId)
@@ -464,8 +471,10 @@ export const useImStore = defineStore('im', () => {
       offline: msg.offline,
       offline类型: typeof msg.offline,
       未读判定: unreadFlag,
+      提醒判定: notifyFlag,
       本设备发送: fromThisDevice,
       自己发送: isMine(msg),
+      自聊: selfChat,
       当前会话: currentSessionId.value === ref.id,
       免打扰: sessionMuted,
       折叠: folded.value.has(ref.id),
@@ -474,7 +483,7 @@ export const useImStore = defineStore('im', () => {
       已计未读: unreadIds.value.has(msg.msg_id),
     }))
 
-    if (unreadFlag && !msg.offline && !isMine(msg) && !fromThisDevice &&
+    if (notifyFlag && incoming && !msg.offline &&
       !sessionMuted && !folded.value.has(ref.id) &&
       !isServiceAccount({ type: ref.type }) && Date.now() - lastSoundAt > 1000) {
       lastSoundAt = Date.now()
@@ -485,8 +494,8 @@ export const useImStore = defineStore('im', () => {
 
 
     if (
-      unreadFlag &&
-      !fromThisDevice &&
+      notifyFlag &&
+      incoming &&
       (!chatActive.value || currentSessionId.value !== ref.id) &&
       !isServiceAccount({ type: ref.type }) &&
       !unreadIds.value.has(msg.msg_id) &&
@@ -1161,6 +1170,11 @@ export const useImStore = defineStore('im', () => {
     match: (s: ChatSession) => boolean
   }> = [
     {
+      id: 'all',
+      label: '全部',
+      match: (s) => !folded.value.has(s.id),
+    },
+    {
       id: 'dm',
       label: '单人',
       match: (s) => !folded.value.has(s.id) && (s.type === 1 || s.type === 5),
@@ -1196,7 +1210,6 @@ export const useImStore = defineStore('im', () => {
 
   function setTab(tab: SessionTab): void {
     sessionTab.value = tab
-    localStorage.setItem(STORAGE_KEYS.imTab, tab)
   }
 
   function setChatActive(active: boolean): void {
@@ -1214,11 +1227,25 @@ export const useImStore = defineStore('im', () => {
     if (currentSessionId.value === id) currentSessionId.value = ''
   }
 
+  /**
+   * 目标会话不在当前分栏时把左侧归位，避免「右侧在聊、左侧找不到」。
+   * 只在不可见时切换，这样在「全部」里点会话不会把分栏跳走。
+   */
+  function revealSession(id: string): void {
+    if (visibleSessions.value.some((s) => s.id === id)) return
+    const s = sessions.value.find((x) => x.id === id)
+    const target = s
+      ? tabDefs.find((t) => t.id !== 'all' && t.match(s))
+      : undefined
+    setTab(target ? target.id : 'all')
+  }
+
   function selectSession(id: string): void {
     if (id in hiddenSessions.value) {
       delete hiddenSessions.value[id]
       writeJson(STORAGE_KEYS.imHiddenSessions, hiddenSessions.value)
     }
+    revealSession(id)
     currentSessionId.value = id
     if (chatActive.value) clearUnread(id)
     const s = sessions.value.find((x) => x.id === id)

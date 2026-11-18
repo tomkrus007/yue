@@ -427,6 +427,8 @@ const visibleMessages = computed(() => allVisibleMessages.value.slice(messageWin
 const favoriteLocations = computed<FavoriteMessageLocation[]>(() => im.messages.map(message => ({ ...message, sessionName: im.sessions.find(session => session.id === message.sessionId)?.name || message.to_name || message.from_name })))
 watch(messageState, value => localStorage.setItem(messageStateKey, JSON.stringify(value)), { deep: true })
 const actionError = ref('')
+// 操作提示属于当前会话，切换会话后不保留。
+watch(() => im.currentSessionId, () => { actionError.value = '' })
 const actionPending = ref(false)
 const favoritesOpen = ref(false)
 const replyThreadId = ref('')
@@ -496,8 +498,8 @@ async function messageAction(message: ImMessage, action: string) {
         await favorites.toggle(message, im.currentSession || undefined)
         break
       case 'recall': case 'adminRecall':
+        // 撤回结果由消息级状态展示：成功后消息变成「已撤回」，失败显示在消息下方。
         im.recallMessage(message, action === 'adminRecall')
-        actionError.value = '撤回请求已提交，等待服务端确认'
         break
       case 'more': selectOne(message.msg_id); break
     }
@@ -760,6 +762,7 @@ function onGroupLeft() {
 }
 
 const emptyHint = computed(() => {
+  if (im.sessionTab === 'all') return '还没有会话'
   if (im.sessionTab === 'dm') return '还没有单聊'
   if (im.sessionTab === 'group') return '还没有群聊'
   return '没有折叠的会话'
