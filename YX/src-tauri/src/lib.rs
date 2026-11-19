@@ -121,7 +121,9 @@ pub fn run() {
             let quit = MenuItem::with_id(app, "quit", "退出应用", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
             TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().expect("缺少应用图标").clone())
+                // 模板图标：纯黑气泡 + 透明背景，macOS 按菜单栏明暗自动渲染成黑/白色
+                .icon(tauri::include_image!("icons/tray.png"))
+                .icon_as_template(true)
                 .tooltip("YX")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
