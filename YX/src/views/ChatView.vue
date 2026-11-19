@@ -1,29 +1,12 @@
 <template>
   <div class="chat-layout" :class="{ 'with-drawer': drawerOpen && drawerAllowed }">
     <!-- 左侧导航 -->
-    <nav class="side-nav">
-      <ConnectionStatus />
-      <router-link to="/chat" class="nav-item active" title="消息">
-        <span class="icon">💬</span>
-      </router-link>
-      <button class="nav-item" :title="`@ 提醒中心 · ${mentions.pending.length} 条待处理`" @click="mentionsOpen = true">@<small v-if="mentions.pending.length">{{ mentions.pending.length }}</small></button>
-      <router-link to="/contacts" class="nav-item" title="通讯录">
-        <span class="icon">👥</span>
-      </router-link>
-      <router-link to="/disk" class="nav-item" title="云盘">
-        <span class="icon">📁</span>
-      </router-link>
-      <button class="nav-item" title="我的应用" @click="appOpen = true">
-        <span class="icon">▦</span>
-      </button>
-      <router-link to="/zt" class="nav-item" title="零信任分流">
-        <span class="icon">🛡</span>
-      </router-link>
-      <div class="spacer"></div>
-      <button class="nav-item logout" @click="onLogout" title="退出">
-        <span class="icon">⏻</span>
-      </button>
-    </nav>
+    <SideNav
+      active="chat"
+      :mention-count="mentions.pending.length"
+      @apps="appOpen = true"
+      @mentions="mentionsOpen = true"
+    />
 
     <!-- 会话列表 -->
     <aside class="session-panel">
@@ -108,26 +91,29 @@
             <div class="s-acts">
               <button
                 v-if="supportsMute(s)"
-                class="icon-btn"
+                :class="['icon-btn', { 'mute-on': im.muted.has(s.id) }]"
                 :title="im.muted.has(s.id) ? '取消免打扰' : '开启免打扰'"
+                :aria-label="im.muted.has(s.id) ? '取消免打扰' : '开启免打扰'"
                 @click.stop="im.toggleMuteSession(s)"
               >
-                {{ im.muted.has(s.id) ? '🔕' : '🔔' }}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
+                  <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+                  <path v-if="im.muted.has(s.id)" d="M3 3l18 18" />
+                </svg>
               </button>
               <button
-                class="icon-btn fold"
-                :title="im.folded.has(s.id) ? '展开' : '折叠'"
-                @click.stop="im.toggleFoldSession(s)"
+                class="icon-btn more"
+                title="更多操作"
+                aria-label="更多操作"
+                :aria-expanded="sessionMenu?.session.id === s.id"
+                @click.stop="openSessionMenu(s, $event)"
               >
-                {{ im.folded.has(s.id) ? '展开' : '折叠' }}
-              </button>
-              <button
-                class="icon-btn fold"
-                title="仅从列表移除，保留消息记录"
-                aria-label="移除历史对话"
-                @click.stop="im.removeSession(s.id)"
-              >
-                移除
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <circle cx="5" cy="12" r="1.7" />
+                  <circle cx="12" cy="12" r="1.7" />
+                  <circle cx="19" cy="12" r="1.7" />
+                </svg>
               </button>
               <span v-if="im.unreadOf(s.id) > 0" class="badge">
                 {{ im.unreadOf(s.id) > 99 ? '99+' : im.unreadOf(s.id) }}
@@ -139,6 +125,36 @@
           {{ emptyHint }}
         </li>
       </ul>
+
+      <!-- 会话「更多操作」：折叠/展开、移除收进二级菜单，避免列表内误触 -->
+      <Teleport to="body">
+        <div
+          v-if="sessionMenu"
+          class="sess-menu-backdrop"
+          @click="closeSessionMenu"
+        >
+          <div
+            class="sess-menu"
+            role="menu"
+            :aria-label="`${sessionMenu.session.name} 的更多操作`"
+            :style="{ left: sessionMenu.left + 'px', top: sessionMenu.top + 'px' }"
+            @click.stop
+          >
+            <button role="menuitem" @click="foldFromSessionMenu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path :d="im.folded.has(sessionMenu.session.id) ? 'm6 9 6 6 6-6' : 'm18 15-6-6-6 6'" />
+              </svg>
+              {{ im.folded.has(sessionMenu.session.id) ? '展开' : '折叠' }}
+            </button>
+            <button role="menuitem" class="danger" @click="removeFromSessionMenu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7" />
+              </svg>
+              移除
+            </button>
+          </div>
+        </div>
+      </Teleport>
     </aside>
 
     <!-- 聊天主区 -->
@@ -358,7 +374,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useAuthStore } from '../stores/auth'
 import { authService } from '../services/auth'
-import { useImStore } from '../stores/im'
+import { useImStore, type ChatSession } from '../stores/im'
 import MentionPicker from '../components/MentionPicker.vue'
 import type { LinkUserDetail } from '../services/contact-client'
 import type { ContactEntry } from '../services/contact-client'
@@ -371,7 +387,7 @@ import ForwardModal from '../components/ForwardModal.vue'
 import type { ImMessage } from '../services/im/im-client'
 import HistoryModal from '../components/HistoryModal.vue'
 import AppPanel from '../components/AppPanel.vue'
-import ConnectionStatus from '../components/ConnectionStatus.vue'
+import SideNav from '../components/SideNav.vue'
 import ChatDrawer from '../components/ChatDrawer.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import ImageGallery from '../components/ImageGallery.vue'
@@ -766,6 +782,45 @@ const emptyHint = computed(() => {
   return '没有折叠的会话'
 })
 
+// 折叠/展开、移除收进「更多」菜单，避免会话行里按钮过多导致误触。
+const sessionMenu = ref<{ session: ChatSession; left: number; top: number } | null>(null)
+function openSessionMenu(session: ChatSession, event: MouseEvent) {
+  if (sessionMenu.value?.session.id === session.id) {
+    closeSessionMenu()
+    return
+  }
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const width = 132
+  const height = 84
+  sessionMenu.value = {
+    session,
+    left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+    top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - height - 8)),
+  }
+  window.addEventListener('resize', closeSessionMenu)
+  window.addEventListener('scroll', closeSessionMenu, true)
+  window.addEventListener('keydown', onSessionMenuKeydown)
+}
+function onSessionMenuKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeSessionMenu()
+}
+function closeSessionMenu() {
+  sessionMenu.value = null
+  window.removeEventListener('resize', closeSessionMenu)
+  window.removeEventListener('scroll', closeSessionMenu, true)
+  window.removeEventListener('keydown', onSessionMenuKeydown)
+}
+function foldFromSessionMenu() {
+  const session = sessionMenu.value?.session
+  closeSessionMenu()
+  if (session) void im.toggleFoldSession(session)
+}
+function removeFromSessionMenu() {
+  const session = sessionMenu.value?.session
+  closeSessionMenu()
+  if (session) im.removeSession(session.id)
+}
+
 let disposed = false
 let unlistenFocus: UnlistenFn | undefined
 
@@ -820,6 +875,7 @@ onUnmounted(() => {
   disposed = true
   unlistenFocus?.()
   im.setChatActive(false)
+  closeSessionMenu()
   for (const items of Object.values(attachments.value)) {
     for (const item of items) if (item.preview) URL.revokeObjectURL(item.preview)
   }
@@ -894,12 +950,6 @@ function startChat(c: ContactEntry) {
   im.openChat(c.id, c.name, c.fromType)
   keyword.value = ''
   im.searchResults = []
-}
-
-function onLogout() {
-  im.resetLocal()
-  auth.logout()
-  router.replace('/login')
 }
 
 function kindLabel(kind: string): string {
@@ -1015,32 +1065,6 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .chat-layout.with-drawer {
   grid-template-columns: 56px 300px 1fr 320px;
 }
-.side-nav {
-  background: #2b2c2d;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 12px 0;
-  gap: 8px;
-}
-
-.nav-item {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  color: #fff;
-  font-size: 18px;
-  background: transparent;
-  padding: 0;
-  text-decoration: none;
-}
-.nav-item:hover { background: rgba(255,255,255,0.1); }
-.nav-item.active { background: rgba(242,136,35,0.3); }
-.nav-item.logout { background: transparent; }
-.spacer { flex: 1; }
 
 .session-panel {
   background: var(--panel);
@@ -1131,21 +1155,54 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   flex-shrink: 0;
 }
 .s-time { font-size: 10px; color: var(--text-muted); }
-.s-acts { display: flex; align-items: center; gap: 4px; }
+.s-acts { display: flex; align-items: center; gap: 2px; }
 .icon-btn {
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
-  padding: 0 2px;
+  padding: 3px;
   border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
 }
-.icon-btn:hover { background: #eef1f4; }
-.icon-btn.fold { font-size: 10px; }
+.icon-btn:hover { background: #eef1f4; color: var(--text); opacity: 1; }
+.icon-btn svg { width: 15px; height: 15px; display: block; }
+.icon-btn.more svg { width: 16px; height: 16px; }
+.icon-btn.mute-on { opacity: 1; }
 .badge {
   background: var(--danger); color: #fff;
   font-size: 11px; padding: 0 6px; border-radius: 10px;
   line-height: 16px;
 }
+
+/* 会话「更多操作」菜单：Teleport 到 body，避免被列表滚动区域裁剪 */
+.sess-menu-backdrop { position: fixed; inset: 0; z-index: 70; }
+.sess-menu {
+  position: fixed;
+  min-width: 132px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px #0002;
+}
+.sess-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+.sess-menu button:hover { background: #eef2f7; }
+.sess-menu button.danger { color: var(--danger); }
+.sess-menu svg { width: 15px; height: 15px; flex-shrink: 0; }
 .empty { padding: 20px; text-align: center; color: var(--text-muted); }
 
 .chat-main {
@@ -1314,5 +1371,4 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 
 <style scoped>
 .active-mention-bar, .lookup-progress { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 20px; font-size: 12px; background: #fff4d6; color: #855200; }
-.nav-item small { font-size: 10px; }
 </style>

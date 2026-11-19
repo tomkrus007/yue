@@ -1,27 +1,6 @@
 <template>
   <div class="app-layout">
-    <nav class="side-nav">
-      <ConnectionStatus />
-      <router-link to="/chat" class="nav-item" title="消息">
-        <span class="icon">💬</span>
-      </router-link>
-      <router-link to="/contacts" class="nav-item active" title="通讯录">
-        <span class="icon">👥</span>
-      </router-link>
-      <router-link to="/disk" class="nav-item" title="云盘">
-        <span class="icon">📁</span>
-      </router-link>
-      <button class="nav-item" title="我的应用" @click="appOpen = true">
-        <span class="icon">▦</span>
-      </button>
-      <router-link to="/zt" class="nav-item" title="零信任分流">
-        <span class="icon">🛡</span>
-      </router-link>
-      <div class="spacer"></div>
-      <button class="nav-item logout" @click="onLogout" title="退出">
-        <span class="icon">⏻</span>
-      </button>
-    </nav>
+    <SideNav active="contacts" @apps="appOpen = true" />
 
     <main class="contacts-main">
       <header class="contacts-header">
@@ -135,7 +114,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppPanel from '../components/AppPanel.vue'
-import ConnectionStatus from '../components/ConnectionStatus.vue'
+import SideNav from '../components/SideNav.vue'
 import CreateGroupModal from '../components/CreateGroupModal.vue'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
@@ -194,28 +173,10 @@ function onGroupCreated(group: { id: string; name: string }) {
   im.loadContacts()
   router.push('/chat')
 }
-
-function onLogout() {
-  im.resetLocal()
-  auth.logout()
-  router.replace('/login')
-}
 </script>
 
 <style scoped>
 .app-layout { display: grid; grid-template-columns: 56px 1fr; height: 100%; }
-.side-nav {
-  background: #2b2c2d; display: flex; flex-direction: column;
-  align-items: center; padding: 12px 0; gap: 8px;
-}
-
-.nav-item {
-  width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
-  border-radius: 8px; color: #fff; font-size: 18px; background: transparent; padding: 0;
-}
-.nav-item:hover { background: rgba(255,255,255,0.1); }
-.nav-item.active { background: rgba(242,136,35,0.3); }
-.spacer { flex: 1; }
 
 .contacts-main { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
 .contacts-header {

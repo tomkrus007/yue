@@ -1,27 +1,6 @@
 <template>
   <div class="zt-layout">
-    <nav class="side-nav">
-      <ConnectionStatus />
-      <router-link to="/chat" class="nav-item" title="消息">
-        <span class="icon">💬</span>
-      </router-link>
-      <router-link to="/contacts" class="nav-item" title="通讯录">
-        <span class="icon">👥</span>
-      </router-link>
-      <router-link to="/disk" class="nav-item" title="云盘">
-        <span class="icon">📁</span>
-      </router-link>
-      <button class="nav-item" title="我的应用" @click="appOpen = true">
-        <span class="icon">▦</span>
-      </button>
-      <router-link to="/zt" class="nav-item active" title="零信任">
-        <span class="icon">🛡</span>
-      </router-link>
-      <div class="spacer"></div>
-      <button class="nav-item logout" @click="onLogout" title="退出">
-        <span class="icon">⏻</span>
-      </button>
-    </nav>
+    <SideNav active="zt" @apps="appOpen = true" />
 
     <main class="zt-main">
       <header class="zt-head">
@@ -86,9 +65,8 @@ sudo route delete default -ifscope utun8</pre>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppPanel from '../components/AppPanel.vue'
-import ConnectionStatus from '../components/ConnectionStatus.vue'
+import SideNav from '../components/SideNav.vue'
 import { useAuthStore } from '../stores/auth'
-import { useImStore } from '../stores/im'
 import {
   ztSdkAuthTypes,
   ztSdkLogin,
@@ -98,7 +76,6 @@ import {
 } from '../services/zt'
 
 const auth = useAuthStore()
-const im = useImStore()
 const router = useRouter()
 
 const appOpen = ref(false)
@@ -200,12 +177,6 @@ async function logout(): Promise<void> {
   }
 }
 
-function onLogout(): void {
-  im.resetLocal()
-  auth.logout()
-  router.replace('/login')
-}
-
 let timer: ReturnType<typeof setInterval> | null = null
 /** 后台轮询进行中：避免慢查询（状态/网关）叠加，且不占用 busy */
 let polling = false
@@ -241,31 +212,6 @@ onUnmounted(() => {
   grid-template-columns: 56px 1fr;
   height: 100%;
 }
-.side-nav {
-  background: #2b2c2d;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 12px 0;
-  gap: 8px;
-}
-
-.nav-item {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  color: #fff;
-  font-size: 18px;
-  background: transparent;
-  padding: 0;
-  text-decoration: none;
-}
-.nav-item:hover { background: rgba(255, 255, 255, 0.1); }
-.nav-item.active { background: rgba(242, 136, 35, 0.3); }
-.spacer { flex: 1; }
 
 .zt-main {
   overflow-y: auto;

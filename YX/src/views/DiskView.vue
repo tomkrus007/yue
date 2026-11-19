@@ -1,27 +1,6 @@
 <template>
   <div class="disk-layout" @dragover.prevent @drop.prevent>
-    <nav class="side-nav">
-      <ConnectionStatus />
-      <router-link to="/chat" class="nav-item" title="消息">
-        <span class="icon">💬</span>
-      </router-link>
-      <router-link to="/contacts" class="nav-item" title="通讯录">
-        <span class="icon">👥</span>
-      </router-link>
-      <router-link to="/disk" class="nav-item active" title="云盘">
-        <span class="icon">📁</span>
-      </router-link>
-      <button class="nav-item" title="我的应用" @click="appOpen = true">
-        <span class="icon">▦</span>
-      </button>
-      <router-link to="/zt" class="nav-item" title="零信任分流">
-        <span class="icon">🛡</span>
-      </router-link>
-      <div class="spacer"></div>
-      <button class="nav-item logout" @click="onLogout" title="退出">
-        <span class="icon">⏻</span>
-      </button>
-    </nav>
+    <SideNav active="disk" @apps="appOpen = true" />
 
     <!-- 盘列表 -->
     <aside class="drive-panel">
@@ -155,9 +134,8 @@
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppPanel from '../components/AppPanel.vue'
-import ConnectionStatus from '../components/ConnectionStatus.vue'
+import SideNav from '../components/SideNav.vue'
 import { useAuthStore } from '../stores/auth'
-import { useImStore } from '../stores/im'
 import { useDiskStore, type DiskDrive } from '../stores/disk'
 import { OFFICE_EXT } from '../services/pan-client'
 import { useUploadStore } from '../stores/uploads'
@@ -205,12 +183,6 @@ function subEntryLabel(): string {
 async function onOpenDrive(d: DiskDrive) {
   keyword.value = ''
   await disk.openDrive(d)
-}
-
-function onLogout() {
-  useImStore().resetLocal()
-  auth.logout()
-  router.replace('/login')
 }
 
 async function onDblClick(f: DiskFile) {
@@ -342,18 +314,6 @@ function fmtTime(t?: number): string {
 
 <style scoped>
 .disk-layout { display: grid; grid-template-columns: 56px 200px 1fr; height: 100%; }
-.side-nav {
-  background: #2b2c2d; display: flex; flex-direction: column; align-items: center;
-  padding: 12px 0; gap: 8px;
-}
-
-.nav-item {
-  width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
-  border-radius: 8px; color: #fff; font-size: 18px; background: transparent; padding: 0;
-}
-.nav-item:hover { background: rgba(255,255,255,0.1); }
-.nav-item.active { background: rgba(242,136,35,0.3); }
-.spacer { flex: 1; }
 
 .drive-panel {
   background: var(--panel); border-right: 1px solid var(--border);
