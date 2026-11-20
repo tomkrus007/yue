@@ -19,86 +19,100 @@
       </header>
 
       <div class="contacts-body">
-        <!-- 搜索结果 -->
-        <template v-if="keyword.trim()">
-          <div class="section-title">
-            搜索结果（{{ im.searchResults.length }}）
-            <span class="muted">点击联系人进入聊天</span>
-          </div>
-          <ul class="entry-list">
-            <li
-              v-for="c in im.searchResults"
-              :key="c.kind + ':' + c.id"
-              class="entry search-entry"
-              @click="startChat(c)"
-            >
-              <div
-                class="avatar"
-                :class="c.kind"
-                :title="'和 ' + c.name + ' 聊天'"
+        <!-- 左栏：列表 -->
+        <section class="list-col">
+          <!-- 搜索结果 -->
+          <template v-if="keyword.trim()">
+            <div class="section-title">
+              搜索结果（{{ im.searchResults.length }}）
+              <span class="muted">点击查看详情</span>
+            </div>
+            <ul class="entry-list">
+              <li
+                v-for="c in im.searchResults"
+                :key="c.kind + ':' + c.id"
+                class="entry search-entry"
+                :class="{ active: isActive(c) }"
+                @click="select(c)"
               >
-                {{ (c.name || '?').slice(0, 1) }}
-              </div>
-              <div class="info">
-                <div class="name-row">
-                  <span class="name">{{ c.name }}</span>
-                  <span v-if="c.company" class="company" :title="c.company">{{ c.company }}</span>
+                <div class="avatar" :class="c.kind">{{ (c.name || '?').slice(0, 1) }}</div>
+                <div class="info">
+                  <div class="name-row">
+                    <span class="name">{{ c.name }}</span>
+                    <span v-if="c.company" class="company" :title="c.company">{{ c.company }}</span>
+                  </div>
+                  <div v-if="kindLabel(c.kind) || c.dept" class="desc">
+                    <span v-if="kindLabel(c.kind)" class="tag">{{ kindLabel(c.kind) }}</span>{{ c.dept || '' }}
+                  </div>
                 </div>
-                <div v-if="kindLabel(c.kind) || c.dept" class="desc">
-                  <span v-if="kindLabel(c.kind)" class="tag">{{ kindLabel(c.kind) }}</span>{{ c.dept || '' }}
-                </div>
-                <div v-if="c.mobile" class="mobile">{{ c.mobile }}</div>
-              </div>
-              <button class="small secondary detail-btn" @click.stop="openDetail(c)">详情</button>
-            </li>
-            <li v-if="im.searchResults.length === 0 && !im.searching" class="empty">
-              没有匹配的联系人或群组
-            </li>
-          </ul>
-        </template>
+              </li>
+              <li v-if="im.searchResults.length === 0 && !im.searching" class="empty">
+                没有匹配的联系人或群组
+              </li>
+            </ul>
+          </template>
 
-        <!-- 默认：好友 + 群组 -->
-        <template v-else>
-          <div class="section-title">
-            我的好友（{{ friendsOnly.length }}）
-            <button class="small secondary" @click="im.loadContacts()">刷新</button>
-          </div>
-          <ul class="entry-list">
-            <li v-if="im.contactsLoading" class="empty">加载中…</li>
-            <li
-              v-for="c in friendsOnly"
-              :key="'u:' + c.id"
-              class="entry"
-              @click="startChat(c)"
-            >
-              <div class="avatar user">{{ (c.name || '?').slice(0, 1) }}</div>
-              <div class="info">
-                <div class="name-row">
-                  <span class="name">{{ c.name }}</span>
-                  <span v-if="c.company" class="company" :title="c.company">{{ c.company }}</span>
+          <!-- 默认：好友 + 群组 -->
+          <template v-else>
+            <div class="section-title">
+              我的好友（{{ friendsOnly.length }}）
+              <button class="small secondary" @click="im.loadContacts()">刷新</button>
+            </div>
+            <ul class="entry-list">
+              <li v-if="im.contactsLoading" class="empty">加载中…</li>
+              <li
+                v-for="c in friendsOnly"
+                :key="'u:' + c.id"
+                class="entry"
+                :class="{ active: isActive(c) }"
+                @click="select(c)"
+              >
+                <div class="avatar user">{{ (c.name || '?').slice(0, 1) }}</div>
+                <div class="info">
+                  <div class="name-row">
+                    <span class="name">{{ c.name }}</span>
+                    <span v-if="c.company" class="company" :title="c.company">{{ c.company }}</span>
+                  </div>
+                  <div v-if="c.dept" class="desc">{{ c.dept }}</div>
                 </div>
-                <div v-if="c.dept" class="desc">{{ c.dept }}</div>
-                <div v-if="c.mobile" class="mobile">{{ c.mobile }}</div>
-              </div>
-              <button class="small secondary detail-btn" @click.stop="openDetail(c)">详情</button>
-            </li>
-            <li v-if="!im.contactsLoading && friendsOnly.length === 0" class="empty">
-              暂无好友
-            </li>
-          </ul>
+              </li>
+              <li v-if="!im.contactsLoading && friendsOnly.length === 0" class="empty">
+                暂无好友
+              </li>
+            </ul>
 
-          <div class="section-title">我的群组（{{ groupsOnly.length }}）</div>
-          <ul class="entry-list">
-            <li v-for="c in groupsOnly" :key="'g:' + c.id" class="entry" @click="startChat(c)">
-              <div class="avatar group">{{ (c.name || '?').slice(0, 1) }}</div>
-              <div class="info">
-                <div class="name">{{ c.name }}</div>
-              </div>
-              <button class="small secondary detail-btn" @click.stop="openDetail(c)">详情</button>
-            </li>
-            <li v-if="groupsOnly.length === 0" class="empty">暂无群组</li>
-          </ul>
-        </template>
+            <div class="section-title">我的群组（{{ groupsOnly.length }}）</div>
+            <ul class="entry-list">
+              <li
+                v-for="c in groupsOnly"
+                :key="'g:' + c.id"
+                class="entry"
+                :class="{ active: isActive(c) }"
+                @click="select(c)"
+              >
+                <div class="avatar group">{{ (c.name || '?').slice(0, 1) }}</div>
+                <div class="info">
+                  <div class="name">{{ c.name }}</div>
+                </div>
+              </li>
+              <li v-if="groupsOnly.length === 0" class="empty">暂无群组</li>
+            </ul>
+          </template>
+        </section>
+
+        <!-- 右栏：详情 -->
+        <section class="detail-col">
+          <ContactDetailPanel
+            v-if="selected"
+            :key="selected.kind + ':' + selected.id"
+            :kind="selected.kind"
+            :id="selected.id"
+            :name="selected.name"
+            @chat="onPanelChat"
+            @group-left="onGroupLeft"
+          />
+          <div v-else class="detail-empty">选择联系人或群组查看详情</div>
+        </section>
       </div>
     </main>
     <AppPanel v-model:open="appOpen" />
@@ -116,6 +130,7 @@ import { useRouter } from 'vue-router'
 import AppPanel from '../components/AppPanel.vue'
 import SideNav from '../components/SideNav.vue'
 import CreateGroupModal from '../components/CreateGroupModal.vue'
+import ContactDetailPanel from '../components/ContactDetailPanel.vue'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
 import { FromType } from '../services/im/types'
@@ -131,6 +146,9 @@ let timer: ReturnType<typeof setTimeout> | null = null
 
 const friendsOnly = computed(() => im.contacts.filter((c) => c.kind === 'user'))
 const groupsOnly = computed(() => im.contacts.filter((c) => c.kind === 'group'))
+
+/** 当前选中（右栏展示）的联系人/群组 */
+const selected = ref<ContactEntry | null>(null)
 
 onMounted(() => {
   if (!auth.isLoggedIn) {
@@ -154,16 +172,29 @@ function kindLabel(kind: string): string {
   }
 }
 
-function openDetail(c: ContactEntry) {
-  router.push({
-    path: `/contact/${c.kind}/${encodeURIComponent(c.id)}`,
-    query: { name: c.name, desc: c.desc || '' },
-  })
+function isActive(c: ContactEntry): boolean {
+  return !!selected.value && selected.value.kind === c.kind && selected.value.id === c.id
+}
+
+function select(c: ContactEntry) {
+  selected.value = c
 }
 
 function startChat(c: ContactEntry) {
   im.openChat(c.id, c.name, c.fromType)
   router.push('/chat')
+}
+
+/** 右栏详情里的「发消息」：优先用详情接口解析出的名称 */
+function onPanelChat(name: string) {
+  if (!selected.value) return
+  startChat({ ...selected.value, name: name || selected.value.name })
+}
+
+/** 退群后：同步会话/列表并取消选中 */
+function onGroupLeft() {
+  if (selected.value) im.markLeftGroup(selected.value.id)
+  selected.value = null
 }
 
 /** 建群成功：本端本地补会话并直接打开聊天，再刷新通讯录群列表（对齐官方 OpenChat 行为） */
@@ -189,7 +220,10 @@ function onGroupCreated(group: { id: string; name: string }) {
 .search-box input { max-width: 520px; }
 .spinner { margin-left: 10px; font-size: 12px; color: var(--text-muted); }
 
-.contacts-body { flex: 1; overflow-y: auto; padding: 16px 20px 24px; }
+.contacts-body { flex: 1; display: grid; grid-template-columns: minmax(260px, 340px) 1fr; overflow: hidden; }
+.list-col { overflow-y: auto; padding: 16px 12px 24px 20px; border-right: 1px solid var(--border); }
+.detail-col { overflow: hidden; }
+
 .section-title {
   display: flex; align-items: center; gap: 12px; cursor: pointer;
   font-size: 13px; font-weight: 600; color: var(--text-muted);
@@ -204,6 +238,7 @@ function onGroupCreated(group: { id: string; name: string }) {
   transition: background 0.12s;
 }
 .entry:hover { background: var(--bg-subtle); }
+.entry.active { background: var(--bg-subtle); border-color: var(--primary); }
 .avatar {
   width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0;
   background: var(--primary); color: #fff; cursor: pointer;
@@ -223,15 +258,14 @@ function onGroupCreated(group: { id: string; name: string }) {
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.mobile {
-  font-size: 12px; color: var(--text-muted); margin-top: 2px;
-  font-family: Menlo, monospace;
-}
 .tag {
   display: inline-block; background: var(--chip-bg); color: var(--chip-text);
   border-radius: 4px; padding: 0 6px; font-size: 11px; margin-right: 6px;
 }
 .small { padding: 5px 12px; font-size: 12px; }
 .empty { text-align: center; color: var(--text-muted); padding: 20px; }
-.detail-btn { flex-shrink: 0; }
+.detail-empty {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); font-size: 13px;
+}
 </style>

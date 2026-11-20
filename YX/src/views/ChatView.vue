@@ -168,6 +168,7 @@
             >
               群设置
             </button>
+            <button v-if="im.currentSession.type === 1" class="small secondary" @click="groupChatOpen = true">群聊</button>
             <button class="small secondary" @click="historyOpen = true">历史</button>
             <button v-if="[2, 4, 8].includes(im.currentSession.type)" class="small secondary" :disabled="locating" @click="mentionsOpen = true">待处理@（{{ currentPendingMentions.length }}）</button>
             <button
@@ -347,6 +348,15 @@
       @left="onGroupLeft"
     />
 
+    <!-- 单聊拉群：当前对象 + 选择其他联系人建群 -->
+    <CreateGroupModal
+      v-if="groupChatOpen && im.currentSession"
+      :open="groupChatOpen"
+      :preset="groupChatPreset"
+      @close="groupChatOpen = false"
+      @created="onGroupChatCreated"
+    />
+
     <ImageGallery v-if="previewUrl" :images="galleryImages" :initial-index="galleryIndex" :initial-url="previewUrl" :initial-name="previewName" @close="previewUrl = ''" />
 
     <!-- 应用日志：协议 + 登录 + console + 未捕获异常 -->
@@ -416,7 +426,9 @@ import { useMentionsStore, type MentionNotice } from '../stores/mentions'
 import MentionCenter from '../components/MentionCenter.vue'
 import ReceiptModal from '../components/ReceiptModal.vue'
 import GroupSettingsModal from '../components/GroupSettingsModal.vue'
+import CreateGroupModal from '../components/CreateGroupModal.vue'
 import { groupService } from '../services/group-client'
+import { FromType } from '../services/im/types'
 
 const auth = useAuthStore()
 const im = useImStore()
@@ -745,6 +757,19 @@ function logScopeCount(scope: string) {
 const drawerOpen = ref(false)
 const drawerAllowed = ref(false)
 const groupSettingsOpen = ref(false)
+/** 单聊里拉群弹窗 */
+const groupChatOpen = ref(false)
+/** 预置成员：当前单聊对象 */
+const groupChatPreset = computed(() => {
+  const s = im.currentSession
+  return s && s.type === 1 ? [{ id: s.id, name: s.name }] : []
+})
+/** 建群成功：本地补会话并直接切到新群聊天，再刷新通讯录群列表 */
+function onGroupChatCreated(group: { id: string; name: string }) {
+  groupChatOpen.value = false
+  im.openChat(group.id, group.name, FromType.GROUP)
+  im.loadContacts()
+}
 const previewUrl = ref('')
 const previewName = ref('')
 let searchTimer: ReturnType<typeof setTimeout> | null = null
@@ -943,6 +968,7 @@ watch(
     if (!s) return
     drawerAllowed.value = await im.ensureTeam(s)
     groupSettingsOpen.value = false
+    groupChatOpen.value = false
     if (s.type === 2) void syncGroupGate(s.id)
   },
   { immediate: true },

@@ -68,7 +68,7 @@ import { contactService } from '../services/contact-client'
 import MemberPicker from './MemberPicker.vue'
 import type { PickedMember } from './MemberPicker.vue'
 
-const props = defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean; preset?: { id: string; name: string }[] }>()
 const emit = defineEmits<{ close: []; created: [group: { id: string; name: string }] }>()
 
 const auth = useAuthStore()
@@ -101,7 +101,8 @@ watch(
     error.value = ''
     busy.value = false
     pickerOpen.value = false
-    selected.value = []
+    /** 打开时预置成员（如当前单聊对象），可手动移除 */
+    selected.value = (props.preset || []).map((p) => ({ id: p.id, name: p.name, kind: 'user' as const, fromType: 1 }))
     name.value = ''
     nameEdited.value = false
   },
