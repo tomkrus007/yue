@@ -340,6 +340,22 @@ export function appIconUrl(key: string): string {
   )
 }
 
+/**
+ * 用户/群等主体头像：官方客户端走 {storeUri}v2/avatar?id=&type=&access_token=。
+ * type：1 用户、2 群、4 组织、5 服务号、7 机器人。
+ */
+export function avatarUrl(id: string, type = 1): string {
+  if (!id) return ''
+  const base = String(getServerPaths().storeUri || '').replace(/\/+$/, '')
+  if (!base) return ''
+  const query = new URLSearchParams({
+    id,
+    type: String(type),
+    access_token: authService.getAccessToken(),
+  })
+  return base + '/v2/avatar?' + query.toString()
+}
+
 export function mimeFromExt(ext?: string): string {
   const e = String(ext || '')
     .toLowerCase()
@@ -440,6 +456,61 @@ export async function getAppIconUrl(key: string): Promise<string> {
   )
   iconCache.set(key, blobUrl)
   return blobUrl
+}
+
+/** 头像缓存：同一主体只取一次；无头像时服务端返回 404，由调用方回落。 */
+const avatarCache = new Map<string, string>()
+const avatarPending = new Map<string, Promise<string>>()
+/** 404 的主体不再重复请求（列表页重进时会重新挂载组件）。 */
+const avatarMissing = new Set<string>()
+
+/** 列表页一次会挂载很多头像，限制并发，避免瞬间打满连接。 */
+let avatarActive = 0
+const avatarQueue: Array<() => void> = []
+function acquireAvatarSlot(): Promise<void> {
+  if (avatarActive < 4) {
+    avatarActive += 1
+    return Promise.resolve()
+  }
+  return new Promise(resolve => {
+    avatarQueue.push(() => {
+      avatarActive += 1
+      resolve()
+    })
+  })
+}
+function releaseAvatarSlot() {
+  avatarActive -= 1
+  avatarQueue.shift()?.()
+}
+
+export async function getAvatarUrl(id: string, type = 1): Promise<string> {
+  const key = `${type}:${id}`
+  if (avatarMissing.has(key)) throw new Error('无头像')
+  const cached = avatarCache.get(key)
+  if (cached) return cached
+  const pending = avatarPending.get(key)
+  if (pending) return pending
+  const task = (async () => {
+    const url = avatarUrl(id, type)
+    if (!url) throw new Error('缺少存储服务地址')
+    await acquireAvatarSlot()
+    try {
+      const buf = await httpArrayBuffer(url)
+      const blobUrl = URL.createObjectURL(
+        new Blob([buf], { type: sniffImageType(new Uint8Array(buf)) }),
+      )
+      avatarCache.set(key, blobUrl)
+      return blobUrl
+    } catch (e: any) {
+      if (String(e?.message || '').includes('404')) avatarMissing.add(key)
+      throw e
+    } finally {
+      releaseAvatarSlot()
+    }
+  })().finally(() => avatarPending.delete(key))
+  avatarPending.set(key, task)
+  return task
 }
 
 /**

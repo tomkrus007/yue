@@ -5,7 +5,16 @@
 
     <div v-else class="detail-card">
       <div class="hero">
-        <div class="big-avatar" :class="kind">{{ (displayName || '?').slice(0, 1) }}</div>
+        <button
+          v-if="kind === 'user' && avatarSrc"
+          class="big-avatar photo"
+          type="button"
+          title="查看头像"
+          @click="avatarViewerOpen = true"
+        >
+          <img :src="avatarSrc" :alt="displayName" />
+        </button>
+        <div v-else class="big-avatar" :class="kind">{{ (displayName || '?').slice(0, 1) }}</div>
         <div class="hero-info">
           <h2>{{ displayName }}</h2>
           <div class="sub">
@@ -60,6 +69,15 @@
       @close="groupSettingsOpen = false"
       @left="emit('group-left')"
     />
+
+    <ImageGallery
+      v-if="avatarViewerOpen && avatarImages.length"
+      :images="avatarImages"
+      :initial-index="0"
+      :initial-url="avatarSrc"
+      :initial-name="displayName + '的头像'"
+      @close="avatarViewerOpen = false"
+    />
   </div>
 </template>
 
@@ -67,7 +85,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { contactService } from '../services/contact-client'
 import { getServiceNoDetail } from '../services/im/service-no'
+import { getAvatarUrl } from '../services/im/media'
+import type { ImageMeta } from '../services/im/content'
 import GroupSettingsModal from './GroupSettingsModal.vue'
+import ImageGallery from './ImageGallery.vue'
 
 const props = defineProps<{ kind: string; id: string; name?: string }>()
 const emit = defineEmits<{ chat: [name: string]; 'group-left': [] }>()
@@ -77,11 +98,20 @@ const loading = ref(true)
 const error = ref('')
 const showRaw = ref(false)
 const groupSettingsOpen = ref(false)
+const avatarSrc = ref('')
+const avatarViewerOpen = ref(false)
 /** 详情接口解析出的名称（props.name 为空时兜底） */
 const resolvedName = ref('')
 
 /** 展示名：传入名 > 接口名 > ID */
 const displayName = computed(() => props.name || resolvedName.value || props.id)
+
+/** 放大查看用的单张图片；blob URL 已是可直接展示的地址。 */
+const avatarImages = computed<ImageMeta[]>(() =>
+  avatarSrc.value
+    ? [{ fileName: displayName.value + '的头像', downloadUrl: avatarSrc.value, extension: '', size: 0 }]
+    : [],
+)
 
 const groupTypeLabel = computed(() => {
   switch (Number(detail.value.type)) {
@@ -107,6 +137,7 @@ onMounted(async () => {
       if (!resolvedName.value) {
         resolvedName.value = (u as any)?.name || (u as any)?.userName || (u as any)?.loginId || props.id
       }
+      void loadAvatar()
     }
   } catch (e: any) {
     error.value = e.message || '加载详情失败'
@@ -114,6 +145,16 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+/** 头像单独异步加载：失败或无头像时保留首字兜底，不影响详情展示。 */
+async function loadAvatar() {
+  if (props.kind !== 'user') return
+  try {
+    avatarSrc.value = await getAvatarUrl(props.id, 1)
+  } catch {
+    avatarSrc.value = ''
+  }
+}
 
 function kindLabel(k: string): string {
   return k === 'group' ? '群组' : k === 'serviceno' ? '服务号' : '用户'
@@ -139,6 +180,9 @@ function kindLabel(k: string): string {
   font-size: 30px; font-weight: 700;
 }
 .big-avatar.group { background: #4a90d9; }
+.big-avatar.photo { padding: 0; overflow: hidden; cursor: zoom-in; background: var(--surface-2); }
+.big-avatar.photo:hover { background: var(--surface-2); }
+.big-avatar.photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .hero-info { flex: 1; }
 .hero-info h2 { font-size: 20px; margin-bottom: 6px; }
 .sub { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 13px; }

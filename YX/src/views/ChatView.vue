@@ -42,9 +42,13 @@
           class="search-entry"
           @click="startChat(c)"
         >
-          <div class="s-avatar" :class="c.kind">
-            {{ (c.name || '?').slice(0, 1) }}
-          </div>
+          <ContactAvatar
+            class="s-avatar"
+            :class="c.kind"
+            :id="c.id"
+            :type="c.fromType"
+            :name="c.name"
+          />
           <div class="s-info">
             <div class="s-name-row">
               <span class="s-name">{{ c.name }}</span>
@@ -71,9 +75,13 @@
           ]"
           @click="im.selectSession(s.id)"
         >
-          <div class="s-avatar" :class="'t' + s.type">
-            {{ (s.name || '?').slice(0, 1) }}
-          </div>
+          <ContactAvatar
+            class="s-avatar"
+            :class="'t' + s.type"
+            :id="s.id"
+            :type="s.type"
+            :name="s.name"
+          />
           <div class="s-info">
             <div class="s-name">
               <span v-if="im.pinned[s.id]" class="pin">📌</span>
@@ -415,6 +423,7 @@ import AppPanel from '../components/AppPanel.vue'
 import SideNav from '../components/SideNav.vue'
 import ChatDrawer from '../components/ChatDrawer.vue'
 import MessageBubble from '../components/MessageBubble.vue'
+import ContactAvatar from '../components/ContactAvatar.vue'
 import ImageGallery from '../components/ImageGallery.vue'
 import { OFFICIAL_FACES } from '../services/im/official-face'
 import { appLog, clearLogs } from '../services/app-log'

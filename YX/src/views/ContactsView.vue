@@ -35,7 +35,13 @@
                 :class="{ active: isActive(c) }"
                 @click="select(c)"
               >
-                <div class="avatar" :class="c.kind">{{ (c.name || '?').slice(0, 1) }}</div>
+                <ContactAvatar
+                  class="avatar"
+                  :class="c.kind"
+                  :id="c.id"
+                  :type="c.fromType"
+                  :name="c.name"
+                />
                 <div class="info">
                   <div class="name-row">
                     <span class="name">{{ c.name }}</span>
@@ -67,7 +73,12 @@
                 :class="{ active: isActive(c) }"
                 @click="select(c)"
               >
-                <div class="avatar user">{{ (c.name || '?').slice(0, 1) }}</div>
+                <ContactAvatar
+                  class="avatar user"
+                  :id="c.id"
+                  :type="c.fromType"
+                  :name="c.name"
+                />
                 <div class="info">
                   <div class="name-row">
                     <span class="name">{{ c.name }}</span>
@@ -90,7 +101,12 @@
                 :class="{ active: isActive(c) }"
                 @click="select(c)"
               >
-                <div class="avatar group">{{ (c.name || '?').slice(0, 1) }}</div>
+                <ContactAvatar
+                  class="avatar group"
+                  :id="c.id"
+                  :type="c.fromType"
+                  :name="c.name"
+                />
                 <div class="info">
                   <div class="name">{{ c.name }}</div>
                 </div>
@@ -131,6 +147,7 @@ import AppPanel from '../components/AppPanel.vue'
 import SideNav from '../components/SideNav.vue'
 import CreateGroupModal from '../components/CreateGroupModal.vue'
 import ContactDetailPanel from '../components/ContactDetailPanel.vue'
+import ContactAvatar from '../components/ContactAvatar.vue'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
 import { FromType } from '../services/im/types'
