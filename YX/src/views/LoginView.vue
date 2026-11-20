@@ -1,8 +1,7 @@
 <template>
-  <div class="login-page">
+  <div class="login-page" data-tauri-drag-region="deep">
     <div class="login-card">
-      <div class="logo">YX</div>
-      <div class="subtitle">云上越秀 · IM 与网盘客户端</div>
+      <div class="brand">云越</div>
 
       <form @submit.prevent="onLogin">
         <div class="field">
@@ -40,8 +39,8 @@
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
             <path d="M4 7h16M4 17h16" />
-            <circle cx="9" cy="7" r="3" fill="white" />
-            <circle cx="15" cy="17" r="3" fill="white" />
+            <circle cx="9" cy="7" r="3" fill="var(--surface)" />
+            <circle cx="15" cy="17" r="3" fill="var(--surface)" />
           </svg>
         </button>
       </div>
@@ -163,33 +162,34 @@ async function onLogin() {
 <style scoped>
 .login-page {
   min-height: 100%;
-  padding: 24px 16px;
+  padding: 32px 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #f28823 0%, #e07b18 100%);
+  background:
+    radial-gradient(420px 320px at 22% 16%, var(--login-glow), transparent 70%),
+    radial-gradient(520px 400px at 84% 90%, var(--login-glow), transparent 72%),
+    var(--login-bg);
 }
 .login-card {
-  width: 380px;
+  width: 360px;
   max-width: 100%;
-  background: #fff;
-  border-radius: 12px;
-  padding: 36px 32px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 32px 28px 24px;
+  box-shadow: var(--login-card-shadow);
 }
-.logo {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--primary);
+.brand {
+  margin: 0 0 26px;
   text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+  color: var(--text);
 }
-.subtitle {
-  text-align: center;
-  color: var(--text-muted);
-  margin: 6px 0 28px;
-  font-size: 13px;
-}
-.field { margin-bottom: 18px; }
+.field { margin-bottom: 16px; }
 .field label {
   display: block;
   margin-bottom: 6px;
@@ -216,9 +216,9 @@ async function onLogin() {
   background: transparent;
   color: var(--text-muted);
 }
-.tools-button:hover, .tools-button[aria-expanded='true'] { background: #f0f0f0; color: var(--text); }
+.tools-button:hover, .tools-button[aria-expanded='true'] { background: var(--hover); color: var(--text); }
 .error {
-  background: #fff0f0;
+  background: var(--danger-soft);
   color: var(--danger);
   padding: 8px 12px;
   border-radius: 6px;
@@ -227,8 +227,9 @@ async function onLogin() {
 }
 button[type='submit'] {
   width: 100%;
-  padding: 11px;
-  font-size: 15px;
+  padding: 10px 16px;
+  font-size: 14px;
+  margin-top: 4px;
 }
 .debug {
   margin-top: 16px;
@@ -240,20 +241,22 @@ button[type='submit'] {
   list-style: none;
   max-height: 180px;
   overflow-y: auto;
-  background: #2b2c2d;
-  color: #9ad9a0;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
   padding: 8px;
   border-radius: 6px;
   font-family: Menlo, monospace;
   font-size: 11px;
 }
-.debug-log .muted { color: #666; }
+.debug-log .muted { color: var(--text-muted); }
 .adv { display: flex; flex-direction: column; gap: 6px; }
 .adv input { padding: 6px 9px; font-size: 11px; color: var(--text); }
 .debug pre {
-  background: #f7f7f7;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   padding: 8px;
-  border-radius: 4px;
+  border-radius: 6px;
   margin-top: 8px;
   font-size: 11px;
   overflow-x: auto;

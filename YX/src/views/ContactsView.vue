@@ -3,7 +3,7 @@
     <SideNav active="contacts" @apps="appOpen = true" />
 
     <main class="contacts-main">
-      <header class="contacts-header">
+      <header class="contacts-header" data-tauri-drag-region="deep">
         <div class="header-row">
           <h2>通讯录</h2>
           <button class="primary-btn" @click="createOpen = true">创建群组</button>
@@ -180,16 +180,16 @@ function onGroupCreated(group: { id: string; name: string }) {
 
 .contacts-main { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
 .contacts-header {
-  background: var(--panel); padding: 16px 24px; border-bottom: 1px solid var(--border);
+  background: var(--panel); padding: 0 24px 10px; border-bottom: 1px solid var(--border);
 }
-.contacts-header h2 { font-size: 18px; margin-bottom: 0; }
-.header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.contacts-header h2 { font-size: 15px; font-weight: 600; }
+.header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: var(--titlebar-height); }
 .primary-btn { padding: 6px 14px; font-size: 13px; }
 .search-box { position: relative; display: flex; align-items: center; }
 .search-box input { max-width: 520px; }
 .spinner { margin-left: 10px; font-size: 12px; color: var(--text-muted); }
 
-.contacts-body { flex: 1; overflow-y: auto; padding: 16px 24px; }
+.contacts-body { flex: 1; overflow-y: auto; padding: 16px 20px 24px; }
 .section-title {
   display: flex; align-items: center; gap: 12px; cursor: pointer;
   font-size: 13px; font-weight: 600; color: var(--text-muted);
@@ -199,9 +199,11 @@ function onGroupCreated(group: { id: string; name: string }) {
 .entry-list { list-style: none; margin-bottom: 24px; }
 .entry {
   display: flex; align-items: center; gap: 12px; cursor: pointer;
-  background: var(--panel); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; padding: 10px 14px; margin-bottom: 8px;
+  transition: background 0.12s;
 }
+.entry:hover { background: var(--bg-subtle); }
 .avatar {
   width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0;
   background: var(--primary); color: #fff; cursor: pointer;
@@ -216,7 +218,7 @@ function onGroupCreated(group: { id: string; name: string }) {
 .search-entry .name { overflow-wrap: anywhere; max-width: 100%; }
 .name { font-size: 14px; font-weight: 500; cursor: pointer; }
 .company {
-  display: inline-block; background: #eef2f7; color: #5b6b7c;
+  display: inline-block; background: var(--chip-bg); color: var(--chip-text);
   border-radius: 4px; padding: 0 6px; font-size: 11px;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -226,11 +228,10 @@ function onGroupCreated(group: { id: string; name: string }) {
   font-family: Menlo, monospace;
 }
 .tag {
-  display: inline-block; background: #eef2f7; color: #5b6b7c;
+  display: inline-block; background: var(--chip-bg); color: var(--chip-text);
   border-radius: 4px; padding: 0 6px; font-size: 11px; margin-right: 6px;
 }
 .small { padding: 5px 12px; font-size: 12px; }
-.secondary { background: #f0f0f0; color: var(--text); }
 .empty { text-align: center; color: var(--text-muted); padding: 20px; }
 .detail-btn { flex-shrink: 0; }
 </style>

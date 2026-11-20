@@ -101,26 +101,26 @@ onUnmounted(() => { generation++ })
 </script>
 
 <style scoped>
-.receipt-mask { position: fixed; inset: 0; z-index: 75; background: #0006; display: grid; place-items: center; }
-.receipt-modal { width: min(760px, 92vw); max-height: 85vh; background: var(--panel); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+.receipt-mask { position: fixed; inset: 0; z-index: 75; background: var(--overlay); display: grid; place-items: center; }
+.receipt-modal { width: min(760px, 92vw); max-height: 85vh; background: var(--surface); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
 header p { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
 .receipt-summary { padding: 10px 20px; max-height: 35vh; overflow-y: auto; font-size: 12px; color: var(--text-muted); }
 .receipt-summary p { margin-bottom: 6px; }
-.warning { color: #ad6500; }
+.warning { color: var(--warning-text); }
 .current-members { margin-top: 8px; }
 .current-members ul { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 6px; }
 .current-members small { opacity: 0.7; }
 .receipt-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 20px; border-block: 1px solid var(--border); }
 .receipt-filters button { background: var(--bg); color: var(--text-muted); padding: 7px 10px; border-radius: 6px; }
-.receipt-filters .active { color: #1668c7; background: #e2efff; }
+.receipt-filters .active { color: var(--info-text); background: var(--info-soft); }
 .receipt-filters input { flex: 1; min-width: 150px; padding: 8px; }
 .receipt-people { overflow-y: auto; min-height: 100px; padding: 0 20px 14px; }
 .receipt-people li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .receipt-people small { display: block; font-size: 11px; color: var(--text-muted); }
 .receipt-people strong { font-size: 14px; }
 .receipt-people time { font-size: 12px; color: var(--text-muted); }
-.outside { font-size: 11px; color: #ad6500; }
+.outside { font-size: 11px; color: var(--warning-text); }
 .receipt-people .empty { color: var(--text-muted); font-size: 13px; justify-content: center; padding: 24px 0; }
 .small { padding: 5px 10px; }
 </style>

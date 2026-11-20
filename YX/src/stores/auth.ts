@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { authService, type UserInfo } from '../services/auth'
 import { disableAutoLogin } from '../services/credentials'
 import { STORAGE_KEYS } from '../services/config'
+import { logEvent } from '../services/app-log'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserInfo | null>(null)
@@ -36,6 +37,7 @@ export const useAuthStore = defineStore('auth', () => {
     const ts = new Date().toLocaleTimeString()
     debugLog.value.unshift(`[${ts}] ${msg}`)
     if (debugLog.value.length > 30) debugLog.value.length = 30
+    logEvent('登录', msg)
   }
 
   async function login(username: string, password: string) {

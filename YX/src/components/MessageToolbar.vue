@@ -74,11 +74,11 @@ onUnmounted(() => window.removeEventListener('resize', close))
 
 <style scoped>
 .message-more { background: transparent; color: var(--text-muted); padding: 2px 6px; font-size: 22px; line-height: 24px; flex-shrink: 0; border-radius: 6px; }
-.message-more:hover { background: #e5e8ec; color: var(--text); }
+.message-more:hover { background: var(--hover); color: var(--text); }
 .message-toolbar-backdrop { position: fixed; inset: 0; z-index: 65; }
-.message-toolbar { position: absolute; width: min(440px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; background: var(--panel, white); color: var(--text, #222); border: 1px solid var(--border, #ddd); border-radius: 16px; box-shadow: 0 6px 28px #0002; outline: none; }
+.message-toolbar { position: absolute; width: min(440px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-2); outline: none; }
 .message-toolbar button { background: transparent; color: inherit; border-radius: 8px; padding: 8px 2px; }
-.message-toolbar button:hover, .message-toolbar button.chosen { background: #eef2f7; }
+.message-toolbar button:hover, .message-toolbar button.chosen { background: var(--hover); }
 .emoji-row { display: grid; grid-template-columns: repeat(7, 1fr); padding: 14px 10px; gap: 2px; }
 .emoji-row button { font-size: 29px; }
 .emoji-row .emoji-more { font-size: 36px; line-height: 1; }

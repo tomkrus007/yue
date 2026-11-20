@@ -3,7 +3,7 @@
     <SideNav active="zt" @apps="appOpen = true" />
 
     <main class="zt-main">
-      <header class="zt-head">
+      <header class="zt-head" data-tauri-drag-region="deep">
         <div>
           <h2>零信任</h2>
           <div class="sub">由本机官方零信任客户端提供隧道；YX 只负责登录与状态展示</div>
@@ -215,17 +215,22 @@ onUnmounted(() => {
 
 .zt-main {
   overflow-y: auto;
-  padding: 18px 24px 40px;
+  padding: 0 24px 40px;
   background: var(--bg);
 }
 .zt-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
+  height: var(--titlebar-height);
+  margin-bottom: 8px;
+  background: var(--bg);
 }
-.zt-head h2 { font-size: 20px; }
+.zt-head h2 { font-size: 15px; font-weight: 600; }
 .sub { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
 .head-actions { display: flex; align-items: center; gap: 10px; }
 .pill {
@@ -235,23 +240,23 @@ onUnmounted(() => {
   border: 1px solid var(--border);
   color: var(--text-muted);
 }
-.pill.on { color: var(--success); border-color: #bfe8cf; background: #f0fbf4; }
-.pill.off { background: #f5f6f7; }
+.pill.on { color: var(--success); border-color: var(--success); background: var(--success-soft); }
+.pill.off { background: var(--surface-2); }
 
 .banner {
-  background: #fffaf0;
-  border: 1px solid #f3e2c0;
-  color: #7a5a20;
+  background: var(--warning-soft);
+  border: 1px solid var(--border);
+  color: var(--warning-text);
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.7;
   margin-bottom: 14px;
 }
-.banner.err { background: #fff2f1; border-color: #f3c6c3; color: var(--danger); }
+.banner.err { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 
 .card {
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px 16px;
@@ -274,13 +279,13 @@ onUnmounted(() => {
 .small { padding: 4px 12px; font-size: 12px; }
 .hint { font-size: 12px; color: var(--text-muted); line-height: 1.7; }
 .code {
-  background: #f6f7f9;
+  background: var(--bg-subtle);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
   font-family: Menlo, monospace;
   font-size: 12px;
-  color: #4a5561;
+  color: var(--text-muted);
   margin: 8px 0;
   white-space: pre-wrap;
 }

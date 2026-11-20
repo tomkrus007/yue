@@ -6,15 +6,18 @@
       :mention-count="mentions.pending.length"
       @apps="appOpen = true"
       @mentions="mentionsOpen = true"
+      @logs="showLogs = !showLogs"
     />
 
     <!-- 会话列表 -->
     <aside class="session-panel">
-      <div class="panel-header">
-        <h3>消息</h3>
-        <div class="head-actions">
-          <button class="small secondary" @click="showLogs = !showLogs">日志</button>
-        </div>
+      <div class="panel-header" data-tauri-drag-region="deep">
+        <input
+          v-model="keyword"
+          class="panel-search"
+          placeholder="搜索联系人 / 群组"
+          @input="onSearch"
+        />
       </div>
 
       <div class="tabs">
@@ -27,14 +30,6 @@
           {{ t.label }}
           <i v-if="t.unread > 0">{{ t.unread > 99 ? '99+' : t.unread }}</i>
         </button>
-      </div>
-
-      <div class="session-search">
-        <input
-          v-model="keyword"
-          placeholder="搜索联系人/群组（含未聊过的人）"
-          @input="onSearch"
-        />
       </div>
 
       <div v-if="im.searching" class="searching">搜索中…</div>
@@ -160,7 +155,7 @@
     <!-- 聊天主区 -->
     <main class="chat-main">
       <template v-if="im.currentSession">
-        <header class="chat-header">
+        <header class="chat-header" data-tauri-drag-region="deep">
           <div class="chat-title">
             <h3>{{ im.currentSession.name }}</h3>
             <span class="muted">{{ im.sessionTypeLabel(im.currentSession.type) }}</span>
@@ -261,21 +256,6 @@
             hidden
             @change="onPick"
           />
-          <div class="composer-tools">
-            <div class="emoji-picker" @keydown.esc="emojiOpen = false">
-              <button class="composer-tool" title="表情" aria-label="选择表情" :aria-expanded="emojiOpen" :disabled="submitting || composerBlocked" @mousedown.prevent @click="emojiOpen = !emojiOpen">☺</button>
-              <template v-if="emojiOpen">
-                <div class="emoji-dismiss" @click="emojiOpen = false"></div>
-                <div class="emoji-panel" role="dialog" aria-label="选择表情">
-                  <div class="emoji-heading">表情 <button aria-label="关闭表情" @click="emojiOpen = false">×</button></div>
-                  <div class="composer-emojis">
-                    <button v-for="face in OFFICIAL_FACES" :key="face.name" :title="face.name" :aria-label="face.name" @mousedown.prevent @click="insertEmoji(face.text)"><img :src="face.url" :alt="face.text" width="26" height="26" /></button>
-                  </div>
-                </div>
-              </template>
-            </div>
-            <button class="composer-tool" title="添加图片 / 文件" aria-label="添加图片或文件" :disabled="submitting || im.sending || !im.authed || composerBlocked" @click="fileInput?.click()">＋</button>
-          </div>
           <div class="composer-main">
             <div v-if="replyDraft" class="reply-draft"><span>回复 {{ replyDraft.from_name }}：{{ protectedMessage(replyDraft) ? '[受保护消息]' : messageText(Number(replyDraft.msg_type), replyDraft.content).slice(0, 160) }}</span><button class="secondary small" @click="cancelReply">取消引用</button></div>
             <div v-if="pendingAttachments.length" class="pending-attachments">
@@ -305,13 +285,28 @@
             </div>
           </div>
           <div class="composer-actions">
-          <span>Enter 发送 · Shift+Enter 换行</span>
-          <label><input v-model="receiptMode" type="checkbox" :disabled="submitting || burnMode" />要求回执</label>
-          <label><input v-model="burnMode" type="checkbox" :disabled="submitting || receiptMode" />阅后即焚</label>
-          <button
-            @click="onSend"
-            :disabled="submitting || im.sending || !im.authed || composerBlocked || (!draft.trim() && !pendingAttachments.length)"
-          >发送</button>
+            <div class="composer-tools">
+              <div class="emoji-picker" @keydown.esc="emojiOpen = false">
+                <button class="composer-tool" title="表情" aria-label="选择表情" :aria-expanded="emojiOpen" :disabled="submitting || composerBlocked" @mousedown.prevent @click="emojiOpen = !emojiOpen">☺</button>
+                <template v-if="emojiOpen">
+                  <div class="emoji-dismiss" @click="emojiOpen = false"></div>
+                  <div class="emoji-panel" role="dialog" aria-label="选择表情">
+                    <div class="emoji-heading">表情 <button aria-label="关闭表情" @click="emojiOpen = false">×</button></div>
+                    <div class="composer-emojis">
+                      <button v-for="face in OFFICIAL_FACES" :key="face.name" :title="face.name" :aria-label="face.name" @mousedown.prevent @click="insertEmoji(face.text)"><img :src="face.url" :alt="face.text" width="26" height="26" /></button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <button class="composer-tool" title="添加图片 / 文件" aria-label="添加图片或文件" :disabled="submitting || im.sending || !im.authed || composerBlocked" @click="fileInput?.click()">＋</button>
+            </div>
+            <span class="composer-hint">Enter 发送 · Shift+Enter 换行</span>
+            <label><input v-model="receiptMode" type="checkbox" :disabled="submitting || burnMode" />要求回执</label>
+            <label><input v-model="burnMode" type="checkbox" :disabled="submitting || receiptMode" />阅后即焚</label>
+            <button
+              @click="onSend"
+              :disabled="submitting || im.sending || !im.authed || composerBlocked || (!draft.trim() && !pendingAttachments.length)"
+            >发送</button>
           </div>
         </footer>
       </template>
@@ -354,14 +349,34 @@
 
     <ImageGallery v-if="previewUrl" :images="galleryImages" :initial-index="galleryIndex" :initial-url="previewUrl" :initial-name="previewName" @close="previewUrl = ''" />
 
-    <!-- 协议日志 -->
+    <!-- 应用日志：协议 + 登录 + console + 未捕获异常 -->
     <aside v-if="showLogs" class="log-panel">
       <div class="panel-header">
-        <h3>协议日志</h3>
-        <button class="small secondary" @click="showLogs = false">关闭</button>
+        <h3>日志</h3>
+        <div class="log-actions">
+          <button class="small secondary" :disabled="!appLog.entries.length" @click="clearLogs">清空</button>
+          <button class="small secondary" @click="showLogs = false">关闭</button>
+        </div>
+      </div>
+      <div class="log-filters" role="group" aria-label="日志来源筛选">
+        <button :class="['log-filter', { active: logScope === '' }]" @click="logScope = ''">
+          全部 <small>{{ appLog.entries.length }}</small>
+        </button>
+        <button
+          v-for="scope in logScopes"
+          :key="scope"
+          :class="['log-filter', { active: logScope === scope }]"
+          @click="logScope = logScope === scope ? '' : scope"
+        >
+          {{ scope }} <small>{{ logScopeCount(scope) }}</small>
+        </button>
       </div>
       <ul class="logs">
-        <li v-for="(l, i) in im.logs" :key="i">{{ l }}</li>
+        <li v-for="entry in shownLogs" :key="entry.id" :class="['log-line', `log-${entry.level}`]">
+          <span class="log-meta">{{ entry.time }} · {{ entry.scope }}</span>
+          <span class="log-text">{{ entry.text }}</span>
+        </li>
+        <li v-if="!shownLogs.length" class="log-empty">暂无日志</li>
       </ul>
     </aside>
   </div>
@@ -392,6 +407,7 @@ import ChatDrawer from '../components/ChatDrawer.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import ImageGallery from '../components/ImageGallery.vue'
 import { OFFICIAL_FACES } from '../services/im/official-face'
+import { appLog, clearLogs } from '../services/app-log'
 import ReplyThread from '../components/ReplyThread.vue'
 import FavoritesModal from '../components/FavoritesModal.vue'
 import type { FavoriteMessageLocation } from '../services/im/favorites'
@@ -664,7 +680,7 @@ async function beginReply(message: ImMessage) {
 const pendingAttachments = computed(() => attachments.value[composerKey.value] || [])
 const submitting = ref(false)
 let attachmentId = 0
-const composerHeight = ref(100)
+const composerHeight = ref(76)
 const resizeStart = ref<{ y: number; height: number; pointerId: number } | null>(null)
 
 function startComposerResize(event: PointerEvent) {
@@ -717,6 +733,15 @@ const keyword = ref('')
 const historyOpen = ref(false)
 const appOpen = ref(false)
 const showLogs = ref(false)
+const logScope = ref('')
+/** 按来源筛选：全部 / 协议 / 登录 / console / 系统 */
+const logScopes = computed(() => [...new Set(appLog.entries.map((e) => e.scope))])
+const shownLogs = computed(() =>
+  logScope.value ? appLog.entries.filter((e) => e.scope === logScope.value) : appLog.entries,
+)
+function logScopeCount(scope: string) {
+  return appLog.entries.filter((e) => e.scope === scope).length
+}
 const drawerOpen = ref(false)
 const drawerAllowed = ref(false)
 const groupSettingsOpen = ref(false)
@@ -1074,14 +1099,26 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   overflow: hidden;
 }
 .panel-header {
-  padding: 12px 16px;
+  height: var(--titlebar-height);
+  padding: 0 12px 0 26px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .panel-header h3 { font-size: 15px; font-weight: 600; }
+.panel-search {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--surface);
+}
 .head-actions { display: flex; gap: 6px; }
+.log-panel .panel-header { justify-content: space-between; padding: 0 10px 0 16px; }
 .small { padding: 4px 10px; font-size: 12px; }
 
 .tabs { display: flex; border-bottom: 1px solid var(--border); }
@@ -1093,7 +1130,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   padding: 7px 4px;
   font-size: 12px;
 }
-.tab:hover { background: #f7f8f9; }
+.tab:hover { background: var(--hover); color: var(--text); }
 .tab.on { color: var(--primary); box-shadow: inset 0 -2px 0 var(--primary); }
 .tab i {
   font-style: normal;
@@ -1105,11 +1142,6 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   margin-left: 4px;
 }
 
-.session-search {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.session-search input { padding: 6px 10px; font-size: 12px; }
 .searching { padding: 6px 16px; font-size: 11px; color: var(--text-muted); }
 .search-entry { cursor: pointer; }
 .s-avatar { cursor: pointer; }
@@ -1117,7 +1149,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .s-name-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .search-entry .s-name { white-space: normal; overflow-wrap: anywhere; }
 .s-company {
-  display: inline-block; background: #eef2f7; color: #5b6b7c;
+  display: inline-block; background: var(--chip-bg); color: var(--chip-text);
   border-radius: 4px; padding: 0 6px; font-size: 11px;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -1125,15 +1157,15 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 
 .session-list { flex: 1; overflow-y: auto; list-style: none; }
 .session-list li {
-  padding: 10px 12px;
+  padding: 9px 12px;
   display: flex;
   align-items: flex-start;
   gap: 10px;
   cursor: pointer;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: none;
 }
-.session-list li:hover { background: #f7f8f9; }
-.session-list li.active { background: #eef6fb; }
+.session-list li:hover { background: var(--hover); }
+.session-list li.active { background: var(--selected); }
 .s-avatar {
   width: 36px; height: 36px; border-radius: 6px;
   background: var(--primary); color: #fff;
@@ -1166,7 +1198,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   justify-content: center;
   opacity: 0.7;
 }
-.icon-btn:hover { background: #eef1f4; color: var(--text); opacity: 1; }
+.icon-btn:hover { background: var(--hover); color: var(--text); opacity: 1; }
 .icon-btn svg { width: 15px; height: 15px; display: block; }
 .icon-btn.more svg { width: 16px; height: 16px; }
 .icon-btn.mute-on { opacity: 1; }
@@ -1184,10 +1216,10 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   padding: 4px;
   display: flex;
   flex-direction: column;
-  background: var(--panel, #fff);
-  border: 1px solid var(--border, #ddd);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 6px 20px #0002;
+  box-shadow: var(--shadow-2);
 }
 .sess-menu button {
   display: flex;
@@ -1200,7 +1232,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   background: transparent;
   text-align: left;
 }
-.sess-menu button:hover { background: #eef2f7; }
+.sess-menu button:hover { background: var(--hover); }
 .sess-menu button.danger { color: var(--danger); }
 .sess-menu svg { width: 15px; height: 15px; flex-shrink: 0; }
 .empty { padding: 20px; text-align: center; color: var(--text-muted); }
@@ -1213,13 +1245,15 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   min-width: 0;
 }
 .chat-header {
-  padding: 10px 20px;
+  height: var(--titlebar-height);
+  padding: 0 14px 0 20px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-shrink: 0;
 }
 .chat-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .chat-title h3 { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1229,7 +1263,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .msg-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
 .msg { display: flex; margin-bottom: 14px; }
 .msg.message-selectable { align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; border: 1px solid transparent; }
-.msg.message-selected { background: #fff5eb; border-color: var(--primary); }
+.msg.message-selected { background: var(--primary-soft); border-color: var(--primary); }
 .msg.message-selectable > input[type='checkbox'] { width: 18px; height: 18px; flex: 0 0 18px; padding: 0; margin: 0; accent-color: var(--primary); cursor: pointer; }
 .msg.message-selectable:focus-within { outline: 2px solid var(--primary); outline-offset: 1px; }
 .msg.mine { justify-content: flex-end; }
@@ -1243,11 +1277,11 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .composer {
   position: relative;
   flex-shrink: 0;
-  padding: 10px 16px;
+  padding: 6px 12px;
   border-top: 1px solid var(--border);
   background: var(--panel);
   display: flex;
-  gap: 10px;
+  gap: 6px;
   flex-direction: column;
   align-items: stretch;
 }
@@ -1271,11 +1305,11 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   padding: 0;
   font-size: 20px;
   line-height: 1;
-  background: #f0f2f4;
-  color: #555;
+  background: var(--surface-2);
+  color: var(--text-muted);
   border-radius: 8px;
 }
-.attach:hover { background: #e3e7eb; }
+.attach:hover { background: var(--hover); color: var(--text); }
 .composer-main { min-width: 0; }
 .composer textarea {
   width: 100%;
@@ -1283,7 +1317,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   height: 100px;
   min-height: 60px;
   max-height: 45vh;
-  padding: 8px 0;
+  padding: 6px 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1299,7 +1333,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .upload-state { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
 .composer-blocked {
   padding: 6px 8px; margin: 6px 0;
-  background: #fdecec; color: var(--danger);
+  background: var(--danger-soft); color: var(--danger);
   border-radius: 6px; font-size: 12px;
 }
 
@@ -1320,16 +1354,47 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   right: 0;
   top: 0;
   bottom: 0;
-  width: 300px;
+  width: 360px;
   background: var(--panel);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   z-index: 40;
-  box-shadow: -6px 0 20px rgba(0, 0, 0, 0.12);
+  box-shadow: -6px 0 20px rgba(0, 0, 0, 0.18);
 }
-.logs { list-style: none; padding: 8px; font-size: 11px; color: var(--text-muted); overflow-y: auto; flex: 1; }
-.logs li { padding: 3px 4px; border-bottom: 1px solid #f5f5f5; word-break: break-all; }
+.log-actions { display: flex; gap: 6px; }
+.log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--divider);
+}
+.log-filter {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.log-filter small { margin-left: 2px; opacity: 0.7; }
+.log-filter:hover { background: var(--hover); }
+.log-filter.active { background: var(--primary-soft); color: var(--primary); }
+.logs {
+  list-style: none;
+  padding: 4px 8px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-y: auto;
+  flex: 1;
+}
+.log-line { padding: 5px 4px; border-bottom: 1px solid var(--divider); word-break: break-all; }
+.log-meta { display: block; font-size: 10px; color: var(--text-muted); opacity: 0.85; }
+.log-text { display: block; margin-top: 1px; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.log-line.log-warn .log-text { color: var(--warning-text); }
+.log-line.log-error .log-text { color: var(--danger); }
+.log-empty { padding: 16px 4px; text-align: center; }
 
 .detail-btn { flex-shrink: 0; }
 </style>
@@ -1339,15 +1404,17 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 </style>
 
 <style scoped>
-.composer-tools { display: flex; align-items: center; gap: 8px; }
-.composer-tool { background: transparent; color: var(--text-muted); width: 32px; height: 30px; padding: 0; font-size: 25px; border-radius: 4px; }
+.composer-tools { display: flex; align-items: center; gap: 4px; }
+.composer-tool { background: transparent; color: var(--text-muted); width: 26px; height: 26px; padding: 0; font-size: 18px; line-height: 1; border-radius: 4px; }
 .composer-tool:hover { background: var(--bg); color: var(--text); }
-.composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
+.composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.composer-hint { margin-left: auto; }
 .composer-actions span { font-size: 11px; color: var(--text-muted); }
-.composer-actions > button { min-width: 80px; }
+.composer-tools { flex-shrink: 0; }
+.composer-actions > button { min-width: 64px; height: 28px; padding: 0 12px; font-size: 12px; border-radius: 5px; }
 .emoji-picker { position: relative; }
 .emoji-dismiss { position: fixed; inset: 0; z-index: 49; }
-.emoji-panel { position: absolute; bottom: 38px; left: 0; width: min(320px, 70vw); padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px #0002; z-index: 50; }
+.emoji-panel { position: absolute; bottom: 32px; left: 0; width: min(320px, 70vw); padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-2); z-index: 50; }
 .emoji-heading { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
 .emoji-heading button { background: transparent; color: inherit; padding: 0 6px; }
 .composer-emojis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; max-height: 280px; overflow-y: auto; }
@@ -1356,19 +1423,19 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 </style>
 
 <style scoped>
-.session-at { color: #d97706; }
+.session-at { color: var(--primary); }
 .mention-messages { max-height: 220px; overflow: auto; padding: 10px 20px; border-bottom: 1px solid var(--border); }
 .mention-messages p { font-size: 12px; color: var(--text-muted); margin: 4px 0; }
 .mention-messages button { display: block; width: 100%; text-align: left; margin: 5px 0; }
-.chat-action-error { color: #b45309; font-size: 12px; padding: 8px 20px; }
-.reply-draft { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-left: 3px solid #9eafc5; background: #eef2f7; color: #526277; font-size: 12px; margin-bottom: 8px; }
+.chat-action-error { color: var(--warning-text); font-size: 12px; padding: 8px 20px; }
+.reply-draft { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-left: 3px solid var(--primary); background: var(--chip-bg); color: var(--chip-text); font-size: 12px; margin-bottom: 8px; }
 .reply-draft span { flex: 1; overflow-wrap: anywhere; }
-.composer-actions label { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; white-space: nowrap; }
+.composer-actions label { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; white-space: nowrap; }
 .composer-actions label input { width: auto; }
-.message-located { background: #fff0b8; border-radius: 8px; outline: 2px solid #f0b64d; }
-.new-messages { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2; margin: 0; background: #e2efff; color: #1668c7; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); }
+.message-located { background: var(--warning-soft); border-radius: 8px; outline: 2px solid var(--primary); }
+.new-messages { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2; margin: 0; background: var(--info-soft); color: var(--info-text); box-shadow: var(--shadow-1); }
 </style>
 
 <style scoped>
-.active-mention-bar, .lookup-progress { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 20px; font-size: 12px; background: #fff4d6; color: #855200; }
+.active-mention-bar, .lookup-progress { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 20px; font-size: 12px; background: var(--warning-soft); color: var(--warning-text); }
 </style>

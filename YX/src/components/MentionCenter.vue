@@ -36,8 +36,8 @@ watch([keyword, status], () => { limit.value = 100 })
 onMounted(() => { mentions.ensureAccount(); panel.value?.focus() })
 </script>
 <style scoped>
-.mention-center-mask { position: fixed; inset: 0; z-index: 75; background: #0006; display: grid; place-items: center; }
-section { width: min(760px, 90vw); height: min(80vh, 850px); display: flex; flex-direction: column; padding: 20px; border-radius: 12px; background: var(--panel); }
+.mention-center-mask { position: fixed; inset: 0; z-index: 75; background: var(--overlay); display: grid; place-items: center; }
+section { width: min(760px, 90vw); height: min(80vh, 850px); display: flex; flex-direction: column; padding: 20px; border-radius: 12px; background: var(--surface); }
 header, .filters, .meta, .actions { display: flex; align-items: center; gap: 10px; }
 header { justify-content: space-between; }
 .filters { margin: 12px 0; }

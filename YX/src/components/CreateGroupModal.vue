@@ -155,12 +155,12 @@ async function submit() {
 
 <style scoped>
 .group-mask {
-  position: fixed; inset: 0; z-index: 80; background: #0006;
+  position: fixed; inset: 0; z-index: 80; background: var(--overlay);
   display: flex; align-items: center; justify-content: center;
 }
 .group-dialog {
   width: min(520px, 92vw); max-height: 88vh; overflow: auto;
-  background: var(--panel); padding: 20px; border-radius: 10px;
+  background: var(--surface); padding: 20px; border-radius: 10px;
   display: flex; flex-direction: column; gap: 12px;
 }
 header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -173,7 +173,7 @@ h3 { margin: 0; font-size: 16px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; max-height: 132px; overflow-y: auto; }
 .chip {
   display: flex; align-items: center; gap: 6px; max-width: 100%;
-  background: #fff5eb; border-radius: 6px; padding: 5px 8px; font-size: 13px;
+  background: var(--primary-soft); border-radius: 6px; padding: 5px 8px; font-size: 13px;
 }
 .chip-empty { font-size: 12px; color: var(--text-muted); }
 .chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -182,6 +182,5 @@ h3 { margin: 0; font-size: 16px; }
 .tip { font-size: 12px; color: var(--text-muted); margin: 0; }
 .error { color: var(--danger); font-size: 13px; margin: 0; }
 .small { padding: 5px 12px; font-size: 12px; }
-.secondary { background: #f0f0f0; color: var(--text); }
 footer { justify-content: flex-end; }
 </style>

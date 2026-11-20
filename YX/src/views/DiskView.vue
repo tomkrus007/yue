@@ -4,7 +4,7 @@
 
     <!-- 盘列表 -->
     <aside class="drive-panel">
-      <div class="panel-header"><h3>云盘</h3></div>
+      <div class="panel-header" data-tauri-drag-region="deep"><h3>云盘</h3></div>
       <ul class="drive-list">
         <li
           v-for="d in disk.drives"
@@ -26,7 +26,7 @@
       @dragleave="onDragLeave"
       @drop.prevent="onDrop"
     >
-      <header class="disk-header">
+      <header class="disk-header" data-tauri-drag-region="deep">
         <div class="path-bar">
           <button class="secondary small" @click="disk.back()" :disabled="disk.history.length <= 1">← 返回</button>
           <button class="secondary small" @click="disk.refresh()">刷新</button>
@@ -319,24 +319,25 @@ function fmtTime(t?: number): string {
   background: var(--panel); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; overflow: hidden;
 }
-.panel-header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.panel-header { height: var(--titlebar-height); padding: 0 16px 0 26px; display: flex; align-items: center; border-bottom: 1px solid var(--border); }
 .panel-header h3 { font-size: 15px; font-weight: 600; }
 .drive-list { list-style: none; flex: 1; overflow-y: auto; }
 .drive-list li {
   padding: 12px 16px; display: flex; align-items: center; gap: 10px;
-  cursor: pointer; border-bottom: 1px solid #f0f0f0; font-size: 14px;
+  cursor: pointer; font-size: 14px;
 }
-.drive-list li:hover { background: #f7f8f9; }
-.drive-list li.active { background: #eef6fb; color: var(--primary); font-weight: 500; }
+.drive-list li:hover { background: var(--hover); }
+.drive-list li.active { background: var(--selected); color: var(--primary); font-weight: 500; }
 .drive-list li.empty { color: var(--text-muted); cursor: default; justify-content: center; }
 .drive-icon { font-size: 16px; }
 
 .disk-main { position: relative; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
 .disk-header {
-  padding: 12px 20px; background: var(--panel);
+  padding: 0 16px 10px; background: var(--panel);
   border-bottom: 1px solid var(--border);
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; flex-direction: column; gap: 8px;
 }
+.path-bar { min-height: var(--titlebar-height); align-items: center; }
 .path-bar { display: flex; align-items: center; gap: 8px; }
 .path { flex: 1; color: var(--text-muted); font-size: 13px; }
 .upload-note { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
@@ -350,16 +351,14 @@ function fmtTime(t?: number): string {
 .search-bar { display: flex; gap: 8px; }
 .search-bar input { flex: 1; }
 .small { padding: 5px 12px; font-size: 12px; }
-.secondary { background: #f0f0f0; color: var(--text); }
-.secondary:hover { background: #e0e0e0; }
 .danger-btn { color: var(--danger); }
 
 .mkdir-bar {
-  padding: 10px 20px; background: #fafafa; border-bottom: 1px solid var(--border);
+  padding: 10px 20px; background: var(--bg-subtle); border-bottom: 1px solid var(--border);
   display: flex; gap: 8px;
 }
 
-.error { margin: 12px 20px; padding: 8px 12px; background: #fff0f0; color: var(--danger); border-radius: 6px; }
+.error { margin: 12px 20px; padding: 8px 12px; background: var(--danger-soft); color: var(--danger); border-radius: 6px; }
 
 .file-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
 .loading, .empty { text-align: center; color: var(--text-muted); padding: 20px; }
@@ -368,20 +367,20 @@ thead th {
   text-align: left; padding: 8px 12px; font-size: 12px; color: var(--text-muted);
   border-bottom: 1px solid var(--border); font-weight: 500;
 }
-tbody td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
-tbody tr:hover { background: #f7f8f9; }
+tbody td { padding: 10px 12px; border-bottom: 1px solid var(--divider); font-size: 13px; }
+tbody tr:hover { background: var(--hover); }
 .name .f-icon { margin-right: 6px; }
 .ops { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .confirm-mask {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--overlay);
   display: flex; align-items: center; justify-content: center;
 }
 .confirm-dialog {
   width: min(380px, 90vw); padding: 20px;
-  background: var(--panel); border-radius: 10px;
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.25);
+  background: var(--surface); border-radius: 10px;
+  box-shadow: var(--shadow-2);
 }
 .confirm-dialog h3 { font-size: 15px; margin-bottom: 10px; }
 .confirm-dialog p { font-size: 13px; line-height: 1.6; color: var(--text-muted); }

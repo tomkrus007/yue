@@ -58,8 +58,8 @@ onMounted(() => { searchInput.value?.focus(); void load() })
 </script>
 
 <style scoped>
-.mention-mask { position: fixed; inset: 0; z-index: 100; background: #0006; display: flex; align-items: center; justify-content: center; }
-section { box-sizing: border-box; width: 420px; max-width: 90vw; background: var(--panel); border-radius: 12px; padding: 20px; }
+.mention-mask { position: fixed; inset: 0; z-index: 100; background: var(--overlay); display: flex; align-items: center; justify-content: center; }
+section { box-sizing: border-box; width: 420px; max-width: 90vw; background: var(--surface); border-radius: 12px; padding: 20px; }
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 section > input { width: 100%; box-sizing: border-box; padding: 10px; }
 .members { max-height: 45vh; overflow-y: auto; margin: 12px 0; }

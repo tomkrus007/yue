@@ -248,26 +248,26 @@ function download(seg: ImageMeta) {
 .msg-content .ph { color: var(--text-muted); }
 .message-card { display: flex; flex-direction: column; gap: 8px; min-width: 200px; padding: 8px; }
 .message-card details { font-size: 13px; }
-.card-action { align-self: flex-start; color: #1677ff; border: 0; background: transparent; padding: 4px 0; cursor: pointer; }
+.card-action { align-self: flex-start; color: var(--link); border: 0; background: transparent; padding: 4px 0; cursor: pointer; }
 .todo-error { color: var(--danger); font-size: 12px; margin-top: 8px; }
 .filechip {
   display: inline-block;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #f2f3f5;
-  color: #35506b;
+  background: var(--chip-bg);
+  color: var(--chip-text);
   font-size: 13px;
   cursor: pointer;
   max-width: 100%;
 }
-.filechip:hover { background: #e8eaed; }
-.file-action { margin-left: 10px; border: 0; background: transparent; color: #1677ff; cursor: pointer; padding: 2px 0; }
+.filechip:hover { background: var(--hover); }
+.file-action { margin-left: 10px; border: 0; background: transparent; color: var(--link); cursor: pointer; padding: 2px 0; }
 .file-action:disabled { cursor: default; opacity: 0.5; }
 
 .combine {
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fafbfc;
+  background: var(--bg-subtle);
   padding: 8px 10px;
   min-width: 200px;
 }

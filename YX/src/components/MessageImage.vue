@@ -62,8 +62,8 @@ onMounted(start)
   display: inline-block;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #f2f3f5;
-  color: #555;
+  background: var(--surface-2);
+  color: var(--text-muted);
   font-size: 12px;
 }
 .imgchip.err { color: var(--danger); cursor: pointer; }

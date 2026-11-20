@@ -93,17 +93,17 @@ async function reloadDetails() {
 .message-envelope { min-width: 100px; }
 .bubble-row { display: flex; gap: 5px; align-items: center; min-width: 0; }
 .mine .bubble-row { justify-content: flex-end; }
-.bubble { padding: 10px 14px; background: var(--bubble-other, var(--panel)); border: 1px solid var(--border); border-radius: 10px; min-width: 0; max-width: 100%; font-size: 14px; text-align: left; }
+.bubble { padding: 10px 14px; background: var(--bubble-other); border: 1px solid var(--border); border-radius: 10px; min-width: 0; max-width: 100%; font-size: 14px; text-align: left; }
 .mine .bubble { background: var(--bubble-me); }
-.at-me .bubble { border-color: #f0b64d; box-shadow: 0 0 0 1px #f0b64d33; }
-.at-label { display: inline-block; color: #ad6500; background: #fff4d6; border-radius: 4px; padding: 1px 5px; font-size: 11px; margin-bottom: 4px; }
-.reply-source { display: block; width: 100%; text-align: left; font-size: 12px; color: var(--text-muted); padding: 6px 9px; margin-bottom: 8px; border-left: 3px solid #b3bfce; background: #eef1f5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.at-me .bubble { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.at-label { display: inline-block; color: var(--warning-text); background: var(--warning-soft); border-radius: 4px; padding: 1px 5px; font-size: 11px; margin-bottom: 4px; }
+.reply-source { display: block; width: 100%; text-align: left; font-size: 12px; color: var(--text-muted); padding: 6px 9px; margin-bottom: 8px; border-left: 3px solid var(--border); background: var(--chip-bg); white-space: pre-wrap; overflow-wrap: anywhere; }
 .quick-reply, .message-reactions, .message-state { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 12px; align-items: center; }
-.quick-reply button, .message-reactions button, .message-state button { background: #eef2f7; color: #35506b; padding: 3px 8px; border-radius: 5px; }
-.quick-reply .chosen, .message-reactions .mine { background: #e2efff; color: #1668c7; }
+.quick-reply button, .message-reactions button, .message-state button { background: var(--chip-bg); color: var(--chip-text); padding: 3px 8px; border-radius: 5px; }
+.quick-reply .chosen, .message-reactions .mine { background: var(--info-soft); color: var(--info-text); }
 .message-reactions button:disabled { opacity: 1; cursor: default; }
 .message-state { color: var(--text-muted); }
 .message-error { color: var(--danger); font-size: 12px; }
-.reload-details { padding: 6px; background: transparent; color: #1668c7; font-size: 12px; }
+.reload-details { padding: 6px; background: transparent; color: var(--link); font-size: 12px; }
 .recalled .bubble { color: var(--text-muted); background: transparent; }
 </style>

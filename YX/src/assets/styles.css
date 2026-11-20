@@ -1,15 +1,122 @@
+/*
+ * 主题令牌：浅色为默认，深色通过 prefers-color-scheme 自动跟随系统（macOS 外观切换即时生效）。
+ * 组件里不要再写死颜色，统一用这里的语义变量。
+ */
 :root {
-  --bg: #f5f6f7;
-  --panel: #ffffff;
-  --border: #e4e6eb;
-  --text: #1f2329;
-  --text-muted: #8a9099;
+  color-scheme: light;
+
+  /* 底色层次：app 画布 → 列表面板 → 卡片/弹层 */
+  --bg: #f2f2f2;
+  --bg-subtle: #fafafa;
+  --panel: #f7f7f7;
+  --surface: #ffffff;
+  --surface-2: #f0f1f3;
+
+  --border: #e3e3e3;
+  --divider: #ededed;
+
+  --text: #171717;
+  --text-muted: #8b8b8b;
+
+  --hover: rgba(0, 0, 0, 0.05);
+  --selected: #dedede;
+
+  /* 品牌色（沿用云上越秀橙） */
   --primary: #f28823;
   --primary-hover: #e07b18;
+  --primary-soft: #fdf0e2;
+  --primary-soft-text: #a85a10;
+
   --bubble-me: #bae5ff;
   --bubble-other: #ffffff;
+
   --danger: #e54d42;
+  --danger-soft: #fdecec;
   --success: #07c160;
+  --success-soft: #effaf3;
+  --warning-soft: #fff7e6;
+  --warning-text: #8a5a00;
+  --info-soft: #eef6ff;
+  --info-text: #1668c7;
+  --link: #1668c7;
+
+  --chip-bg: #eef2f7;
+  --chip-text: #5b6b7c;
+
+  /* 左侧导航栏 */
+  --sidebar-bg: #eaeaea;
+  --sidebar-fg: #4c4c4c;
+  --sidebar-hover: rgba(0, 0, 0, 0.06);
+  --sidebar-active-bg: rgba(242, 136, 35, 0.16);
+  --sidebar-active-fg: #d97706;
+
+  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-2: 0 8px 32px rgba(0, 0, 0, 0.16);
+  --overlay: rgba(0, 0, 0, 0.35);
+  --scrollbar: rgba(0, 0, 0, 0.18);
+
+  /* 登录页：低饱和暖色底，避免大面积高亮橙 */
+  --login-bg: linear-gradient(160deg, #fbf7f1 0%, #f5ede2 55%, #efe5d8 100%);
+  --login-glow: rgba(242, 136, 35, 0.1);
+  --login-card-shadow: 0 10px 28px rgba(120, 90, 60, 0.1);
+
+  /* 顶部标题带高度：与 macOS 红绿灯位置对齐 */
+  --titlebar-height: 48px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --bg: #111111;
+    --bg-subtle: #1a1a1a;
+    --panel: #1b1b1b;
+    --surface: #262626;
+    --surface-2: #303030;
+
+    --border: #2f2f2f;
+    --divider: #262626;
+
+    --text: #e6e6e6;
+    --text-muted: #8d8d8d;
+
+    --hover: rgba(255, 255, 255, 0.06);
+    --selected: #2f2f2f;
+
+    --primary-soft: #382718;
+    --primary-soft-text: #f0a75c;
+
+    --bubble-me: #26414f;
+    --bubble-other: #262626;
+
+    --danger: #f06a5f;
+    --danger-soft: #3a201e;
+    --success: #4cc47f;
+    --success-soft: #1c2b22;
+    --warning-soft: #2e2515;
+    --warning-text: #e0b062;
+    --info-soft: #16283a;
+    --info-text: #74b3f0;
+    --link: #74b3f0;
+
+    --chip-bg: #2f3338;
+    --chip-text: #a8b4c0;
+
+    --sidebar-bg: #171717;
+    --sidebar-fg: #a0a0a0;
+    --sidebar-hover: rgba(255, 255, 255, 0.07);
+    --sidebar-active-bg: rgba(242, 136, 35, 0.22);
+    --sidebar-active-fg: #f2a04c;
+
+    --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 8px 32px rgba(0, 0, 0, 0.55);
+    --overlay: rgba(0, 0, 0, 0.55);
+    --scrollbar: rgba(255, 255, 255, 0.18);
+
+    --login-bg: linear-gradient(160deg, #1c1c1c 0%, #171717 55%, #121212 100%);
+    --login-glow: rgba(242, 136, 35, 0.1);
+    --login-card-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -20,7 +127,19 @@ html, body, #app {
   font-size: 14px;
   color: var(--text);
   background: var(--bg);
+  -webkit-font-smoothing: antialiased;
 }
+
+/* 深色下窗口四周的滚动条也跟着变，避免亮色条突兀 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); background-clip: padding-box; }
 
 button {
   cursor: pointer;
@@ -28,14 +147,15 @@ button {
   border-radius: 6px;
   padding: 8px 16px;
   font-size: 14px;
+  font-family: inherit;
   background: var(--primary);
   color: #fff;
   transition: background 0.15s;
 }
 button:hover { background: var(--primary-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.secondary { background: #f0f0f0; color: var(--text); }
-button.secondary:hover { background: #e0e0e0; }
+button.secondary { background: var(--surface-2); color: var(--text); }
+button.secondary:hover { background: var(--hover); }
 button.danger { background: var(--danger); }
 
 input, textarea {
@@ -47,7 +167,13 @@ input, textarea {
   outline: none;
   transition: border-color 0.15s;
   font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
 }
+input::placeholder, textarea::placeholder { color: var(--text-muted); }
 input:focus, textarea:focus { border-color: var(--primary); }
+input[type='checkbox'], input[type='radio'] { accent-color: var(--primary); }
 
 a { color: var(--primary); text-decoration: none; }
+
+::selection { background: rgba(242, 136, 35, 0.28); }

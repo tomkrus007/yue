@@ -57,12 +57,12 @@ async function onConfirm() {
 
 <style scoped>
 .confirm-mask {
-  position: fixed; inset: 0; z-index: 95; background: #0006;
+  position: fixed; inset: 0; z-index: 95; background: var(--overlay);
   display: flex; align-items: center; justify-content: center;
 }
 .box {
   width: min(340px, 90vw);
-  background: var(--panel); padding: 20px; border-radius: 10px;
+  background: var(--surface); padding: 20px; border-radius: 10px;
   display: flex; flex-direction: column; gap: 14px;
 }
 h3 { margin: 0; font-size: 15px; }

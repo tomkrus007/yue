@@ -8,7 +8,11 @@ import ContactsView from './views/ContactsView.vue'
 import ContactDetailView from './views/ContactDetailView.vue'
 import DiskView from './views/DiskView.vue'
 import ZtView from './views/ZtView.vue'
+import { installLogCapture } from './services/app-log'
 import './assets/styles.css'
+
+// 接管 console.* 与未捕获异常，让它们都能在「更多 → 日志」窗口里看到
+installLogCapture()
 
 const router = createRouter({
   history: createWebHashHistory(),

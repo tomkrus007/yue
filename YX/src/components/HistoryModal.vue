@@ -175,7 +175,7 @@ watch(
 .modal-mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -184,12 +184,12 @@ watch(
 .modal {
   width: min(720px, 86vw);
   height: min(80vh, 760px);
-  background: var(--panel);
+  background: var(--surface);
   border-radius: 10px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-2);
 }
 .modal-head {
   padding: 12px 16px;
@@ -203,7 +203,7 @@ watch(
 .small { padding: 4px 10px; font-size: 12px; }
 .history-search { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 8px; }
 .history-search input { flex: 1; min-width: 180px; padding: 8px; }
-.history-search select { padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); }
+.history-search select { padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
 .history-range { padding: 0 16px 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
 .modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; background: var(--bg); }
 .more { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
@@ -217,11 +217,11 @@ watch(
   max-width: 78%;
   padding: 8px 12px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--border);
 }
 .hmsg.mine .hbubble { background: var(--bubble-me); border-color: transparent; }
-.reply-source { display: block; max-width: 100%; margin-bottom: 8px; padding: 6px 8px; border-left: 3px solid var(--primary); background: #00000008; color: var(--text-muted); text-align: left; overflow-wrap: anywhere; font-size: 12px; }
+.reply-source { display: block; max-width: 100%; margin-bottom: 8px; padding: 6px 8px; border-left: 3px solid var(--primary); background: var(--hover); color: var(--text-muted); text-align: left; overflow-wrap: anywhere; font-size: 12px; }
 .history-actions { display: flex; gap: 6px; margin-top: 5px; }
 .empty { text-align: center; color: var(--text-muted); padding: 24px; }
 </style>

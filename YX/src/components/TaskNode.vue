@@ -54,8 +54,8 @@ const metaText = computed(() => {
   border: 1px solid var(--border);
   color: var(--text-muted);
 }
-.d-tag.doing { color: #2f80ed; border-color: #b9d4f7; background: #f0f6ff; }
-.d-tag.done { color: var(--success); border-color: #bfe8cf; background: #f0fbf4; }
-.d-tag.over { color: var(--danger); border-color: #f3c6c3; background: #fff4f3; }
+.d-tag.doing { color: var(--info-text); border-color: var(--border); background: var(--info-soft); }
+.d-tag.done { color: var(--success); border-color: var(--border); background: var(--success-soft); }
+.d-tag.over { color: var(--danger); border-color: var(--border); background: var(--danger-soft); }
 .tree-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 </style>

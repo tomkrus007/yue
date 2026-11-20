@@ -1,6 +1,6 @@
 <template>
   <aside class="drawer" @dragover.prevent @drop.prevent>
-    <header class="drawer-head">
+    <header class="drawer-head" data-tauri-drag-region="deep">
       <div class="drawer-title" :title="session?.name">{{ session?.name }}</div>
       <button class="secondary small" @click="$emit('close')">收起</button>
     </header>
@@ -349,7 +349,8 @@ watch(
   overflow: hidden;
 }
 .drawer-head {
-  padding: 10px 12px;
+  height: var(--titlebar-height);
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -376,12 +377,12 @@ watch(
   padding: 8px 4px;
   font-size: 12px;
 }
-.tab:hover { background: #f7f8f9; }
+.tab:hover { background: var(--hover); }
 .tab.on { color: var(--primary); box-shadow: inset 0 -2px 0 var(--primary); }
 .tab i {
   font-style: normal;
   font-size: 10px;
-  background: #eef1f4;
+  background: var(--hover);
   color: var(--text-muted);
   padding: 0 5px;
   border-radius: 8px;
@@ -407,7 +408,7 @@ watch(
   border: 1px solid var(--border);
   border-radius: 8px;
   margin-bottom: 8px;
-  background: #fcfdfe;
+  background: var(--bg-subtle);
 }
 .tree-group summary {
   list-style: none;
@@ -441,7 +442,7 @@ watch(
   border-radius: 6px;
   border: 1px solid transparent;
 }
-.pan-row:hover { background: #f7f8f9; }
+.pan-row:hover { background: var(--hover); }
 .pan-row.dir { cursor: pointer; }
 .pan-line { display: flex; }
 .pan-name {
@@ -453,13 +454,13 @@ watch(
 .pan-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .pan-acts { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .pan-btn {
-  background: #f0f2f4;
-  color: #35506b;
+  background: var(--chip-bg);
+  color: var(--chip-text);
   font-size: 11px;
   padding: 3px 8px;
   border-radius: 4px;
 }
-.pan-btn:hover { background: #e3e7eb; }
+.pan-btn:hover { background: var(--hover); }
 .pan-btn.danger { color: var(--danger); }
 .drawer-foot {
   padding: 8px 12px;

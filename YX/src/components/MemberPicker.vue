@@ -278,12 +278,12 @@ function confirm() {
 
 <style scoped>
 .picker-mask {
-  position: fixed; inset: 0; z-index: 90; background: #0006;
+  position: fixed; inset: 0; z-index: 90; background: var(--overlay);
   display: flex; align-items: center; justify-content: center;
 }
 .picker {
   width: min(460px, 92vw); max-height: 86vh; overflow: auto;
-  background: var(--panel); padding: 18px; border-radius: 10px;
+  background: var(--surface); padding: 18px; border-radius: 10px;
   display: flex; flex-direction: column; gap: 12px;
 }
 header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -293,7 +293,7 @@ h3 { margin: 0; font-size: 15px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 96px; overflow-y: auto; }
 .chip {
   display: flex; align-items: center; gap: 6px; max-width: 100%;
-  background: #fff5eb; border-radius: 6px; padding: 4px 8px; font-size: 12px;
+  background: var(--primary-soft); border-radius: 6px; padding: 4px 8px; font-size: 12px;
 }
 .chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .remove {
@@ -307,18 +307,18 @@ h3 { margin: 0; font-size: 15px; }
   border: 1px solid transparent; border-radius: 8px; cursor: pointer;
 }
 .row:hover { background: var(--bg); }
-.row.chosen { background: #fff5eb; border-color: var(--primary); }
+.row.chosen { background: var(--primary-soft); border-color: var(--primary); }
 .row input[type='checkbox'] { width: 16px; height: 16px; padding: 0; margin: 0; accent-color: var(--primary); }
 .avatar {
   display: flex; align-items: center; justify-content: center;
   width: 30px; height: 30px; border-radius: 8px;
-  background: #eaf2ff; color: #446a9e; font-weight: 600; font-size: 13px;
+  background: var(--info-soft); color: var(--info-text); font-weight: 600; font-size: 13px;
 }
 .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.role { font-size: 11px; padding: 0 6px; border-radius: 4px; background: #eef2f7; color: #5b6b7c; }
-.role.r2 { background: #fff0e0; color: var(--primary); }
+.role { font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--chip-bg); color: var(--chip-text); }
+.role.r2 { background: var(--primary-soft); color: var(--primary); }
 .hint { text-align: center; color: var(--text-muted); font-size: 13px; padding: 16px; }
 .error { color: var(--danger); font-size: 13px; margin: 0; }
 </style>

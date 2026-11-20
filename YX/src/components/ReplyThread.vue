@@ -58,8 +58,8 @@ onMounted(async () => {
 onUnmounted(() => im.cancelHistoryScan(sessionId))
 </script>
 <style scoped>
-.reply-mask { position: fixed; inset: 0; z-index: 70; background: #0006; display: grid; place-items: center; }
-section { width: min(680px, 90vw); max-height: 85vh; overflow: auto; background: var(--panel); padding: 20px; border-radius: 12px; }
+.reply-mask { position: fixed; inset: 0; z-index: 70; background: var(--overlay); display: grid; place-items: center; }
+section { width: min(680px, 90vw); max-height: 85vh; overflow: auto; background: var(--surface); padding: 20px; border-radius: 12px; }
 header { display: flex; align-items: center; justify-content: space-between; }
 article { padding: 16px 0; border-bottom: 1px solid var(--border); }
 .meta, .hint { font-size: 12px; color: var(--text-muted); margin: 8px 0; }

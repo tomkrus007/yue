@@ -1,5 +1,7 @@
 <template>
   <nav class="side-nav">
+    <!-- macOS 原生红绿灯悬浮区（Overlay 标题栏），兼作窗口拖动条 -->
+    <div class="nav-drag" data-tauri-drag-region></div>
     <ConnectionStatus />
     <router-link to="/chat" :class="['nav-item', { active: active === 'chat' }]" title="消息">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -54,16 +56,32 @@
 
     <div class="spacer"></div>
 
-    <button class="nav-item logout" title="退出" aria-label="退出登录" @click="onLogout">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 3v9" />
-        <path d="M6.8 6.3a8 8 0 1 0 10.4 0" />
-      </svg>
-    </button>
+    <div class="nav-more" @keydown.esc="menuOpen = false">
+      <button
+        :class="['nav-item', { active: menuOpen }]"
+        title="更多"
+        aria-label="更多"
+        aria-haspopup="menu"
+        :aria-expanded="menuOpen"
+        @click="menuOpen = !menuOpen"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 7h16" />
+          <path d="M4 12h16" />
+          <path d="M4 17h16" />
+        </svg>
+      </button>
+      <div v-if="menuOpen" class="nav-menu-backdrop" @click="menuOpen = false"></div>
+      <div v-if="menuOpen" class="nav-menu" role="menu" aria-label="更多">
+        <button v-if="active === 'chat'" role="menuitem" @click="onLogs">日志</button>
+        <button role="menuitem" class="danger" @click="onLogout">退出</button>
+      </div>
+    </div>
   </nav>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
@@ -74,13 +92,20 @@ withDefaults(defineProps<{
   /** 传入待处理 @ 数量时显示提醒中心入口；null 表示该页面不显示 */
   mentionCount?: number | null
 }>(), { mentionCount: null })
-const emit = defineEmits<{ apps: []; mentions: [] }>()
+const emit = defineEmits<{ apps: []; mentions: []; logs: [] }>()
 
 const router = useRouter()
 const auth = useAuthStore()
 const im = useImStore()
+const menuOpen = ref(false)
+
+function onLogs() {
+  menuOpen.value = false
+  emit('logs')
+}
 
 function onLogout() {
+  menuOpen.value = false
   im.resetLocal()
   auth.logout()
   router.replace('/login')
@@ -89,34 +114,68 @@ function onLogout() {
 
 <style scoped>
 .side-nav {
-  background: #2b2c2d;
+  background: var(--sidebar-bg);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 0;
-  gap: 8px;
+  padding: 0 0 10px;
+  gap: 6px;
+  color: var(--sidebar-fg);
+  position: relative;
+  /* 抬到会话面板之上，底部「更多」菜单才能浮到右侧列上 */
+  z-index: 45;
 }
+/* 与右侧 48px 标题带等高，红绿灯就落在这块空白里 */
+.nav-drag { height: var(--titlebar-height); width: 100%; flex-shrink: 0; }
 .nav-item {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: #fff;
+  color: inherit;
   background: transparent;
   padding: 0;
   text-decoration: none;
   position: relative;
+  transition: background 0.15s, color 0.15s;
 }
-.nav-item:hover { background: rgba(255, 255, 255, 0.1); }
-.nav-item.active { background: rgba(242, 136, 35, 0.3); }
+.nav-item:hover { background: var(--sidebar-hover); color: var(--text); }
+.nav-item.active { background: var(--sidebar-active-bg); color: var(--sidebar-active-fg); }
 .nav-item svg { width: 20px; height: 20px; }
-.nav-item.logout { background: transparent; }
+.nav-more { position: relative; }
+.nav-menu-backdrop { position: fixed; inset: 0; z-index: 55; }
+.nav-menu {
+  position: absolute;
+  left: 4px;
+  bottom: calc(100% + 7px);
+  min-width: 104px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-2);
+  z-index: 60;
+}
+.nav-menu button {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+.nav-menu button:hover { background: var(--hover); }
+.nav-menu button.danger { color: var(--danger); }
 .nav-badge {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: 1px;
+  right: 1px;
   min-width: 15px;
   height: 15px;
   padding: 0 3px;

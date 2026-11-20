@@ -98,10 +98,10 @@ function stateText(task: UploadTask): string {
   z-index: 60;
   width: 320px;
   max-width: calc(100vw - 36px);
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-2);
   overflow: hidden;
   font-size: 12px;
 }
@@ -112,7 +112,7 @@ function stateText(task: UploadTask): string {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
-  background: #f7f8f9;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   user-select: none;
@@ -128,7 +128,7 @@ function stateText(task: UploadTask): string {
   cursor: pointer;
   font-size: 13px;
 }
-.mini:hover { background: #e9ebee; color: var(--text); }
+.mini:hover { background: var(--hover); color: var(--text); }
 .collapsed-body { padding: 8px 10px; }
 .task-list {
   list-style: none;
@@ -137,17 +137,17 @@ function stateText(task: UploadTask): string {
   max-height: 260px;
   overflow-y: auto;
 }
-.task { padding: 7px 0; border-bottom: 1px dashed #eef0f2; }
+.task { padding: 7px 0; border-bottom: 1px dashed var(--divider); }
 .task:last-child { border-bottom: none; }
 .task-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .task-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .task-state { flex: none; color: var(--text-muted); }
-.task-state.done { color: #2e7d32; }
+.task-state.done { color: var(--success); }
 .task-state.error { color: var(--danger); }
 .bar {
   height: 4px;
   margin-top: 5px;
-  background: #eef0f2;
+  background: var(--surface-2);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -156,21 +156,21 @@ function stateText(task: UploadTask): string {
   background: var(--primary);
   transition: width 0.2s ease;
 }
-.bar-fill.done { background: #43a047; }
+.bar-fill.done { background: var(--success); }
 .bar-fill.err { background: var(--danger); }
 .task-sub { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
 .task-dir { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .retry {
   flex: none;
   border: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--surface);
   color: var(--primary);
   padding: 1px 8px;
   border-radius: 10px;
   cursor: pointer;
   font-size: 11px;
 }
-.retry:hover { background: #eef6fb; }
+.retry:hover { background: var(--hover); }
 .task-error {
   margin-top: 4px;
   color: var(--danger);

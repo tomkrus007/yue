@@ -1302,13 +1302,13 @@ function close() {
 
 <style scoped>
 .gs-mask {
-  position: fixed; inset: 0; z-index: 85; background: #0006;
+  position: fixed; inset: 0; z-index: 85; background: var(--overlay);
   display: flex; align-items: center; justify-content: center;
 }
 .gs {
   position: relative;
   width: min(640px, 94vw); height: min(760px, 90vh);
-  background: var(--panel); border-radius: 10px;
+  background: var(--surface); border-radius: 10px;
   display: flex; flex-direction: column; overflow: hidden;
 }
 header {
@@ -1344,15 +1344,15 @@ h3 { margin: 0; font-size: 15px; }
 .name-input { max-width: 100%; font-size: 16px; font-weight: 600; }
 .sub { display: flex; align-items: center; gap: 8px; }
 .tag {
-  display: inline-block; background: #eef2f7; color: #5b6b7c;
+  display: inline-block; background: var(--chip-bg); color: var(--chip-text);
   border-radius: 4px; padding: 1px 8px; font-size: 12px;
 }
-.tag.warn { background: #fdecec; color: var(--danger); }
+.tag.warn { background: var(--danger-soft); color: var(--danger); }
 
 .rows { margin: 0; }
 .row {
   display: flex; align-items: flex-start; gap: 12px;
-  padding: 12px 2px; border-bottom: 1px solid #f0f0f0;
+  padding: 12px 2px; border-bottom: 1px solid var(--divider);
 }
 .row dt { width: 110px; flex-shrink: 0; color: var(--text-muted); font-size: 13px; padding-top: 2px; }
 .row dd { flex: 1; min-width: 0; font-size: 13px; line-height: 1.7; word-break: break-all; }
@@ -1375,30 +1375,30 @@ h3 { margin: 0; font-size: 15px; }
 .mm-list { list-style: none; }
 .mm-row {
   display: flex; align-items: center; gap: 10px;
-  padding: 8px 6px; border-bottom: 1px solid #f5f5f5;
+  padding: 8px 6px; border-bottom: 1px solid var(--divider);
 }
 .mm-row.me .mm-name { color: var(--primary); }
 .avatar {
   width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
-  background: #eaf2ff; color: #446a9e; font-weight: 600; font-size: 13px;
+  background: var(--info-soft); color: var(--info-text); font-weight: 600; font-size: 13px;
   display: flex; align-items: center; justify-content: center;
 }
 .mm-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .mm-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge {
   font-style: normal; font-size: 11px; border-radius: 4px; padding: 0 5px; margin-left: 6px;
-  background: #eef2f7; color: #5b6b7c;
+  background: var(--chip-bg); color: var(--chip-text);
 }
-.badge.owner { background: #fff0e0; color: var(--primary); }
-.badge.muted { background: #fdecec; color: var(--danger); }
+.badge.owner { background: var(--primary-soft); color: var(--primary); }
+.badge.muted { background: var(--danger-soft); color: var(--danger); }
 .mm-nick { font-size: 11px; color: var(--text-muted); }
 .mm-ops { display: flex; gap: 6px; flex-shrink: 0; }
 .mini {
-  background: #f0f2f4; color: #35506b; font-size: 11px;
+  background: var(--chip-bg); color: var(--chip-text); font-size: 11px;
   padding: 3px 8px; border-radius: 4px;
 }
 .mini.danger { color: var(--danger); }
-.mini:hover { background: #e3e7eb; }
+.mini:hover { background: var(--hover); }
 
 .invite-box { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 12px; }
 .invite-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 8px; }
@@ -1415,7 +1415,7 @@ h3 { margin: 0; font-size: 15px; }
 .bn-list { list-style: none; }
 .bn-item {
   border: 1px solid var(--border); border-radius: 8px;
-  padding: 12px; margin-bottom: 10px; background: #fcfdfe;
+  padding: 12px; margin-bottom: 10px; background: var(--bg-subtle);
 }
 .bn-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
 .star { color: var(--danger); margin-right: 4px; }
@@ -1453,11 +1453,11 @@ h3 { margin: 0; font-size: 15px; }
   max-width: 80%;
 }
 .sub-mask {
-  position: fixed; inset: 0; z-index: 96; background: #0006;
+  position: fixed; inset: 0; z-index: 96; background: var(--overlay);
   display: flex; align-items: center; justify-content: center;
 }
 .sub-box {
-  width: min(320px, 90vw); background: var(--panel);
+  width: min(320px, 90vw); background: var(--surface);
   border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
 }
 .time-opts { display: flex; flex-wrap: wrap; gap: 8px 16px; }

@@ -21,16 +21,16 @@ const label = computed(() => !im.connected ? '未连接' : im.authed ? '已鉴�
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: #b6bbc2;
+  background: var(--surface-2);
   box-sizing: border-box;
-  color: #fff;
+  color: var(--text-muted);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 600;
-  margin-bottom: 12px;
+  margin-bottom: 6px;
   flex-shrink: 0;
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, color 0.2s;
 }
-.nav-avatar.online { background: var(--primary); }
+.nav-avatar.online { background: var(--primary); color: #fff; }
 </style>

@@ -1,6 +1,6 @@
 <template>
   <div class="detail-page">
-    <header class="detail-top">
+    <header class="detail-top" data-tauri-drag-region="deep">
       <button class="secondary small" @click="router.back()">← 返回</button>
     </header>
 
@@ -137,15 +137,14 @@ function onGroupLeft() {
 
 <style scoped>
 .detail-page { height: 100%; background: var(--bg); overflow-y: auto; }
-.detail-top { padding: 12px 24px; }
+.detail-top { height: var(--titlebar-height); padding: 0 24px 0 96px; display: flex; align-items: center; }
 .small { padding: 5px 12px; font-size: 12px; }
-.secondary { background: #f0f0f0; color: var(--text); }
 .state { text-align: center; color: var(--text-muted); padding: 40px; }
 .state.error { color: var(--danger); }
 
 .detail-card {
   max-width: 760px; margin: 8px auto 40px;
-  background: var(--panel); border: 1px solid var(--border);
+  background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 24px;
 }
 .hero { display: flex; align-items: center; gap: 18px; margin-bottom: 24px; }
@@ -161,7 +160,7 @@ function onGroupLeft() {
 .hero-info h2 { font-size: 20px; margin-bottom: 6px; }
 .sub { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 13px; }
 .tag {
-  display: inline-block; background: #eef2f7; color: #5b6b7c;
+  display: inline-block; background: var(--chip-bg); color: var(--chip-text);
   border-radius: 4px; padding: 1px 8px; font-size: 12px;
 }
 .mono { font-family: Menlo, monospace; }
@@ -169,7 +168,7 @@ function onGroupLeft() {
 
 .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
 .field {
-  padding: 12px 4px; border-bottom: 1px solid #f0f0f0;
+  padding: 12px 4px; border-bottom: 1px solid var(--divider);
   display: flex; gap: 12px;
 }
 .field dt { width: 90px; color: var(--text-muted); font-size: 13px; flex-shrink: 0; }

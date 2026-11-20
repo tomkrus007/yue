@@ -58,9 +58,9 @@ function close() {
 onUnmounted(close)
 </script>
 <style scoped>
-.protected-message { background: #eef2f7; color: #35506b; padding: 12px; border-radius: 8px; }
-.read-mask { position: fixed; inset: 0; z-index: 100; background: #0009; display: grid; place-items: center; }
-.read-mask section { width: min(620px, 88vw); max-height: 80vh; overflow: auto; padding: 20px; background: var(--panel); border-radius: 12px; }
+.protected-message { background: var(--chip-bg); color: var(--chip-text); padding: 12px; border-radius: 8px; }
+.read-mask { position: fixed; inset: 0; z-index: 100; background: var(--overlay); display: grid; place-items: center; }
+.read-mask section { width: min(620px, 88vw); max-height: 80vh; overflow: auto; padding: 20px; background: var(--surface); border-radius: 12px; }
 header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 p { color: var(--danger); font-size: 12px; }
 </style>

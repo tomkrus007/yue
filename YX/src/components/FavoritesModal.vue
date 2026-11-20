@@ -76,8 +76,8 @@ onMounted(() => { searchInput.value?.focus(); void refresh() })
 </script>
 
 <style scoped>
-.modal-mask { position: fixed; inset: 0; z-index: 60; background: #0005; display: flex; align-items: center; justify-content: center; }
-.favorites-modal { width: min(760px, 90vw); height: min(80vh, 800px); display: flex; flex-direction: column; background: var(--panel); border-radius: 12px; overflow: hidden; }
+.modal-mask { position: fixed; inset: 0; z-index: 60; background: var(--overlay); display: flex; align-items: center; justify-content: center; }
+.favorites-modal { width: min(760px, 90vw); height: min(80vh, 800px); display: flex; flex-direction: column; background: var(--surface); border-radius: 12px; overflow: hidden; }
 header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
 .filters { display: flex; gap: 8px; padding: 12px 20px; }
 .filters input { flex: 1; min-width: 0; }

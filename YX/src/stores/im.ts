@@ -17,6 +17,7 @@ import {
   fetchSessions,
 } from '../services/im/session-api'
 import { messageText } from '../services/im/content'
+import { logEvent } from '../services/app-log'
 import { applyInteraction, emptyInteractions, mentionsUser, type MessageInteractions } from '../services/im/interactions'
 import { uploadForwardDetails } from '../services/im/media'
 import { MessageDelivery } from '../services/im/delivery'
@@ -1117,6 +1118,7 @@ export const useImStore = defineStore('im', () => {
     const ts = new Date().toLocaleTimeString()
     logs.value.unshift(`[${ts}] ${msg}`)
     if (logs.value.length > 100) logs.value.length = 100
+    logEvent('协议', msg)
   }
 
   /* ---------------- 会话操作 ---------------- */

@@ -121,7 +121,7 @@ watch(
 .apps-mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -130,12 +130,12 @@ watch(
 .apps-panel {
   width: min(760px, 88vw);
   height: min(78vh, 720px);
-  background: var(--panel);
+  background: var(--surface);
   border-radius: 10px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-2);
 }
 .apps-head {
   padding: 12px 18px;
@@ -169,7 +169,7 @@ watch(
   border-radius: 8px;
   cursor: pointer;
 }
-.app-tile:hover { background: #f5f7f9; }
+.app-tile:hover { background: var(--hover); }
 .app-ico {
   width: 42px;
   height: 42px;

@@ -186,14 +186,14 @@ async function send() {
 </script>
 
 <style scoped>
-.forward-mask { position: fixed; inset: 0; z-index: 70; background: #0006; display: flex; align-items: center; justify-content: center; }
-.forward-dialog { width: min(520px, 90vw); max-height: 85vh; overflow: auto; background: var(--panel); padding: 20px; border-radius: 10px; }
+.forward-mask { position: fixed; inset: 0; z-index: 70; background: var(--overlay); display: flex; align-items: center; justify-content: center; }
+.forward-dialog { width: min(520px, 90vw); max-height: 85vh; overflow: auto; background: var(--surface); padding: 20px; border-radius: 10px; }
 header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h3 { margin: 0; }
 .forward-mode { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; margin: 16px 0; padding: 0; border: 0; }
 .forward-mode legend { padding: 0; margin-bottom: 8px; font-size: 13px; color: var(--text-muted); }
 .forward-mode label { flex: 1 1 180px; display: flex; align-items: center; gap: 10px; box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
-.forward-mode label.active { border-color: var(--primary); background: #fff5eb; }
+.forward-mode label.active { border-color: var(--primary); background: var(--primary-soft); }
 .forward-mode label:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
 .forward-mode input[type='radio'] { width: 16px; height: 16px; flex: 0 0 16px; padding: 0; margin: 0; accent-color: var(--primary); }
 .forward-mode label > span { white-space: nowrap; font-size: 14px; }
@@ -215,7 +215,7 @@ p, small { color: var(--text-muted); font-size: 13px; }
   transition: background 0.15s, border-color 0.15s;
 }
 .target-row:hover { background: var(--bg); }
-.target-row.chosen { background: #fff5eb; border-color: var(--primary); }
+.target-row.chosen { background: var(--primary-soft); border-color: var(--primary); }
 .target-row:focus-within { outline: 2px solid var(--primary); outline-offset: -2px; }
 .target-row.locked { cursor: default; }
 .target-row input[type='checkbox'] {
@@ -232,19 +232,19 @@ p, small { color: var(--text-muted); font-size: 13px; }
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: #eaf2ff;
-  color: #446a9e;
+  background: var(--info-soft);
+  color: var(--info-text);
   font-size: 15px;
   font-weight: 600;
 }
-.target-avatar.group { background: #edf5ef; color: #4c7c5c; }
+.target-avatar.group { background: var(--success-soft); color: var(--success); }
 .target-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .target-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .target-meta span { min-width: 0; }
 .selected-targets { margin-top: 12px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
 .selected-heading { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
 .selected-list { display: flex; flex-wrap: wrap; gap: 8px; max-height: 160px; overflow-y: auto; }
-.selected-chip { display: flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 8px; background: #fff5eb; border-radius: 6px; }
+.selected-chip { display: flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 8px; background: var(--primary-soft); border-radius: 6px; }
 .remove-target { flex-shrink: 0; background: transparent; color: var(--text-muted); padding: 2px 6px; font-size: 18px; }
 .target-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .target-type { white-space: nowrap; padding: 3px 7px; border-radius: 4px; background: var(--bg); font-size: 11px; }
