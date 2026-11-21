@@ -17,6 +17,9 @@
           class="panel-search"
           placeholder="搜索联系人 / 群组"
           @input="onSearch"
+          @keydown.enter="onSearchEnter"
+          @keydown.down="onSearchArrow($event, 1)"
+          @keydown.up="onSearchArrow($event, -1)"
         />
       </div>
 
@@ -35,11 +38,11 @@
       <div v-if="im.searching" class="searching">搜索中…</div>
 
       <!-- 搜索结果（含未聊过的人） -->
-      <ul v-if="keyword.trim()" class="session-list">
+      <ul v-if="keyword.trim()" ref="searchListEl" class="session-list">
         <li
-          v-for="c in im.searchResults"
+          v-for="(c, index) in im.searchResults"
           :key="c.kind + ':' + c.id"
-          class="search-entry"
+          :class="['search-entry', { on: index === searchActive }]"
           @click="startChat(c)"
         >
           <ContactAvatar
@@ -777,6 +780,9 @@ function removeAttachment(key: string, id: number) {
 const msgList = ref<HTMLElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const keyword = ref('')
+/** 搜索结果键盘选中的下标；输入焦点始终留在搜索框 */
+const searchActive = ref(0)
+const searchListEl = ref<HTMLElement | null>(null)
 const historyOpen = ref(false)
 const appOpen = ref(false)
 const showLogs = ref(false)
@@ -1022,8 +1028,37 @@ watch(
 
 function onSearch() {
   if (searchTimer) clearTimeout(searchTimer)
+  searchActive.value = 0
   const v = keyword.value
   searchTimer = setTimeout(() => im.searchAll(v), 250)
+}
+
+// 结果刷新后高亮回到第一位
+watch(
+  () => im.searchResults,
+  () => {
+    searchActive.value = 0
+    void scrollSearchActive()
+  },
+)
+
+/** 上下键移动搜索结果高亮，输入焦点始终留在搜索框 */
+function onSearchArrow(event: KeyboardEvent, step: number) {
+  // 输入法用上下键翻候选时不要抢按键
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  const total = im.searchResults.length
+  if (!total) return
+  const next = Math.min(total - 1, Math.max(0, searchActive.value + step))
+  if (next === searchActive.value) return
+  searchActive.value = next
+  void scrollSearchActive()
+}
+
+async function scrollSearchActive() {
+  await nextTick()
+  const el = searchListEl.value?.children[searchActive.value] as HTMLElement | undefined
+  el?.scrollIntoView({ block: 'nearest' })
 }
 
 function openDetail(c: ContactEntry) {
@@ -1033,8 +1068,25 @@ function openDetail(c: ContactEntry) {
   })
 }
 
+/** 回车默认打开搜索结果的第一位；结果还没回来时先补一次搜索 */
+async function onSearchEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  const kw = keyword.value.trim()
+  if (!kw) return
+  event.preventDefault()
+  if (searchTimer) clearTimeout(searchTimer)
+  // 结果来自旧关键词或尚未返回时，先按当前关键词搜索一次
+  if (im.searchKeyword.trim() !== kw || !im.searchResults.length) {
+    if (im.searching) return
+    await im.searchAll(kw)
+  }
+  const first = im.searchResults[searchActive.value] || im.searchResults[0]
+  if (first) startChat(first)
+}
+
 function startChat(c: ContactEntry) {
   im.openChat(c.id, c.name, c.fromType)
+  im.bumpSessionToTop(c.id)
   keyword.value = ''
   im.searchResults = []
 }
@@ -1206,6 +1258,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 
 .searching { padding: 6px 16px; font-size: 11px; color: var(--text-muted); }
 .search-entry { cursor: pointer; }
+.search-entry.on { background: var(--selected); }
 .s-avatar { cursor: pointer; }
 .s-avatar:not(.photo) { background: var(--primary); }
 .s-avatar.group:not(.photo) { background: #4a90d9; }

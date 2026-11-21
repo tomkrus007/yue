@@ -169,6 +169,7 @@ export const STORAGE_KEYS = {
   expiresAt: 'expires_at',
   imSessions: 'yl.im.sessions',
   imHiddenSessions: 'yl.im.hiddenSessions',
+  imSessionBoosts: 'yl.im.sessionBoosts',
   imMessages: 'yl.im.messages',
   imUnread: 'yl.im.unread',
   imUnreadAt: 'yl.im.unreadAt',

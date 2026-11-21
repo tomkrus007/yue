@@ -164,6 +164,11 @@ export const useImStore = defineStore('im', () => {
   const sessions = ref<ChatSession[]>([])
   const currentSessionId = ref('')
   const hiddenSessions = ref<Record<string, number>>({})
+  /**
+   * 从搜索结果打开的会话 id → 打开时间。列表按 max(lastTime, boost) 排序，
+   * 让刚选中的联系人置顶；之后有新消息自然接管，无需额外清理。
+   */
+  const sessionBoosts = ref<Record<string, number>>({})
   // 只有消息页所在窗口位于前台，才把当前会话视为正在阅读。
   const chatActive = ref(false)
   const sending = ref(false)
@@ -257,6 +262,11 @@ export const useImStore = defineStore('im', () => {
         lastTime: Number(s.lastTime) || 0,
         hasLocal: Boolean(s.hasLocal),
       }),
+    )
+    // 只保留仍存在的会话的置顶记录，避免本地缓存无限增长
+    const savedBoosts = readJson<Record<string, number>>(STORAGE_KEYS.imSessionBoosts, {})
+    sessionBoosts.value = Object.fromEntries(
+      Object.entries(savedBoosts).filter(([id]) => sessions.value.some((s) => s.id === id)),
     )
     const stored = readJson<ChatMessage[]>(STORAGE_KEYS.imMessages, [])
     messages.value = Array.isArray(stored) ? stored : []
@@ -1098,9 +1108,11 @@ export const useImStore = defineStore('im', () => {
     friends.value = []
     groups.value = []
     searchResults.value = []
+    sessionBoosts.value = {}
     for (const key of [
       STORAGE_KEYS.imSessions,
       STORAGE_KEYS.imHiddenSessions,
+      STORAGE_KEYS.imSessionBoosts,
       STORAGE_KEYS.imMessages,
       STORAGE_KEYS.imUnread,
       STORAGE_KEYS.imUnreadAt,
@@ -1160,10 +1172,14 @@ export const useImStore = defineStore('im', () => {
     return { roots, groups }
   })
 
+  /** 会话排序时间：从搜索结果打开的会话按打开时间置顶，新消息到达后自然回落 */
+  const sessionSortTime = (s: ChatSession) =>
+    Math.max(s.lastTime || 0, sessionBoosts.value[s.id] || 0)
+
   const sortedSessions = computed(() =>
     sessions.value
       .filter((s) => !(s.id in hiddenSessions.value))
-      .sort((a, b) => (b.lastTime || 0) - (a.lastTime || 0)),
+      .sort((a, b) => sessionSortTime(b) - sessionSortTime(a)),
   )
 
   const tabDefs: Array<{
@@ -1244,6 +1260,12 @@ export const useImStore = defineStore('im', () => {
     if (s && !hasLocal) {
       loadHistory(id).catch((e) => log('历史加载失败：' + e.message))
     }
+  }
+
+  /** 从搜索结果选中联系人后，让该会话在列表内置顶 */
+  function bumpSessionToTop(id: string): void {
+    sessionBoosts.value[id] = Date.now()
+    writeJson(STORAGE_KEYS.imSessionBoosts, sessionBoosts.value)
   }
 
   function openChat(
@@ -1607,6 +1629,7 @@ export const useImStore = defineStore('im', () => {
     log,
     selectSession,
     removeSession,
+    bumpSessionToTop,
     setChatActive,
     setTab,
     clearUnread,
