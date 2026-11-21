@@ -91,7 +91,7 @@ async function reloadDetails() {
 </script>
 <style scoped>
 .message-envelope { min-width: 100px; }
-.bubble-row { display: flex; gap: 5px; align-items: center; min-width: 0; }
+.bubble-row { display: flex; gap: 2px; align-items: flex-end; min-width: 0; }
 .mine .bubble-row { justify-content: flex-end; }
 .bubble { padding: 10px 14px; background: var(--bubble-other); border: 1px solid var(--border); border-radius: 10px; min-width: 0; max-width: 100%; font-size: 14px; text-align: left; }
 .mine .bubble { background: var(--bubble-me); }

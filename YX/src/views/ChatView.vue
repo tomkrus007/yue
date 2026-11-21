@@ -1333,7 +1333,7 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .msg.mine { justify-content: flex-end; }
 .msg.mine.message-selectable > input { margin-right: auto; }
 .msg.theirs { justify-content: flex-start; }
-.msg-body { max-width: 72%; }
+.msg-body { max-width: 95%; }
 .msg.mine .msg-body { text-align: right; }
 .msg-name { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
 .history-btn { margin-top: 10px; }

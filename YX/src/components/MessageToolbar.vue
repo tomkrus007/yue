@@ -51,10 +51,10 @@ const visibleActions = computed(() => actions.filter(action => {
 async function toggle() {
   if (opened.value) return close()
   const rect = trigger.value!.getBoundingClientRect()
-  const width = Math.min(440, window.innerWidth - 24)
+  const width = Math.min(280, window.innerWidth - 24)
   position.value = {
     left: `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`,
-    top: `${Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 350))}px`,
+    top: `${Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 260))}px`,
   }
   opened.value = true
   await nextTick()
@@ -73,19 +73,22 @@ onUnmounted(() => window.removeEventListener('resize', close))
 </script>
 
 <style scoped>
-.message-more { background: transparent; color: var(--text-muted); padding: 2px 6px; font-size: 22px; line-height: 24px; flex-shrink: 0; border-radius: 6px; }
+.message-more { background: transparent; color: var(--text-muted); padding: 1px 4px; font-size: 16px; line-height: 18px; flex-shrink: 0; border-radius: 4px; }
 .message-more:hover { background: var(--hover); color: var(--text); }
 .message-toolbar-backdrop { position: fixed; inset: 0; z-index: 65; }
-.message-toolbar { position: absolute; width: min(440px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-2); outline: none; }
-.message-toolbar button { background: transparent; color: inherit; border-radius: 8px; padding: 8px 2px; }
+.message-toolbar { position: absolute; width: min(280px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-2); outline: none; }
+.message-toolbar button { background: transparent; color: inherit; border-radius: 6px; padding: 5px 2px; }
 .message-toolbar button:hover, .message-toolbar button.chosen { background: var(--hover); }
-.emoji-row { display: grid; grid-template-columns: repeat(7, 1fr); padding: 14px 10px; gap: 2px; }
-.emoji-row button { font-size: 29px; }
-.emoji-row .emoji-more { font-size: 36px; line-height: 1; }
-.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); padding: 0 10px 12px; }
-.emoji-grid button { font-size: 24px; }
-.action-row { display: grid; grid-template-columns: repeat(6, 1fr); border-top: 1px solid var(--border); padding: 12px 8px 4px; gap: 2px; }
-.action-row button { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 13px; }
-.action-row svg { width: 27px; height: 27px; }
-.message-toolbar p { font-size: 11px; text-align: center; color: var(--text-muted); margin: 6px 0 10px; }
+.emoji-row { display: grid; grid-template-columns: repeat(7, 1fr); padding: 8px 6px; gap: 2px; }
+.emoji-row button { font-size: 20px; }
+.emoji-row :deep(.official-face) { width: 20px; height: 20px; vertical-align: middle; }
+.emoji-row .emoji-more { font-size: 26px; line-height: 1; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); padding: 0 6px 6px; }
+.emoji-grid button { font-size: 18px; }
+.emoji-grid :deep(.official-face) { width: 18px; height: 18px; vertical-align: middle; }
+.action-row { display: flex; align-items: flex-start; border-top: 1px solid var(--border); padding: 8px 4px 2px; }
+.action-row button { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px 1px; font-size: 10px; }
+.action-row button span { max-width: 100%; text-align: center; line-height: 1.15; }
+.action-row svg { width: 18px; height: 18px; flex-shrink: 0; }
+.message-toolbar p { font-size: 10px; text-align: center; color: var(--text-muted); margin: 2px 0 6px; }
 </style>
