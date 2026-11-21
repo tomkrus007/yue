@@ -1,5 +1,5 @@
 <template>
-  <div class="msg-content">
+  <div class="msg-content" @click="onContentClick">
     <!-- 合并转发：默认展开，仍可手动收起 -->
     <details v-if="msgType === MsgType.COMBINE && (depth || 0) < 8" class="combine" :open="!!rows.length" @toggle="onCombineToggle">
       <summary>{{ replaceEmojiAliases(combineText) }}</summary>
@@ -80,6 +80,7 @@
       <span v-else class="ph">[非文本消息]</span>
     </template>
     <p v-if="todoError" class="todo-error" role="alert">{{ todoError }}</p>
+    <p v-if="linkError" class="todo-error" role="alert">{{ linkError }}</p>
     <p v-if="fileError" class="todo-error" role="alert">{{ fileError }}</p>
   </div>
 </template>
@@ -113,6 +114,7 @@ import MessageMedia from './MessageMedia.vue'
 import DownloadButton from './DownloadButton.vue'
 import { useDownloadsStore } from '../stores/downloads'
 import { openTodoInBrowser, resolveTodoNotice, todoTarget, todoUrl } from '../services/im/todo'
+import { msgLinkHref } from '../services/im/autolink'
 
 const AdaptiveMessage = defineAsyncComponent(() => import('./AdaptiveMessage.vue'))
 const router = useRouter()
@@ -143,8 +145,26 @@ async function openSpecialCard() {
 }
 const openingTodo = ref(false)
 const todoError = ref('')
+const linkError = ref('')
 const openingFile = ref(false)
 const fileError = ref('')
+
+/** 正文里的链接统一交给系统浏览器，避免 WebView 把应用导航到外部页面。 */
+async function onContentClick(event: MouseEvent) {
+  const href = msgLinkHref(event.target)
+  if (!href) return
+  event.preventDefault()
+  event.stopPropagation()
+  // 拖选文本结束时也会触发 click，别在选中文字时误开浏览器。
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed) return
+  linkError.value = ''
+  try {
+    await openUrl(href)
+  } catch {
+    linkError.value = '打开链接失败，请重试'
+  }
+}
 
 async function previewFile(seg: ImageMeta) {
   if (openingFile.value) return
@@ -241,6 +261,7 @@ function download(seg: ImageMeta) {
 
 <style scoped>
 .msg-content :deep(.official-face) { width: 24px; height: 24px; vertical-align: middle; display: inline-block; }
+.msg-content :deep(.msg-link) { color: var(--link); text-decoration: underline; cursor: pointer; }
 .msg-content { word-break: break-word; line-height: 1.5; text-align: left; white-space: pre-wrap; }
 .msg-content :deep(.html) { display: block; }
 .msg-content :deep(.html div),

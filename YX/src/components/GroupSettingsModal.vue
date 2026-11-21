@@ -1335,7 +1335,7 @@ h3 { margin: 0; font-size: 15px; }
 
 .hero { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
 .big-avatar {
-  width: 60px; height: 60px; border-radius: 12px; flex-shrink: 0;
+  width: 60px; height: 60px; border-radius: 50%; flex-shrink: 0;
   background: #4a90d9; color: #fff; font-size: 26px; font-weight: 700;
   display: flex; align-items: center; justify-content: center;
 }
@@ -1379,7 +1379,7 @@ h3 { margin: 0; font-size: 15px; }
 }
 .mm-row.me .mm-name { color: var(--primary); }
 .avatar {
-  width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
   background: var(--info-soft); color: var(--info-text); font-weight: 600; font-size: 13px;
   display: flex; align-items: center; justify-content: center;
 }

@@ -231,7 +231,7 @@ p, small { color: var(--text-muted); font-size: 13px; }
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: 50%;
   background: var(--info-soft);
   color: var(--info-text);
   font-size: 15px;

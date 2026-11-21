@@ -257,13 +257,15 @@ function onGroupCreated(group: { id: string; name: string }) {
 .entry:hover { background: var(--bg-subtle); }
 .entry.active { background: var(--bg-subtle); border-color: var(--primary); }
 .avatar {
-  width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0;
-  background: var(--primary); color: #fff; cursor: pointer;
+  width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+  color: #fff; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   font-weight: 600; font-size: 15px;
 }
-.avatar.user { background: var(--primary); }
-.avatar.group { background: #4a90d9; }
+.avatar:not(.photo) { background: var(--primary); }
+.avatar.user:not(.photo) { background: var(--primary); }
+.avatar.group:not(.photo) { background: #4a90d9; }
+.avatar.photo { background: transparent; border: none; }
 .info { flex: 1; min-width: 0; }
 .name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .search-entry .name-row { flex-direction: column; align-items: flex-start; gap: 2px; }

@@ -174,14 +174,14 @@ function kindLabel(k: string): string {
 .hero { display: flex; align-items: center; gap: 18px; margin-bottom: 24px; }
 .hero-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .big-avatar {
-  width: 72px; height: 72px; border-radius: 12px;
+  width: 72px; height: 72px; border-radius: 50%;
   background: var(--primary); color: #fff;
   display: flex; align-items: center; justify-content: center;
   font-size: 30px; font-weight: 700;
 }
 .big-avatar.group { background: #4a90d9; }
-.big-avatar.photo { padding: 0; overflow: hidden; cursor: zoom-in; background: var(--surface-2); }
-.big-avatar.photo:hover { background: var(--surface-2); }
+.big-avatar.photo { padding: 0; overflow: hidden; cursor: zoom-in; background: transparent; }
+.big-avatar.photo:hover { background: transparent; }
 .big-avatar.photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .hero-info { flex: 1; }
 .hero-info h2 { font-size: 20px; margin-bottom: 6px; }

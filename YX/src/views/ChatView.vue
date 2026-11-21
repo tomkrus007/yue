@@ -236,7 +236,25 @@
               </div>
             </div>
           </div>
-          <button v-if="!nearBottom || messageWindowEnd < allVisibleMessages.length" class="new-messages" @click="scrollToLatest">{{ newMessageCount ? `${newMessageCount} 条新消息 · ` : '' }}返回最新消息</button>
+          <button v-if="showScrollTop" class="jump-btn to-top" title="回到顶部" aria-label="回到顶部" @click="scrollToTop">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m6 13 6-6 6 6" />
+              <path d="m6 19 6-6 6 6" />
+            </svg>
+          </button>
+          <button
+            v-if="!nearBottom || messageWindowEnd < allVisibleMessages.length"
+            class="jump-btn to-latest"
+            :title="latestButtonTitle"
+            :aria-label="latestButtonTitle"
+            @click="scrollToLatest"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m6 5 6 6 6-6" />
+              <path d="m6 11 6 6 6-6" />
+            </svg>
+            <span v-if="newMessageCount" class="jump-badge">{{ newMessageCount > 99 ? '99+' : newMessageCount }}</span>
+          </button>
         </div>
         <div v-if="selecting" class="forward-toolbar">
           <span>已选 <strong>{{ selectedMessages.length }}</strong> 条消息 / 文件</span>
@@ -494,6 +512,9 @@ const locating = ref(false)
 const highlightedMessageId = ref('')
 const nearBottom = ref(true)
 const newMessageCount = ref(0)
+/** 顶部回顶按钮只在离开顶部一定距离后出现，避免长会话里一直浮着。 */
+const showScrollTop = ref(false)
+const latestButtonTitle = computed(() => newMessageCount.value ? `${newMessageCount.value} 条新消息 · 返回最新消息` : '返回最新消息')
 const adminRecallable = computed(() => im.currentSession?.type === 2 && Number(im.groupDetails.get(im.currentSessionId)?.memberRole || 0) > 0)
 function protectedMessage(message: ImMessage): boolean {
   return String(message.is_need_read_receipt) === 'true' || String(message.is_delete_after_read) === 'true'
@@ -590,6 +611,7 @@ async function locateMessage(id: string) {
 function onMessageScroll() {
   const element = msgList.value
   if (!element) return
+  showScrollTop.value = element.scrollTop > 200
   const atLatest = !messageWindowEndId.value || messageWindowEndId.value === allVisibleMessages.value[allVisibleMessages.value.length - 1]?.msg_id
   nearBottom.value = atLatest && element.scrollHeight - element.scrollTop - element.clientHeight < 80
   if (nearBottom.value) { messageWindowEndId.value = ''; newMessageCount.value = 0 }
@@ -601,6 +623,10 @@ async function scrollToLatest() {
   newMessageCount.value = 0
   await nextTick()
   if (msgList.value) msgList.value.scrollTop = msgList.value.scrollHeight
+  showScrollTop.value = false
+}
+function scrollToTop() {
+  msgList.value?.scrollTo({ top: 0, behavior: 'smooth' })
 }
 interface PendingAttachment {
   id: number
@@ -968,6 +994,7 @@ watch(
     if (msgList.value) msgList.value.scrollTop = msgList.value.scrollHeight
     nearBottom.value = true
     newMessageCount.value = 0
+    showScrollTop.value = false
     replyThreadId.value = ''
     messageWindowEndId.value = ''
     highlightedMessageId.value = ''
@@ -1180,7 +1207,9 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .searching { padding: 6px 16px; font-size: 11px; color: var(--text-muted); }
 .search-entry { cursor: pointer; }
 .s-avatar { cursor: pointer; }
-.s-avatar.group { background: #4a90d9; }
+.s-avatar:not(.photo) { background: var(--primary); }
+.s-avatar.group:not(.photo) { background: #4a90d9; }
+.s-avatar.photo { background: transparent; border: none; }
 .s-name-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .search-entry .s-name { white-space: normal; overflow-wrap: anywhere; }
 .s-company {
@@ -1202,13 +1231,13 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .session-list li:hover { background: var(--hover); }
 .session-list li.active { background: var(--selected); }
 .s-avatar {
-  width: 36px; height: 36px; border-radius: 6px;
-  background: var(--primary); color: #fff;
+  width: 36px; height: 36px; border-radius: 50%;
+  color: #fff;
   display: flex; align-items: center; justify-content: center;
   font-weight: 600; flex-shrink: 0;
 }
-.s-avatar.t2, .s-avatar.t4, .s-avatar.t8 { background: #4a90d9; }
-.s-avatar.t5 { background: #7e8a97; }
+.s-avatar.t2:not(.photo), .s-avatar.t4:not(.photo), .s-avatar.t8:not(.photo) { background: #4a90d9; }
+.s-avatar.t5:not(.photo) { background: #7e8a97; }
 .s-info { flex: 1; min-width: 0; }
 .s-name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pin { font-size: 11px; }
@@ -1468,7 +1497,40 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .composer-actions label { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; white-space: nowrap; }
 .composer-actions label input { width: auto; }
 .message-located { background: var(--warning-soft); border-radius: 8px; outline: 2px solid var(--primary); }
-.new-messages { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2; margin: 0; background: var(--info-soft); color: var(--info-text); box-shadow: var(--shadow-1); }
+/* 滚动辅助按钮：贴在消息区右侧滚动条旁，图标按钮不打断阅读 */
+.jump-btn {
+  position: absolute;
+  right: 16px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+.jump-btn:hover { opacity: 1; background: var(--hover); color: var(--text); }
+.jump-btn svg { width: 16px; height: 16px; display: block; }
+.jump-btn.to-top { top: 12px; }
+.jump-btn.to-latest { bottom: 12px; }
+.jump-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
 </style>
 
 <style scoped>

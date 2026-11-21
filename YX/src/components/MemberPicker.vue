@@ -311,7 +311,7 @@ h3 { margin: 0; font-size: 15px; }
 .row input[type='checkbox'] { width: 16px; height: 16px; padding: 0; margin: 0; accent-color: var(--primary); }
 .avatar {
   display: flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; border-radius: 8px;
+  width: 30px; height: 30px; border-radius: 50%;
   background: var(--info-soft); color: var(--info-text); font-weight: 600; font-size: 13px;
 }
 .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

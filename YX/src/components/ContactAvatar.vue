@@ -51,7 +51,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.avatar-box.photo { overflow: hidden; background: var(--surface-2); }
+.avatar-box.photo { overflow: hidden; background: transparent; }
 .avatar-box img {
   width: 100%; height: 100%;
   object-fit: cover; display: block;
