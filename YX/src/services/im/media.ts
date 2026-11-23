@@ -313,7 +313,6 @@ export async function filePreviewUrl(seg: ImageMeta): Promise<string> {
   }
   const url = new URL(result.r)
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('预览地址无效')
-  if (!url.searchParams.has('furl')) return url.href
   const eCode = localStorage.getItem('CurrentECode') || ''
   const uam = getServerPaths().uamApiUri.replace(/\/+$/, '')
   if (!eCode || !uam) return url.href
