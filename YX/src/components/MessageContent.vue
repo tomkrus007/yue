@@ -52,6 +52,13 @@
             <button v-if="todoTarget(seg.action) || todoUrl(seg.action)" class="card-action" title="在系统默认浏览器中打开" :disabled="openingTodo" @click.stop="openTodo(seg)">{{ openingTodo ? '正在打开…' : '查看' + (todoTarget(seg.action)?.tab === 'read' ? '待阅' : todoTarget(seg.action)?.tab === 'done' ? '已办' : '待办') }}</button>
             <AdaptiveMessage v-else-if="seg.action" :content="complexCardAction(seg)" :action-context="actionContext" />
           </div>
+          <div v-else-if="seg.type === 'meeting'" class="message-card">
+            <strong>🎥 {{ seg.title }}</strong>
+            <span class="meeting-detail">{{ seg.detail }}</span>
+            <button class="card-action" :disabled="joiningMeeting === seg.code" @click.stop="joinMeeting(seg.code)">
+              {{ joiningMeeting === seg.code ? '正在加入…' : '加入会议' }}
+            </button>
+          </div>
           <span
             v-else-if="seg.type === 'text'"
             :class="{ html: isHtml(seg), ph: isPlaceholder(seg.text, segments.length) }"
@@ -81,6 +88,7 @@
     </template>
     <p v-if="todoError" class="todo-error" role="alert">{{ todoError }}</p>
     <p v-if="linkError" class="todo-error" role="alert">{{ linkError }}</p>
+    <p v-if="meetingError" class="todo-error" role="alert">{{ meetingError }}</p>
     <p v-if="fileError" class="todo-error" role="alert">{{ fileError }}</p>
   </div>
 </template>
@@ -113,6 +121,7 @@ import MessageImage from './MessageImage.vue'
 import MessageMedia from './MessageMedia.vue'
 import DownloadButton from './DownloadButton.vue'
 import { useDownloadsStore } from '../stores/downloads'
+import { useWeMeetStore } from '../stores/wemeet'
 import { openTodoInBrowser, resolveTodoNotice, todoTarget, todoUrl } from '../services/im/todo'
 import { msgLinkHref } from '../services/im/autolink'
 
@@ -143,9 +152,26 @@ async function openSpecialCard() {
   try { if (specialCard.value?.url) await openUrl(specialCard.value.url) }
   catch { fileError.value = '打开链接失败，请重试' }
 }
+
+/** 会议邀请卡片：拿会议号直接入会（与官方的 [JoinWeMeet] 行为一致）。 */
+async function joinMeeting(code: string) {
+  if (!code || joiningMeeting.value) return
+  joiningMeeting.value = code
+  meetingError.value = ''
+  try {
+    await useWeMeetStore().joinMeeting(code)
+  } catch (error) {
+    meetingError.value = error instanceof Error ? error.message : '加入会议失败'
+  } finally {
+    joiningMeeting.value = ''
+  }
+}
+
 const openingTodo = ref(false)
 const todoError = ref('')
 const linkError = ref('')
+const meetingError = ref('')
+const joiningMeeting = ref('')
 const openingFile = ref(false)
 const fileError = ref('')
 
@@ -269,6 +295,7 @@ function download(seg: ImageMeta) {
 .msg-content .ph { color: var(--text-muted); }
 .message-card { display: flex; flex-direction: column; gap: 8px; min-width: 200px; padding: 8px; }
 .message-card details { font-size: 13px; }
+.meeting-detail { color: var(--text-muted); font-size: 12px; }
 .card-action { align-self: flex-start; color: var(--link); border: 0; background: transparent; padding: 4px 0; cursor: pointer; }
 .todo-error { color: var(--danger); font-size: 12px; margin-top: 8px; }
 .filechip {

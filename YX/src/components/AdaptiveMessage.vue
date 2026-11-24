@@ -16,6 +16,7 @@ import { compatibleCardActions, planCardActions, type CardActionContext } from '
 import { getServerPaths } from '../services/config'
 import { loadApps } from '../services/app-client'
 import { useImStore } from '../stores/im'
+import { useWeMeetStore } from '../stores/wemeet'
 import { favoriteMessage } from '../services/im/favorites'
 import { resolveTodoNotice } from '../services/im/todo'
 const props = defineProps<{ content: any; actionContext?: CardActionContext }>()
@@ -42,6 +43,17 @@ async function execute(value: string, title = '') {
         const url = new URL(cardHttpUrl(app.url))
         for (const [key, value] of Object.entries(plan.params)) if (!['appCode', 'appUrl', 'pcNoTitleWindow'].includes(key)) url.searchParams.set(key, value)
         await openUrl(url.href)
+        break
+      }
+      case 'meeting': {
+        const meeting = useWeMeetStore()
+        if (plan.code) {
+          status.value = '正在加入会议…'
+          await meeting.joinMeeting(plan.code)
+          status.value = '已发起入会请求'
+        } else {
+          await meeting.openHome()
+        }
         break
       }
       case 'chat':

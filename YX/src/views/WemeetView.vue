@@ -10,6 +10,9 @@
         </div>
         <div class="head-actions">
           <span :class="['pill', stateClass]">{{ stateLabel }}</span>
+          <button v-if="wemeet.inMeeting && wemeet.meetingCode" class="small secondary" :disabled="inviting" @click="pickerOpen = true">
+            邀请同事
+          </button>
           <button v-if="wemeet.inMeeting" class="small" @click="act(wemeet.bringTop)">
             回到会议
           </button>
@@ -70,7 +73,13 @@
             <span>会议</span>
             <b>{{ wemeet.inMeeting ? '进行中' : '未在会议中' }}</b>
           </div>
+          <div class="field">
+            <span>会议号</span>
+            <b>{{ wemeet.meetingCode || '—' }}</b>
+          </div>
         </div>
+
+        <p v-if="note" class="hint" role="status">{{ note }}</p>
 
         <details class="events">
           <summary>原生事件（{{ wemeet.events.length }}）</summary>
@@ -85,18 +94,47 @@
         </details>
       </section>
     </main>
+
+    <MemberPicker
+      v-if="pickerOpen"
+      :open="pickerOpen"
+      title="选择要邀请的同事"
+      source="contacts"
+      @close="pickerOpen = false"
+      @confirm="confirmInvitees"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import SideNav from '../components/SideNav.vue'
+import MemberPicker from '../components/MemberPicker.vue'
+import type { PickedMember } from '../components/MemberPicker.vue'
 import { useWeMeetStore } from '../stores/wemeet'
 import { authService } from '../services/auth'
 
 const wemeet = useWeMeetStore()
 const busy = ref(false)
 const meetingCode = ref('')
+const pickerOpen = ref(false)
+const inviting = ref(false)
+const note = ref('')
+
+async function confirmInvitees(items: PickedMember[]) {
+  pickerOpen.value = false
+  if (!items.length) return
+  inviting.value = true
+  note.value = ''
+  try {
+    const sent = await wemeet.inviteToMeeting(items)
+    note.value = sent ? `已向 ${sent} 人发送邀请` : '没有可邀请的人'
+  } catch (error) {
+    note.value = error instanceof Error ? error.message : '发送邀请失败'
+  } finally {
+    inviting.value = false
+  }
+}
 
 const displayName = authService.getCurrentUserName() || 'YX'
 

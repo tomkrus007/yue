@@ -13,6 +13,9 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { authService } from '../services/auth'
+import { videoChatInviteContent } from '../services/im/wemeet-invite'
+import { MsgType } from '../services/im/types'
+import { useImStore } from './im'
 import {
   fetchWeMeetAccount,
   listenWeMeetEvent,
@@ -44,6 +47,8 @@ interface Waiter {
 export const useWeMeetStore = defineStore('wemeet', () => {
   const state = ref<WeMeetState>('idle')
   const inMeeting = ref(false)
+  /** 当前会议号（OnJoinMeeting 回调带回），用于发送邀请 */
+  const meetingCode = ref('')
   const error = ref('')
   const events = ref<WeMeetEvent[]>([])
 
@@ -115,14 +120,22 @@ export const useWeMeetStore = defineStore('wemeet', () => {
         error.value = `会议组件异常：${e.msg || e.code}`
         break
       case 'OnJoinMeeting':
-        if (e.code === '0') inMeeting.value = true
+        if (e.code === '0') {
+          inMeeting.value = true
+          // 快速会议只有回调里才有会议号，邀请要用它
+          if (e.param) meetingCode.value = e.param
+        }
         break
       case 'OnLeaveMeeting':
-        if (e.code === '0') inMeeting.value = false
+        if (e.code === '0') {
+          inMeeting.value = false
+          meetingCode.value = ''
+        }
         break
       case 'OnLogout':
         state.value = 'idle'
         inMeeting.value = false
+        meetingCode.value = ''
         break
       default:
         break
@@ -150,6 +163,7 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     const wasReady = state.value !== 'idle'
     state.value = 'idle'
     inMeeting.value = false
+    meetingCode.value = ''
     if (wasReady) {
       // 释放失败不影响退出流程
       void wemeetRelease().catch(() => {})
@@ -227,12 +241,62 @@ export const useWeMeetStore = defineStore('wemeet', () => {
 
   /** 加入指定会议。默认关麦克风/摄像头，与官方入会一致。 */
   async function joinMeeting(code: string): Promise<void> {
-    const meetingCode = code.trim()
-    if (!meetingCode) throw new Error('请填写会议号')
+    const target = code.trim()
+    if (!target) throw new Error('请填写会议号')
     await ensureReady()
-    await wemeetJoin(meetingCode, displayName()).catch((e) => {
+    await wemeetJoin(target, displayName()).catch((e) => {
       throw fail(e)
     })
+  }
+
+  /** 逐个发送 msg_type 15 会议邀请，返回实际发送条数。 */
+  function sendInvites(invitees: { id: string; name: string }[], code: string): number {
+    const im = useImStore()
+    const meId = authService.getCurrentUserId()
+    const meName = displayName()
+    const title = `${meName}发起的视频会议`
+    let sent = 0
+    for (const item of invitees) {
+      const id = String(item.id || '').trim()
+      if (!id || id === meId) continue
+      im.sendStructured(
+        { id, name: item.name || id, type: 1 },
+        MsgType.VIDEOCHAT,
+        videoChatInviteContent(code, title, meId, meName),
+      )
+      sent++
+    }
+    return sent
+  }
+
+  /**
+   * 快速会议 → 等 `OnJoinMeeting` 拿到会议号 → 给选中的人发邀请。
+   * 与官方 `joinWeMeetCallback` 的流程一致。
+   */
+  async function startMeetingAndInvite(
+    invitees: { id: string; name: string }[],
+  ): Promise<{ code: string; sent: number }> {
+    await ensureReady()
+    const joined = waitEvent((e) => e.func === 'OnJoinMeeting', 60000, '发起会议')
+    // 提前失败（quick 调用抛错）时 joined 不会被 await，先挂个兜底避免未处理拒绝
+    joined.catch(() => {})
+    await wemeetQuick('网络会议').catch((e) => {
+      throw fail(e)
+    })
+    const evt = await joined
+    if (evt.code !== '0') throw fail(`发起会议失败：${evt.msg || evt.code}`)
+    const code = (evt.param || '').trim()
+    meetingCode.value = code
+    await wemeetBringTop().catch(() => {})
+    if (!code) throw fail('会议已开始，但没拿到会议号，邀请未发送')
+    return { code, sent: sendInvites(invitees, code) }
+  }
+
+  /** 向指定同事发送当前会议的邀请；返回发送条数。 */
+  async function inviteToMeeting(invitees: { id: string; name: string }[]): Promise<number> {
+    const code = meetingCode.value
+    if (!code) throw new Error('还没有会议号：先发起会议，再邀请同事')
+    return sendInvites(invitees, code)
   }
 
   /** 把会中窗口拉到最前（会议中切回 YX 后使用）。 */
@@ -249,6 +313,7 @@ export const useWeMeetStore = defineStore('wemeet', () => {
   return {
     state,
     inMeeting,
+    meetingCode,
     error,
     events,
     start,
@@ -257,6 +322,8 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     openHome,
     quickMeeting,
     joinMeeting,
+    startMeetingAndInvite,
+    inviteToMeeting,
     bringTop,
     clearError,
   }

@@ -195,6 +195,14 @@
             </button>
             <button v-if="im.currentSession.type === 1" class="small secondary" @click="groupChatOpen = true">群聊</button>
             <button class="small secondary" @click="historyOpen = true">历史</button>
+            <button
+              v-if="[1, 2, 4, 8].includes(im.currentSession.type)"
+              class="small secondary"
+              :disabled="meetingBusy || !im.authed"
+              @click="startVideoMeeting"
+            >
+              {{ meetingBusy ? '会议启动中…' : '视频会议' }}
+            </button>
             <button v-if="[2, 4, 8].includes(im.currentSession.type)" class="small secondary" :disabled="locating" @click="mentionsOpen = true">待处理@（{{ currentPendingMentions.length }}）</button>
             <button
               v-if="drawerAllowed"
@@ -409,6 +417,16 @@
       @created="onGroupChatCreated"
     />
 
+    <!-- 群/部门会话发起会议：先选邀请人 -->
+    <MemberPicker
+      v-if="meetingPickerOpen"
+      :open="meetingPickerOpen"
+      title="选择要邀请的同事"
+      source="contacts"
+      @close="meetingPickerOpen = false"
+      @confirm="confirmMeetingInvitees"
+    />
+
     <ImageGallery v-if="previewUrl" :images="galleryImages" :initial-index="galleryIndex" :initial-url="previewUrl" :initial-name="previewName" @close="previewUrl = ''" />
 
     <!-- 应用日志：协议 + 登录 + console + 未捕获异常 -->
@@ -480,8 +498,11 @@ import MentionCenter from '../components/MentionCenter.vue'
 import ReceiptModal from '../components/ReceiptModal.vue'
 import GroupSettingsModal from '../components/GroupSettingsModal.vue'
 import CreateGroupModal from '../components/CreateGroupModal.vue'
+import MemberPicker from '../components/MemberPicker.vue'
+import type { PickedMember } from '../components/MemberPicker.vue'
 import { groupService } from '../services/group-client'
 import { FromType } from '../services/im/types'
+import { useWeMeetStore } from '../stores/wemeet'
 
 const auth = useAuthStore()
 const im = useImStore()
@@ -527,6 +548,43 @@ const actionError = ref('')
 // 操作提示属于当前会话，切换会话后不保留。
 watch(() => im.currentSessionId, () => { actionError.value = '' })
 const actionPending = ref(false)
+const wemeet = useWeMeetStore()
+const meetingBusy = ref(false)
+const meetingPickerOpen = ref(false)
+
+/**
+ * 聊天里发起视频会议：单聊直接邀请对方，群/部门会话先选人。
+ * 会议号由 SDK 的 `OnJoinMeeting` 回调带回，拿到后再发邀请。
+ */
+function startVideoMeeting() {
+  const session = im.currentSession
+  if (!session || meetingBusy.value) return
+  if (session.type === 1) {
+    void inviteToVideoMeeting([{ id: session.id, name: session.name }])
+  } else {
+    meetingPickerOpen.value = true
+  }
+}
+
+function confirmMeetingInvitees(items: PickedMember[]) {
+  meetingPickerOpen.value = false
+  if (items.length) void inviteToVideoMeeting(items)
+}
+
+async function inviteToVideoMeeting(invitees: { id: string; name: string }[]) {
+  meetingBusy.value = true
+  actionError.value = ''
+  try {
+    const { sent } = await wemeet.startMeetingAndInvite(invitees)
+    actionError.value = sent
+      ? `会议已开始，已向 ${sent} 人发送邀请`
+      : '会议已开始，但没有可邀请的人'
+  } catch (error) {
+    actionError.value = (error instanceof Error ? error.message : '发起会议失败，请重试').replace(/https?:\/\/[^\s)]+/g, '[请求地址]')
+  } finally {
+    meetingBusy.value = false
+  }
+}
 const favoritesOpen = ref(false)
 const replyThreadId = ref('')
 const receiptMessage = ref<ImMessage | null>(null)

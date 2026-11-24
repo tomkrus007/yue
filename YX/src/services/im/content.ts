@@ -7,6 +7,7 @@
  */
 import { MsgType } from './types'
 import { appendFaceText } from './official-face'
+import { parseMeetingCard, parseVideoChatInvite } from './wemeet-invite'
 import type { ImMessage } from './im-client'
 
 export interface ImageMeta {
@@ -21,6 +22,8 @@ export type MessageSegment =
   /** html 为 true 时按富文本渲染；普通文本保持字面内容，标签原样显示。 */
   | { type: 'text'; text: string; html?: boolean }
   | { type: 'card'; title: string; brief: string; more: string; action: string }
+  /** 腾讯会议邀请：直接给「加入会议」按钮，不走通用卡片指令 */
+  | { type: 'meeting'; code: string; title: string; detail: string }
   | ({ type: 'image' } & ImageMeta)
   | ({ type: 'file' } & ImageMeta)
   | ({ type: 'audio' | 'video' } & ImageMeta)
@@ -148,6 +151,10 @@ export function toPlainText(msgType: number, content: any): string {
       return '[视频]'
     case MsgType.EVENT:
       return c?.title ? `[日程] ${c.title}` : '[日程]'
+    case MsgType.VIDEOCHAT: {
+      const invite = parseVideoChatInvite(c)
+      return invite ? `[视频会议] ${invite.title}` : '[视频会议]'
+    }
     case MsgType.SHARE:
       return c?.msg_content || c?.brief
         ? `[分享] ${c.msg_content || c.brief}`
@@ -183,6 +190,14 @@ export function toPlainText(msgType: number, content: any): string {
 
 /** 一条消息 → 可渲染片段（合并转发单独走卡片）。 */
 export function segmentsOf(msgType: number, content: any): MessageSegment[] {
+  if (msgType === MsgType.VIDEOCHAT) {
+    const invite = parseVideoChatInvite(content)
+    if (invite) return [{ type: 'meeting', ...invite }]
+  }
+  if (msgType === MsgType.COMPLEX) {
+    const invite = parseMeetingCard(content)
+    if (invite) return [{ type: 'meeting', ...invite }]
+  }
   if (msgType === MsgType.COMPLEX && Number(content?.type) === 5 && Array.isArray(content.contents)) {
     const cards: MessageSegment[] = content.contents.map((item: any) => {
       const card = item?.content

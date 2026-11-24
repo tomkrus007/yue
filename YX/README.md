@@ -88,6 +88,8 @@ sudo launchctl bootout system/com.legendsec.trustdservice
 - 首次操作才初始化（约 3–10 秒）；退出登录或退出应用时释放 SDK，避免 `TMSDKHelper` 残留
 - `OnSDKTokenExpired` 时自动重新拉配置并 `RefreshSDKToken`
 - 会议 UI 全部是腾讯原生窗口，不受 YX 主题影响；入会默认关麦克风、关摄像头（与官方一致）
+- IM 联动：邀请消息（`msg_type 15`，以及官方「分享到聊天」的 `99/type 3`）在会话里显示为会议卡片，点「加入会议」直接入会；卡片指令 `[JoinWeMeet]`、`[StartWeMeet]`、`[OpenApp appCode=linkMeeting]` 都走会议模块
+- 聊天顶部「视频会议」：单聊直接邀请对方，群/部门会话先选人；先开快速会议，拿到 `OnJoinMeeting` 回调里的会议号后再逐个发邀请（与官方 `joinWeMeetCallback` 一致），会议页也能「邀请同事」
 - 会议中关闭 YX 主窗口只会隐藏窗口，会议继续；从托盘恢复后可点「回到会议」把会中窗口置前
 
 ## 目录结构
@@ -112,6 +114,7 @@ YX/
 │   │   │   ├── media.ts         # 附件上传/图片获取
 │   │   │   ├── prefs.ts         # 免打扰/折叠/置顶/团队群
 │   │   │   ├── session-api.ts   # 会话列表/历史
+│   │   │   ├── wemeet-invite.ts # 腾讯会议邀请消息解析/构造
 │   │   │   └── im-client.ts     # WebSocket 客户端
 │   │   ├── auth.ts              # OAuth2 + RSA + 配置中心
 │   │   ├── http.ts              # 统一 HTTP + 401 续期
@@ -128,18 +131,22 @@ YX/
 │   │   ├── auth.ts              # 登录态
 │   │   ├── im.ts                # 会话/消息/未读/上传
 │   │   ├── uploads.ts           # 上传队列/进度/重试
+│   │   ├── wemeet.ts            # 会议状态机/邀请/生命周期
 │   │   └── disk.ts              # 文件列表
 │   ├── views/
 │   │   ├── LoginView.vue        # 登录页
 │   │   ├── ChatView.vue         # 聊天页
 │   │   ├── ContactsView.vue     # 通讯录
 │   │   ├── DiskView.vue         # 网盘页
+│   │   ├── WemeetView.vue       # 会议（会前/快速会议/入会/邀请）
 │   │   └── ZtView.vue           # 零信任（登录/状态）
 │   ├── assets/styles.css
 │   ├── App.vue
 │   └── main.ts
 └── src-tauri/
     ├── src/zt_sdk.rs            # 零信任：驱动官方客户端 SDK 的 JSON-RPC
+    ├── src/wemeet.rs            # 腾讯会议：Tauri 命令 + 主线程投递 + 事件
+    ├── wemeet/                  # 腾讯会议 C++ 桥（框架缺失时走 stub）
     ├── src/store_upload.rs      # 附件上传：Rust 流式读临时文件发 multipart（大文件不占 WebView 内存）
     ├── tauri.conf.json          # CSP 允许 blob/ws/wss/http/https
     └── capabilities/default.json  # http 域名白名单 *.bingolink.biz *.yuexiu.com
@@ -188,6 +195,7 @@ pnpm tauri build  # 打包
 - 设备序列号用随机 UUID 替代（原版用 serial-number 模块）
 - 会议需要 `src-tauri/vendor/TMSDK.framework`（355 MB，从官方 DMG 用 `scripts/sync-wemeet.sh` 拷贝，不入库）；没有框架时构建走 stub，会议入口会提示不可用
 - TMSDK 要求进程运行在 `.app` 内（依赖 `CFBundleIdentifier`），所以会议只能用 `pnpm tauri build --debug` 出的 `YX.app` 验证，`pnpm tauri dev` 下调用会被前置检查拦下
+- 会议邀请目前只在会话时间线里展示；官方那种收到邀请就弹「邀请您加入会议」的全局弹窗、以及响铃（`EnableRingInvitationView`）还没接
 - 会议只有 arm64；TMSDK 3.21.303 由腾讯提供，服务端升级后需同步换框架
 
 

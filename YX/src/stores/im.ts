@@ -1347,6 +1347,14 @@ export const useImStore = defineStore('im', () => {
     }
   }
 
+  /** 发送一条结构化消息（会议邀请等非文本消息）。 */
+  function sendStructured(target: { id: string; name: string; type: number }, msgType: number, content: any): void {
+    if (!imClient.authed) throw new Error('长连接未就绪，消息未发送')
+    const msg = imClient.sendForward(target.id, target.name, target.type, msgType, content)
+    addMessage(msg)
+    trackOutgoing(msg)
+  }
+
   /** 调用方逐条推进，失败时不重发已成功写入连接的消息。 */
   async function forwardMessage(target: { id: string; name: string; type: number }, list: ImMessage[], combine: boolean): Promise<void> {
     const generation = historyGeneration
@@ -1710,6 +1718,7 @@ export const useImStore = defineStore('im', () => {
     clearUnread,
     sendText,
     sendFiles,
+    sendStructured,
     forwardMessage,
     openChat,
     loadHistory,
