@@ -3,6 +3,7 @@ mod store_upload;
 mod store_download;
 mod media_stream;
 mod zt_sdk;
+mod wemeet;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 
 #[tauri::command]
@@ -170,6 +171,16 @@ pub fn run() {
             media_stream::media_response_head,
             media_stream::media_response_chunk,
             media_stream::media_response_end,
+            wemeet::wemeet_init,
+            wemeet::wemeet_status,
+            wemeet::wemeet_refresh_token,
+            wemeet::wemeet_login,
+            wemeet::wemeet_join,
+            wemeet::wemeet_quick,
+            wemeet::wemeet_show_home,
+            wemeet::wemeet_bring_top,
+            wemeet::wemeet_logout,
+            wemeet::wemeet_release,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -16,6 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# 腾讯会议 P0：编译 C++ 原生桥
+cc = "1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }

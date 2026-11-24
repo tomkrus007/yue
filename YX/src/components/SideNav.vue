@@ -74,6 +74,7 @@
       <div v-if="menuOpen" class="nav-menu-backdrop" @click="menuOpen = false"></div>
       <div v-if="menuOpen" class="nav-menu" role="menu" aria-label="更多">
         <button v-if="active === 'chat'" role="menuitem" @click="onLogs">日志</button>
+        <button role="menuitem" @click="onWemeet">会议验证</button>
         <button role="menuitem" class="danger" @click="onLogout">退出</button>
       </div>
     </div>
@@ -88,7 +89,7 @@ import { useImStore } from '../stores/im'
 import ConnectionStatus from './ConnectionStatus.vue'
 
 withDefaults(defineProps<{
-  active: 'chat' | 'contacts' | 'disk' | 'zt'
+  active: 'chat' | 'contacts' | 'disk' | 'zt' | 'wemeet'
   /** 传入待处理 @ 数量时显示提醒中心入口；null 表示该页面不显示 */
   mentionCount?: number | null
 }>(), { mentionCount: null })
@@ -102,6 +103,11 @@ const menuOpen = ref(false)
 function onLogs() {
   menuOpen.value = false
   emit('logs')
+}
+
+function onWemeet() {
+  menuOpen.value = false
+  router.push('/wemeet')
 }
 
 function onLogout() {
