@@ -1,6 +1,7 @@
 <template>
   <router-view />
   <UploadProgress />
+  <MeetingInvitePrompt />
 </template>
 
 <script setup lang="ts">
@@ -9,6 +10,7 @@ import { useAuthStore } from './stores/auth'
 import { useImStore } from './stores/im'
 import { useWeMeetStore } from './stores/wemeet'
 import UploadProgress from './components/UploadProgress.vue'
+import MeetingInvitePrompt from './components/MeetingInvitePrompt.vue'
 
 const auth = useAuthStore()
 const im = useImStore()
