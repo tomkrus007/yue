@@ -13,7 +13,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { authService } from '../services/auth'
-import { videoChatInviteContent } from '../services/im/wemeet-invite'
+import { videoChatCardContent, videoChatInviteContent } from '../services/im/wemeet-invite'
 import { MsgType } from '../services/im/types'
 import { useImStore } from './im'
 import {
@@ -281,6 +281,17 @@ export const useWeMeetStore = defineStore('wemeet', () => {
         MsgType.VIDEOCHAT,
         videoChatInviteContent(code, title, meId, meName),
       )
+      // 官方同样再发一条 99 卡片，作为聊天里可回看的入口；
+      // 15 已经送达（弹窗），卡片失败不回滚、也不计入失败
+      try {
+        im.sendStructured(
+          { id, name: item.name || id, type: 1 },
+          MsgType.COMPLEX,
+          videoChatCardContent(code, title, meName),
+        )
+      } catch {
+        /* 连接在两条消息之间断开时，保留已经发出的 15 */
+      }
       sent++
     }
     return sent

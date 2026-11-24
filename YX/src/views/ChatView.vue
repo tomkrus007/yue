@@ -474,6 +474,7 @@ import MentionPicker from '../components/MentionPicker.vue'
 import type { LinkUserDetail } from '../services/contact-client'
 import type { ContactEntry } from '../services/contact-client'
 import { fmtMsgTime, fmtSessionTime, messageText, segmentsOf, combineDetails, type ImageMeta } from '../services/im/content'
+import { dedupeMeetingCards } from '../services/im/wemeet-invite'
 import {
   normalizeClipboardImage,
 } from '../services/im/media'
@@ -534,7 +535,9 @@ function readMessageState(): Record<string, MessageState> {
   try { return JSON.parse(localStorage.getItem(messageStateKey) || '{}') || {} } catch { return {} }
 }
 const messageState = ref<Record<string, MessageState>>(readMessageState())
-const allVisibleMessages = computed(() => im.currentMessages.filter(m => !messageState.value[m.msg_id]?.deleted))
+const allVisibleMessages = computed(() => dedupeMeetingCards(
+  im.currentMessages.filter(m => !messageState.value[m.msg_id]?.deleted),
+))
 const messageWindowEndId = ref('')
 const messageWindowEnd = computed(() => {
   const index = messageWindowEndId.value ? allVisibleMessages.value.findIndex(message => message.msg_id === messageWindowEndId.value) : -1
