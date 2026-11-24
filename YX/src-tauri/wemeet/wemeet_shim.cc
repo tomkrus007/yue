@@ -302,6 +302,19 @@ int yx_wemeet_bring_top(void) {
   return 0;
 }
 
+int yx_wemeet_enable_ring(int enable) {
+  if (!g_sdk) return -1;
+  auto* pre = g_sdk->GetPreMeetingService();
+  if (!pre) {
+    emit_event("OnShimError", -1, "PreMeetingService 为空");
+    return -2;
+  }
+  // 响铃邀请是 SDK 的独立通道（不是 IM 消息）：开启后由 SDK 自绘接听窗口，
+  // 拒绝/超时由它处理；`OnRingInvitationEvent` 只用于诊断。
+  pre->EnableRingInvitationView(enable != 0);
+  return 0;
+}
+
 int yx_wemeet_logout(void) {
   if (!g_sdk) return -1;
   if (auto* account = g_sdk->GetAccountService()) account->Logout();

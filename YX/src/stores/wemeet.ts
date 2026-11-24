@@ -20,10 +20,12 @@ import {
   fetchWeMeetAccount,
   listenWeMeetEvent,
   wemeetBringTop,
+  wemeetEnableRing,
   wemeetInit,
   wemeetIsLoggedIn,
   wemeetJoin,
   wemeetLogin,
+  wemeetPurgeCache,
   wemeetQuick,
   wemeetRefreshToken,
   wemeetRelease,
@@ -36,6 +38,8 @@ export type WeMeetState = 'idle' | 'connecting' | 'ready'
 
 /** 事件面板保留的条数 */
 const MAX_EVENTS = 50
+/** 响铃邀请开关（localStorage 持久化，默认开） */
+const RING_KEY = 'wemeet_ring_invitation'
 
 interface Waiter {
   match: (e: WeMeetEvent) => boolean
@@ -49,6 +53,8 @@ export const useWeMeetStore = defineStore('wemeet', () => {
   const inMeeting = ref(false)
   /** 当前会议号（OnJoinMeeting 回调带回），用于发送邀请 */
   const meetingCode = ref('')
+  /** 响铃邀请：开启后 SDK 自己弹接听窗口，不受 IM 连接影响 */
+  const ringEnabled = ref(localStorage.getItem(RING_KEY) !== '0')
   const error = ref('')
   const events = ref<WeMeetEvent[]>([])
 
@@ -56,6 +62,8 @@ export const useWeMeetStore = defineStore('wemeet', () => {
   let connecting: Promise<void> | null = null
   let refreshingToken = false
   let waiters: Waiter[] = []
+  /** 当前 SDK 登录的账号；退出登录时按它清理缓存 */
+  let sessionUserId = ''
 
   function pushEvent(e: WeMeetEvent) {
     events.value.unshift(e)
@@ -152,7 +160,7 @@ export const useWeMeetStore = defineStore('wemeet', () => {
   }
 
   /** 退出登录 / 关闭会议时调用：停止监听并释放 SDK 进程。 */
-  function stop() {
+  function stop(purgeCache = false) {
     for (const w of waiters) {
       clearTimeout(w.timer)
       w.reject(new Error('会议已断开'))
@@ -161,12 +169,17 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     unlisten?.()
     unlisten = null
     const wasReady = state.value !== 'idle'
+    const uid = sessionUserId
+    sessionUserId = ''
     state.value = 'idle'
     inMeeting.value = false
     meetingCode.value = ''
     if (wasReady) {
-      // 释放失败不影响退出流程
-      void wemeetRelease().catch(() => {})
+      // 释放失败不影响退出流程；缓存要等 SDK 真正退出后再删
+      void wemeetRelease()
+        .catch(() => {})
+        .then(() => (purgeCache && uid ? wemeetPurgeCache(uid) : Promise.resolve()))
+        .catch(() => {})
     }
   }
 
@@ -180,6 +193,7 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     const task = (async () => {
       try {
         const acc = await fetchWeMeetAccount()
+        const uid = authService.getCurrentUserId() || ''
 
         if (!(await wemeetStatus())) {
           const initDone = waitEvent(
@@ -187,7 +201,7 @@ export const useWeMeetStore = defineStore('wemeet', () => {
             30000,
             '初始化',
           )
-          await wemeetInit(acc)
+          await wemeetInit(acc, uid)
           const evt = await initDone
           // -1011 = 重复初始化，可继续使用
           if (evt.code !== '0' && evt.code !== '-1011') {
@@ -205,6 +219,9 @@ export const useWeMeetStore = defineStore('wemeet', () => {
           }
         }
 
+        sessionUserId = uid
+        // 响铃是进程级设置，每次连上都重新下发；失败不影响正常入会
+        await wemeetEnableRing(ringEnabled.value).catch(() => {})
         state.value = 'ready'
       } catch (e) {
         state.value = 'idle'
@@ -306,6 +323,17 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     })
   }
 
+  /** 切换响铃邀请：已连接时立即生效，否则记下设置、下次登录生效。 */
+  async function setRingEnabled(value: boolean): Promise<void> {
+    ringEnabled.value = value
+    localStorage.setItem(RING_KEY, value ? '1' : '0')
+    if (state.value === 'ready') {
+      await wemeetEnableRing(value).catch((e) => {
+        throw fail(e)
+      })
+    }
+  }
+
   function clearError() {
     error.value = ''
   }
@@ -314,6 +342,7 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     state,
     inMeeting,
     meetingCode,
+    ringEnabled,
     error,
     events,
     start,
@@ -325,6 +354,7 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     startMeetingAndInvite,
     inviteToMeeting,
     bringTop,
+    setRingEnabled,
     clearError,
   }
 })

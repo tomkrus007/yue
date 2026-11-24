@@ -81,6 +81,11 @@
 
         <p v-if="note" class="hint" role="status">{{ note }}</p>
 
+        <label class="switch">
+          <input type="checkbox" :checked="wemeet.ringEnabled" @change="toggleRing" />
+          <span>响铃邀请（SDK 原生接听窗口；关闭后仍可通过 IM 邀请入会）</span>
+        </label>
+
         <details class="events">
           <summary>原生事件（{{ wemeet.events.length }}）</summary>
           <div v-if="!wemeet.events.length" class="hint">还没有事件。</div>
@@ -133,6 +138,19 @@ async function confirmInvitees(items: PickedMember[]) {
     note.value = error instanceof Error ? error.message : '发送邀请失败'
   } finally {
     inviting.value = false
+  }
+}
+
+async function toggleRing(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked
+  note.value = ''
+  try {
+    await wemeet.setRingEnabled(enabled)
+    note.value = enabled
+      ? '已开启响铃邀请'
+      : '已关闭响铃邀请，仍可通过 IM 邀请入会'
+  } catch (error) {
+    note.value = error instanceof Error ? error.message : '切换响铃邀请失败'
   }
 }
 
@@ -258,6 +276,16 @@ function join() {
 .small { padding: 4px 12px; font-size: 12px; }
 .hint { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin-top: 10px; }
 .row .hint { margin-top: 0; }
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.switch input { width: 14px; height: 14px; accent-color: var(--accent); }
 .code-input {
   background: var(--surface-2);
   border: 1px solid var(--border);

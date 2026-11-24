@@ -180,6 +180,8 @@ pub fn run() {
             wemeet::wemeet_quick,
             wemeet::wemeet_show_home,
             wemeet::wemeet_bring_top,
+            wemeet::wemeet_enable_ring,
+            wemeet::wemeet_purge_cache,
             wemeet::wemeet_logout,
             wemeet::wemeet_release,
         ])

@@ -4,8 +4,8 @@
 //! 窗口需要主 run loop）。SDK 的回调用 C 函数指针回到 Rust，再 emit 为
 //! `wemeet-event`。
 //!
-//! 覆盖：初始化 / 登录 / 会前主页 / 入会 / 快速会议 / 置顶 / 登出 / 释放。
-//! 邀请、响铃、会中邀请等放到 P2。
+//! 覆盖：初始化 / 登录 / 会前主页 / 入会 / 快速会议 / 置顶 / 登出 / 释放 /
+//! 响铃邀请开关，以及退出登录时清理当前账号的会议缓存。
 
 use std::ffi::{c_char, CStr, CString};
 use std::sync::OnceLock;
@@ -39,6 +39,7 @@ unsafe extern "C" {
     fn yx_wemeet_quick(window_title: *const c_char) -> i32;
     fn yx_wemeet_show_home() -> i32;
     fn yx_wemeet_bring_top() -> i32;
+    fn yx_wemeet_enable_ring(enable: i32) -> i32;
     fn yx_wemeet_logout() -> i32;
     fn yx_wemeet_release();
 }
@@ -65,6 +66,25 @@ fn ensure_app(app: &AppHandle) {
 
 fn cstring(value: &str) -> CString {
     CString::new(value).unwrap_or_else(|_| CString::new("").unwrap())
+}
+
+/// 会议缓存目录：`{app_cache_dir}/{uid}/wemeet_cache`，与官方
+/// `cacheDataPath + Uid + "/wemeet_cache"` 一致；uid 只保留安全字符。
+fn cache_dir(app: &AppHandle, user_id: &str) -> Result<std::path::PathBuf, String> {
+    let base = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("取应用缓存目录失败：{e}"))?;
+    let safe: String = user_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(64)
+        .collect();
+    Ok(if safe.is_empty() {
+        base.join("wemeet_cache")
+    } else {
+        base.join(safe).join("wemeet_cache")
+    })
 }
 
 /// 在 Tauri 主线程执行并取回结果。
@@ -94,13 +114,13 @@ fn check(rc: i32, action: &str) -> Result<(), String> {
     }
 }
 
-/// 初始化并（由调用方随后）登录。`data_path` 为空时落到 app cache。
+/// 初始化并（由调用方随后）登录。缓存目录按账号隔离。
 #[tauri::command]
 pub async fn wemeet_init(
     app: AppHandle,
     sdk_id: String,
     sdk_token: String,
-    data_path: Option<String>,
+    user_id: Option<String>,
     app_name: Option<String>,
     server_host: Option<String>,
 ) -> Result<(), String> {
@@ -118,15 +138,9 @@ pub async fn wemeet_init(
         );
     }
 
-    let dir = data_path
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| {
-            app.path()
-                .app_cache_dir()
-                .ok()
-                .map(|p| p.join("wemeet_cache").to_string_lossy().to_string())
-        })
-        .unwrap_or_default();
+    let dir = cache_dir(&app, user_id.as_deref().unwrap_or(""))?
+        .to_string_lossy()
+        .to_string();
 
     let sdk_id = cstring(&sdk_id);
     let sdk_token = cstring(&sdk_token);
@@ -221,6 +235,26 @@ pub async fn wemeet_show_home(app: AppHandle) -> Result<(), String> {
 pub async fn wemeet_bring_top(app: AppHandle) -> Result<(), String> {
     let rc = call_main(&app, Duration::from_secs(5), || unsafe { yx_wemeet_bring_top() })?;
     check(rc, "置顶会议窗口")
+}
+
+/// 让 SDK 自己弹响铃接听窗口。默认开启；关掉后只能通过 IM 邀请消息入会。
+#[tauri::command]
+pub async fn wemeet_enable_ring(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let rc = call_main(&app, Duration::from_secs(5), move || unsafe {
+        yx_wemeet_enable_ring(enabled as i32)
+    })?;
+    check(rc, if enabled { "开启响铃邀请" } else { "关闭响铃邀请" })
+}
+
+/// 退出登录后清理当前账号的会议缓存（与官方 `cleanWeMeetCache` 对齐）。
+#[tauri::command]
+pub async fn wemeet_purge_cache(app: AppHandle, user_id: String) -> Result<(), String> {
+    let dir = cache_dir(&app, &user_id)?;
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("清理会议缓存失败：{e}")),
+    }
 }
 
 #[tauri::command]

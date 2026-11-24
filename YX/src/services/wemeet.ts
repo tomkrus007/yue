@@ -55,15 +55,15 @@ export async function fetchWeMeetAccount(rtcUri?: string): Promise<WeMeetAccount
   }
 }
 
-/** 初始化 SDK（幂等：已初始化时 TMSDK 回调 -1011）。 */
+/** 初始化 SDK（幂等：已初始化时 TMSDK 回调 -1011）。缓存目录由 Rust 按 userId 隔离。 */
 export async function wemeetInit(
   account: WeMeetAccount,
-  dataPath?: string,
+  userId?: string,
 ): Promise<void> {
   return invoke('wemeet_init', {
     sdkId: account.sdkKey,
     sdkToken: account.sdkToken,
-    dataPath: dataPath || null,
+    userId: userId || null,
     appName: '网络会议',
     serverHost: null,
   })
@@ -110,6 +110,16 @@ export async function wemeetJoin(
 
 export async function wemeetBringTop(): Promise<void> {
   return invoke('wemeet_bring_top')
+}
+
+/** 让 SDK 自绘响铃接听窗口（`OnRingInvitationEvent` 仍会回传事件）。 */
+export async function wemeetEnableRing(enabled: boolean): Promise<void> {
+  return invoke('wemeet_enable_ring', { enabled })
+}
+
+/** 退出登录后清理该账号在 `{app_cache}/{uid}/wemeet_cache` 下的会议缓存。 */
+export async function wemeetPurgeCache(userId: string): Promise<void> {
+  return invoke('wemeet_purge_cache', { userId })
 }
 
 export async function wemeetLogout(): Promise<void> {

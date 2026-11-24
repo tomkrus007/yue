@@ -86,7 +86,9 @@ sudo launchctl bootout system/com.legendsec.trustdservice
 - 入口在左侧导航「会议」：打开会前界面（设置／预约／历史都在这里）、快速会议、按会议号加入
 - 账号配置走配置中心 `rtcUri` 的 `v1/tencent/meeting/config`（`sdkKey/sdkToken/ssoUrlPrefix/idToken`），登录态与 YX 登录绑定
 - 首次操作才初始化（约 3–10 秒）；退出登录或退出应用时释放 SDK，避免 `TMSDKHelper` 残留
+- 缓存按账号隔离：`{app_cache_dir}/{Uid}/wemeet_cache`（与官方一致）；退出登录会删掉当前账号的缓存
 - `OnSDKTokenExpired` 时自动重新拉配置并 `RefreshSDKToken`
+- 响铃邀请默认开启：SDK 自绘接听窗口，会议页「连接状态」可关闭；邀请始终以 IM 消息为主通道
 - 会议 UI 全部是腾讯原生窗口，不受 YX 主题影响；入会默认关麦克风、关摄像头（与官方一致）
 - IM 联动：邀请消息（`msg_type 15`，以及官方「分享到聊天」的 `99/type 3`）在会话里显示为会议卡片，点「加入会议」直接入会；收到实时邀请还会弹一次全局「加入会议」窗口（离线补发的旧邀请、会议中都不弹）；卡片指令 `[JoinWeMeet]`、`[StartWeMeet]`、`[OpenApp appCode=linkMeeting]` 都走会议模块
 - 聊天顶部「视频会议」：单聊直接邀请对方，群/部门会话先选人；先开快速会议，拿到 `OnJoinMeeting` 回调里的会议号后再逐个发邀请（与官方 `joinWeMeetCallback` 一致），会议页也能「邀请同事」
@@ -196,7 +198,8 @@ pnpm tauri build  # 打包
 - 设备序列号用随机 UUID 替代（原版用 serial-number 模块）
 - 会议需要 `src-tauri/vendor/TMSDK.framework`（355 MB，从官方 DMG 用 `scripts/sync-wemeet.sh` 拷贝，不入库）；没有框架时构建走 stub，会议入口会提示不可用
 - TMSDK 要求进程运行在 `.app` 内（依赖 `CFBundleIdentifier`），所以会议只能用 `pnpm tauri build --debug` 出的 `YX.app` 验证，`pnpm tauri dev` 下调用会被前置检查拦下
-- 收到会议邀请时会弹全局「加入会议」窗口（离线补发的旧邀请不弹，会议中也不弹）；响铃邀请（`EnableRingInvitationView`）没接——官方客户端本身也没启用它，邀请统一走 IM 消息
+- 收到会议邀请时会弹全局「加入会议」窗口（离线补发的旧邀请不弹，会议中也不弹）；响铃邀请走 SDK 原生接听窗口（默认开，可在会议页关闭），官方客户端没有启用这套通道，因此只能按 IM 邀请联调
+- 会中/会前「邀请」按钮仍是腾讯原生 UI；接管它需要 `EnableInviteCallback` 并双账号联调，暂未实现
 - 会议只有 arm64；TMSDK 3.21.303 由腾讯提供，服务端升级后需同步换框架
 
 

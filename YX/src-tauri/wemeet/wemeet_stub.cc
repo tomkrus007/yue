@@ -28,6 +28,7 @@ int yx_wemeet_join(const char*, const char*, const char*, bool, bool, bool) { re
 int yx_wemeet_quick(const char*) { return -100; }
 int yx_wemeet_show_home(void) { return -100; }
 int yx_wemeet_bring_top(void) { return -100; }
+int yx_wemeet_enable_ring(int) { return -100; }
 int yx_wemeet_logout(void) { return -100; }
 void yx_wemeet_release(void) {}
 

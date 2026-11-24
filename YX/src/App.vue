@@ -39,7 +39,8 @@ watch(
       void wemeet.start()
     } else {
       im.stop()
-      wemeet.stop()
+      // 退出登录：释放 SDK 并清掉该账号的会议缓存（与官方 cleanWeMeetCache 一致）
+      wemeet.stop(true)
     }
   },
 )
