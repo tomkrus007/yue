@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { ensureNotificationPermission, notifyMessage } from '../services/notifications'
 import {
   imClient,
   type ImMessage,
@@ -194,6 +196,10 @@ export const useImStore = defineStore('im', () => {
     .filter(([id]) => !(id in hiddenSessions.value) && !muted.value.has(id) && !folded.value.has(id))
     .reduce((sum, [, count]) => sum + count, 0))
   watch(trayUnread, (count) => {
+    // Dock 角标与托盘共用同一套未读口径（排除免打扰、折叠和已移除会话）。
+    void getCurrentWindow()
+      .setBadgeCount(count > 0 ? count : undefined)
+      .catch((e) => log('[提醒诊断] Dock 未读角标更新失败：' + String(e)))
     invoke('set_tray_unread', { count })
       .then(() => log(`[提醒诊断] 托盘未读已更新：${count}`))
       .catch((e) => log('[提醒诊断] 托盘未读更新失败：' + String(e)))
@@ -516,6 +522,24 @@ export const useImStore = defineStore('im', () => {
       unread.value[ref.id] = (unread.value[ref.id] || 0) + 1
       if (atMe) unreadAt.value[ref.id] = (unreadAt.value[ref.id] || 0) + 1
       persistUnread()
+    }
+
+    // 系统通知：只在消息不能直接看到时提示（不在当前会话或窗口不在前台），
+    // 免打扰、折叠和服务号沿用未读口径；@我 时即使免打扰也提醒。
+    if (
+      notifyFlag &&
+      incoming &&
+      !msg.offline &&
+      (!chatActive.value || currentSessionId.value !== ref.id) &&
+      (!sessionMuted || atMe) &&
+      !folded.value.has(ref.id) &&
+      !isServiceAccount({ type: ref.type })
+    ) {
+      const preview = previewOfMessage(item)
+      const isGroup = TO_MULTI_TYPES.has(ref.type)
+      const title = isGroup ? ref.name || '群消息' : msg.from_name || ref.name || '新消息'
+      const body = isGroup ? `${msg.from_name || '未知'}：${preview}` : preview
+      void notifyMessage(title, body)
     }
 
     const s = upsertSession({
@@ -953,6 +977,8 @@ export const useImStore = defineStore('im', () => {
   function onAuthed(): void {
     loadSessionsFromServer()
     ensurePreferenceStates().catch(() => {})
+    // 登录后申请一次系统通知权限；拒绝后不会反复弹窗。
+    void ensureNotificationPermission()
   }
 
   let lastBackfillAt = 0

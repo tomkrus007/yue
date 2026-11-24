@@ -25,7 +25,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { faceTextHtml } from '../services/im/official-face'
-const props = defineProps<{ reaction?: string; favorite: boolean; favoriteStatus?: 'saved' | 'unsaved' | 'unknown'; forwardable: boolean; recallable?: boolean; adminRecallable?: boolean; protectedMessage?: boolean }>()
+const props = defineProps<{ reaction?: string; favorite: boolean; favoriteStatus?: 'saved' | 'unsaved' | 'unknown'; forwardable: boolean; recallable?: boolean; adminRecallable?: boolean; protectedMessage?: boolean; contactable?: boolean }>()
 const emit = defineEmits<{ action: [name: string]; react: [emoji: string] }>()
 const trigger = ref<HTMLButtonElement | null>(null)
 const panel = ref<HTMLElement | null>(null)
@@ -35,6 +35,7 @@ const position = ref({ left: '0px', top: '0px' })
 const quickEmojis = ['[微笑]', '[胜利]', '[咧嘴]', '[点赞]', '[呲牙]', '[ok]']
 const moreEmojis = ['[爱心]', '[鼓掌]', '[礼花]', '[祈祷]', '[奋斗]', '[害羞]', '[色]', '[疑问]', '[惊呆了]', '[流泪]', '[苦笑]', '[满分]', '[对]', '[玫瑰]', '[咖啡]', '[握手]']
 const actions = [
+  { id: 'contact', label: '联系人', path: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z M4 21c.7-4 4-6 8-6s7.3 2 8 6' },
   { id: 'copy', label: '复制', path: 'M8 7V3h12v14h-4 M4 7h12v14H4Z' },
   { id: 'forward', label: '转发', path: 'm14 3 7 7-7 7v-5C7 12 4 16 3 20c0-9 3-14 11-14Z' },
   { id: 'quote', label: '引用', path: 'M21 11a9 9 0 0 1-9 9H8l-5 2 1-6a9 9 0 1 1 17-5Z M8 11h.01 M12 11h.01 M16 11h.01' },
@@ -45,6 +46,7 @@ const actions = [
   { id: 'adminRecall', label: '管理撤回', path: 'm9 4-6 6 6 6 M3 10h10a7 7 0 0 1 7 7' },
 ]
 const visibleActions = computed(() => actions.filter(action => {
+  if (action.id === 'contact') return !!props.contactable
   if (props.protectedMessage && !['delete', 'recall', 'adminRecall'].includes(action.id)) return false
   return action.id === 'recall' ? props.recallable : action.id === 'adminRecall' ? props.adminRecallable && !props.recallable : true
 }))

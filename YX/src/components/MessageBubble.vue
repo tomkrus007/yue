@@ -11,7 +11,7 @@
         </MessageGuard>
         <button v-if="Number(message.msg_type) === 24 && !message.content?.msgs?.length" class="reload-details" :disabled="loadingDetails" @click="reloadDetails">{{ loadingDetails ? '正在获取…' : '从服务端历史重新获取明细' }}</button>
       </div>
-      <MessageToolbar v-if="!selecting && !recalled" :favorite="favorite" :favorite-status="favoriteStatus" :reaction="myReaction" :forwardable="forwardable" :protected-message="protectedMessage" :recallable="im.isMine(message)" :admin-recallable="adminRecallable" @action="emit('action', $event)" @react="react" />
+      <MessageToolbar v-if="!selecting && !recalled" :favorite="favorite" :favorite-status="favoriteStatus" :reaction="myReaction" :forwardable="forwardable" :protected-message="protectedMessage" :contactable="contactable" :recallable="im.isMine(message)" :admin-recallable="adminRecallable" @action="emit('action', $event)" @react="react" />
     </div>
     <div v-if="atMe && !selecting && !recalled && !protectedMessage" class="quick-reply">
       <button :disabled="!im.authed || blocked || pending" :class="{ chosen: received }" @click="react('[ok]')">👌 {{ pending ? '正在提交…' : '收到' }}</button>
@@ -41,7 +41,7 @@ import { replaceEmojiAliases } from '../services/im/emoji'
 import MessageContent from './MessageContent.vue'
 import MessageToolbar from './MessageToolbar.vue'
 import MessageGuard from './MessageGuard.vue'
-const props = defineProps<{ message: ImMessage; selecting: boolean; favorite: boolean; favoriteStatus?: 'saved' | 'unsaved' | 'unknown'; forwardable: boolean; adminRecallable?: boolean; blocked?: boolean }>()
+const props = defineProps<{ message: ImMessage; selecting: boolean; favorite: boolean; favoriteStatus?: 'saved' | 'unsaved' | 'unknown'; forwardable: boolean; adminRecallable?: boolean; blocked?: boolean; contactable?: boolean }>()
 const emit = defineEmits<{ action: [name: string]; reply: [message: ImMessage]; receipt: [message: ImMessage]; thread: [id: string]; preview: [payload: { url: string; name: string }] }>()
 const im = useImStore()
 const myId = authService.getCurrentUserId()

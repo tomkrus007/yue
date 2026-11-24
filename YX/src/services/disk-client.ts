@@ -129,7 +129,9 @@ export class DiskClient {
   /** 团队盘列表（仅我加入的） */
   teamList(): Promise<DiskListResult> {
     return this.request<any>('GET', '/team/list', {
-      'filter.onlyMember': true,
+      // 服务端只认 filter=<JSON>；写成 filter.onlyMember 会被忽略，
+      // 返回的团队不完整（表现为「团队文档里少了很多团队」）。
+      filter: JSON.stringify({ onlyMember: true }),
       options: 'withPermissions',
     }).then((r) => ({
       files: (r.rows || r.files || r.items || []).map(this.normalizeFile),

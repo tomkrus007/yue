@@ -146,6 +146,13 @@
             :style="{ left: sessionMenu.left + 'px', top: sessionMenu.top + 'px' }"
             @click.stop
           >
+            <button v-if="sessionDetailKind(sessionMenu.session)" role="menuitem" @click="openSessionDetail(sessionMenu.session)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="8" r="3.4" />
+                <path d="M5 20c.6-3.4 3.4-5.4 7-5.4s6.4 2 7 5.4" />
+              </svg>
+              查看联系人详情
+            </button>
             <button role="menuitem" @click="foldFromSessionMenu">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path :d="im.folded.has(sessionMenu.session.id) ? 'm6 9 6 6 6-6' : 'm18 15-6-6-6 6'" />
@@ -217,12 +224,21 @@
               :class="['msg', im.isMine(m) ? 'mine' : 'theirs', { 'message-located': highlightedMessageId === m.msg_id, 'message-selectable': selecting && forwardable(m), 'message-selected': selecting && selectedIds.includes(m.msg_id) }]"
             >
               <input v-if="selecting && forwardable(m)" v-model="selectedIds" type="checkbox" :value="m.msg_id" aria-label="选择消息或文件" />
+              <ContactAvatar
+                v-if="showSenderAvatar(m)"
+                class="msg-avatar"
+                :id="m.from_id"
+                :type="FromType.USER"
+                :name="m.from_name"
+                :title="`双击与${m.from_name || '对方'}发起单聊`"
+                @dblclick.stop="startPrivateChat(m)"
+              />
               <div class="msg-body">
                 <div class="msg-name">
                   {{ im.isMine(m) ? '我' : m.from_name || '未知' }}
                   · {{ fmtMsgTime(m.send_time) }}
                 </div>
-                <MessageBubble :message="m" :selecting="selecting" :favorite="favorites.isFavorite(m)" :favorite-status="favorites.status(m)" :forwardable="forwardable(m)" :admin-recallable="adminRecallable" :blocked="composerBlocked" @action="messageAction(m, $event)" @reply="beginReply" @thread="replyThreadId = $event" @receipt="receiptMessage = $event" @preview="openPreview" />
+                <MessageBubble :message="m" :selecting="selecting" :favorite="favorites.isFavorite(m)" :favorite-status="favorites.status(m)" :forwardable="forwardable(m)" :admin-recallable="adminRecallable" :blocked="composerBlocked" :contactable="showSenderDetail(m)" @action="messageAction(m, $event)" @reply="beginReply" @thread="replyThreadId = $event" @receipt="receiptMessage = $event" @preview="openPreview" />
               </div>
             </div>
 
@@ -579,6 +595,7 @@ async function messageAction(message: ImMessage, action: string) {
         im.recallMessage(message, action === 'adminRecall')
         break
       case 'more': selectOne(message.msg_id); break
+      case 'contact': openSenderDetail(message); break
     }
   } catch (error) {
     actionError.value = (error instanceof Error ? error.message : '操作失败，请重试').replace(/https?:\/\/[^\s)]+/g, '[请求地址]')
@@ -881,8 +898,8 @@ function openSessionMenu(session: ChatSession, event: MouseEvent) {
     return
   }
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  const width = 132
-  const height = 84
+  const width = sessionDetailKind(session) ? 168 : 132
+  const height = sessionDetailKind(session) ? 118 : 84
   sessionMenu.value = {
     session,
     left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
@@ -1065,6 +1082,56 @@ function openDetail(c: ContactEntry) {
   router.push({
     path: `/contact/${c.kind}/${encodeURIComponent(c.id)}`,
     query: { name: c.name, desc: c.desc || '' },
+  })
+}
+
+/** 会话对应的联系人详情类型：单聊/群聊/服务号才有详情页。 */
+function sessionDetailKind(session: ChatSession): string {
+  if (session.type === FromType.USER) return 'user'
+  if (session.type === FromType.GROUP) return 'group'
+  if (session.type === FromType.PUBLICACCOUNT) return 'serviceno'
+  return ''
+}
+
+function openSessionDetail(session: ChatSession) {
+  const kind = sessionDetailKind(session)
+  closeSessionMenu()
+  if (!kind) return
+  router.push({
+    path: `/contact/${kind}/${encodeURIComponent(session.id)}`,
+    query: { name: session.name },
+  })
+}
+
+/** 消息发送人可查看联系人详情：他人的用户消息（撤回/控制消息除外）。 */
+function showSenderDetail(message: ImMessage): boolean {
+  return (
+    !im.isMine(message) &&
+    Number(message.from_type) === FromType.USER &&
+    !!message.from_id &&
+    ![66, 67].includes(Number(message.msg_type))
+  )
+}
+
+/** 群聊里给其他成员的消息显示头像，供双击发起单聊。 */
+function showSenderAvatar(message: ImMessage): boolean {
+  const type = Number(im.currentSession?.type || 0)
+  return [2, 4, 8].includes(type) && showSenderDetail(message)
+}
+
+/** 双击群成员头像：打开（或新建）与他的单聊会话。 */
+function startPrivateChat(message: ImMessage) {
+  if (!message.from_id || message.from_id === authService.getCurrentUserId()) return
+  im.openChat(message.from_id, message.from_name || message.from_id, FromType.USER)
+  im.bumpSessionToTop(message.from_id)
+}
+
+/** 消息操作里的「详情」：查看该条消息发送人的联系人详情。 */
+function openSenderDetail(message: ImMessage) {
+  if (!message.from_id) return
+  router.push({
+    path: `/contact/user/${encodeURIComponent(message.from_id)}`,
+    query: { name: message.from_name || '' },
   })
 }
 
@@ -1378,16 +1445,26 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 
 .msg-area { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .msg-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
-.msg { display: flex; margin-bottom: 14px; }
+.msg { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
 .msg.message-selectable { align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; border: 1px solid transparent; }
 .msg.message-selected { background: var(--primary-soft); border-color: var(--primary); }
 .msg.message-selectable > input[type='checkbox'] { width: 18px; height: 18px; flex: 0 0 18px; padding: 0; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.msg.message-selectable .msg-avatar { margin-top: 0; }
 .msg.message-selectable:focus-within { outline: 2px solid var(--primary); outline-offset: 1px; }
 .msg.mine { justify-content: flex-end; }
 .msg.mine.message-selectable > input { margin-right: auto; }
 .msg.theirs { justify-content: flex-start; }
 .msg-body { max-width: 95%; }
 .msg.mine .msg-body { text-align: right; }
+.msg-avatar {
+  width: 34px; height: 34px; border-radius: 50%;
+  margin-top: 15px; flex-shrink: 0; cursor: pointer;
+  background: var(--primary); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; user-select: none;
+}
+.msg-avatar.photo { background: transparent; }
+.msg-avatar:hover { box-shadow: 0 0 0 2px var(--primary-soft); }
 .msg-name { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
 .history-btn { margin-top: 10px; }
 
