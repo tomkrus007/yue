@@ -47,6 +47,13 @@
       </svg>
     </button>
 
+    <router-link to="/wemeet" :class="['nav-item', { active: active === 'wemeet' }]" title="会议">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="6.5" width="12.5" height="11" rx="2.5" />
+        <path d="m15 12 6-3.6v7.2L15 12Z" />
+      </svg>
+    </router-link>
+
     <router-link to="/zt" :class="['nav-item', { active: active === 'zt' }]" title="零信任分流">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 3 19 6v5.5c0 4.4-2.9 7.6-7 9.5-4.1-1.9-7-5.1-7-9.5V6l7-3Z" />
@@ -74,7 +81,6 @@
       <div v-if="menuOpen" class="nav-menu-backdrop" @click="menuOpen = false"></div>
       <div v-if="menuOpen" class="nav-menu" role="menu" aria-label="更多">
         <button v-if="active === 'chat'" role="menuitem" @click="onLogs">日志</button>
-        <button role="menuitem" @click="onWemeet">会议验证</button>
         <button role="menuitem" class="danger" @click="onLogout">退出</button>
       </div>
     </div>
@@ -86,6 +92,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
+import { useWeMeetStore } from '../stores/wemeet'
 import ConnectionStatus from './ConnectionStatus.vue'
 
 withDefaults(defineProps<{
@@ -98,6 +105,7 @@ const emit = defineEmits<{ apps: []; mentions: []; logs: [] }>()
 const router = useRouter()
 const auth = useAuthStore()
 const im = useImStore()
+const wemeet = useWeMeetStore()
 const menuOpen = ref(false)
 
 function onLogs() {
@@ -105,13 +113,10 @@ function onLogs() {
   emit('logs')
 }
 
-function onWemeet() {
-  menuOpen.value = false
-  router.push('/wemeet')
-}
-
 function onLogout() {
   menuOpen.value = false
+  // 登出时释放腾讯会议 SDK，避免 helper 进程残留
+  wemeet.stop()
   im.resetLocal()
   auth.logout()
   router.replace('/login')

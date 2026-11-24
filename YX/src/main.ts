@@ -8,7 +8,7 @@ import ContactsView from './views/ContactsView.vue'
 import ContactDetailView from './views/ContactDetailView.vue'
 import DiskView from './views/DiskView.vue'
 import ZtView from './views/ZtView.vue'
-import WemeetSpikeView from './views/WemeetSpikeView.vue'
+import WemeetView from './views/WemeetView.vue'
 import { installLogCapture } from './services/app-log'
 import './assets/styles.css'
 
@@ -29,7 +29,7 @@ const router = createRouter({
     },
     { path: '/disk', component: DiskView, meta: { requiresAuth: true } },
     { path: '/zt', component: ZtView, meta: { requiresAuth: true } },
-    { path: '/wemeet', component: WemeetSpikeView, meta: { requiresAuth: true } },
+    { path: '/wemeet', component: WemeetView, meta: { requiresAuth: true } },
   ],
 })
 

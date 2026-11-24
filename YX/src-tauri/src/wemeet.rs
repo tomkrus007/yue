@@ -1,10 +1,10 @@
-//! 腾讯会议原生桥（P0 验证）。
+//! 腾讯会议原生桥。
 //!
 //! 前端通过 `invoke` 调用这些命令；所有原生调用都投递到主线程（TMSDK 的 Qt/AppKit
 //! 窗口需要主 run loop）。SDK 的回调用 C 函数指针回到 Rust，再 emit 为
 //! `wemeet-event`。
 //!
-//! P0 只覆盖：初始化 / 登录 / 会前主页 / 入会 / 快速会议 / 置顶 / 登出 / 释放。
+//! 覆盖：初始化 / 登录 / 会前主页 / 入会 / 快速会议 / 置顶 / 登出 / 释放。
 //! 邀请、响铃、会中邀请等放到 P2。
 
 use std::ffi::{c_char, CStr, CString};
@@ -25,6 +25,7 @@ unsafe extern "C" {
         server_host: *const c_char,
     ) -> i32;
     fn yx_wemeet_is_initialized() -> i32;
+    fn yx_wemeet_is_logged_in() -> i32;
     fn yx_wemeet_refresh_token(sdk_token: *const c_char) -> i32;
     fn yx_wemeet_login(sso_url: *const c_char) -> i32;
     fn yx_wemeet_join(
@@ -66,11 +67,31 @@ fn cstring(value: &str) -> CString {
     CString::new(value).unwrap_or_else(|_| CString::new("").unwrap())
 }
 
-fn on_main<F>(app: &AppHandle, f: F) -> Result<(), String>
+/// 在 Tauri 主线程执行并取回结果。
+///
+/// TMSDK 的窗口依赖 AppKit run loop，不能在命令线程直接调；而 `run_on_main_thread`
+/// 本身不返回结果，所以用一次性 channel 把返回值带回来。
+fn call_main<T, F>(app: &AppHandle, timeout: Duration, f: F) -> Result<T, String>
 where
-    F: FnOnce() + Send + 'static,
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
 {
-    app.run_on_main_thread(f).map_err(|e| e.to_string())
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f());
+    })
+    .map_err(|e| e.to_string())?;
+    rx.recv_timeout(timeout)
+        .map_err(|_| "等待主线程执行超时".to_string())
+}
+
+/// SDK 的同步接口用 0 表示成功；其余是 `wemeet_sdk_def.h` 里的负错误码。
+fn check(rc: i32, action: &str) -> Result<(), String> {
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!("{action}失败（code={rc}）"))
+    }
 }
 
 /// 初始化并（由调用方随后）登录。`data_path` 为空时落到 app cache。
@@ -113,47 +134,50 @@ pub async fn wemeet_init(
     let name = cstring(app_name.as_deref().unwrap_or("网络会议"));
     let host = cstring(server_host.as_deref().unwrap_or(""));
 
-    on_main(&app, move || {
-        unsafe {
-            yx_wemeet_init(
-                sdk_id.as_ptr(),
-                sdk_token.as_ptr(),
-                dir.as_ptr(),
-                name.as_ptr(),
-                host.as_ptr(),
-            );
-        }
-    })
+    let rc = call_main(&app, Duration::from_secs(10), move || unsafe {
+        yx_wemeet_init(
+            sdk_id.as_ptr(),
+            sdk_token.as_ptr(),
+            dir.as_ptr(),
+            name.as_ptr(),
+            host.as_ptr(),
+        )
+    })?;
+    check(rc, "初始化")
 }
 
 #[tauri::command]
 pub async fn wemeet_status(app: AppHandle) -> Result<bool, String> {
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    on_main(&app, move || {
-        let initialized = unsafe { yx_wemeet_is_initialized() } == 1;
-        let _ = tx.send(initialized);
+    let initialized = call_main(&app, Duration::from_secs(2), || unsafe {
+        yx_wemeet_is_initialized() == 1
     })?;
-    Ok(rx.recv_timeout(Duration::from_secs(2)).unwrap_or(false))
+    Ok(initialized)
+}
+
+#[tauri::command]
+pub async fn wemeet_is_logged_in(app: AppHandle) -> Result<bool, String> {
+    let logged_in = call_main(&app, Duration::from_secs(2), || unsafe {
+        yx_wemeet_is_logged_in() == 1
+    })?;
+    Ok(logged_in)
 }
 
 #[tauri::command]
 pub async fn wemeet_refresh_token(app: AppHandle, sdk_token: String) -> Result<(), String> {
     let token = cstring(&sdk_token);
-    on_main(&app, move || {
-        unsafe {
-            yx_wemeet_refresh_token(token.as_ptr());
-        }
-    })
+    let rc = call_main(&app, Duration::from_secs(5), move || unsafe {
+        yx_wemeet_refresh_token(token.as_ptr())
+    })?;
+    check(rc, "刷新 SDK Token")
 }
 
 #[tauri::command]
 pub async fn wemeet_login(app: AppHandle, sso_url: String) -> Result<(), String> {
     let sso_url = cstring(&sso_url);
-    on_main(&app, move || {
-        unsafe {
-            yx_wemeet_login(sso_url.as_ptr());
-        }
-    })
+    let rc = call_main(&app, Duration::from_secs(5), move || unsafe {
+        yx_wemeet_login(sso_url.as_ptr())
+    })?;
+    check(rc, "登录")
 }
 
 #[tauri::command]
@@ -170,49 +194,49 @@ pub async fn wemeet_join(
     let name = cstring(display_name.as_deref().unwrap_or(""));
     let pwd = cstring(password.as_deref().unwrap_or(""));
     let mic = mic_on.unwrap_or(false);
-    let cam = camera_on.unwrap_or(true);
+    let cam = camera_on.unwrap_or(false);
     let beauty = face_beauty_on.unwrap_or(false);
-    on_main(&app, move || {
-        unsafe {
-            yx_wemeet_join(code.as_ptr(), name.as_ptr(), pwd.as_ptr(), mic, cam, beauty);
-        }
-    })
+    let rc = call_main(&app, Duration::from_secs(5), move || unsafe {
+        yx_wemeet_join(code.as_ptr(), name.as_ptr(), pwd.as_ptr(), mic, cam, beauty)
+    })?;
+    check(rc, "加入会议")
 }
 
 #[tauri::command]
 pub async fn wemeet_quick(app: AppHandle, window_title: Option<String>) -> Result<(), String> {
     let title = cstring(window_title.as_deref().unwrap_or(""));
-    on_main(&app, move || {
-        unsafe {
-            yx_wemeet_quick(title.as_ptr());
-        }
-    })
+    let rc = call_main(&app, Duration::from_secs(5), move || unsafe {
+        yx_wemeet_quick(title.as_ptr())
+    })?;
+    check(rc, "发起会议")
 }
 
 #[tauri::command]
 pub async fn wemeet_show_home(app: AppHandle) -> Result<(), String> {
-    on_main(&app, || unsafe {
-        yx_wemeet_show_home();
-    })
+    let rc = call_main(&app, Duration::from_secs(5), || unsafe { yx_wemeet_show_home() })?;
+    check(rc, "打开会前界面")
 }
 
 #[tauri::command]
 pub async fn wemeet_bring_top(app: AppHandle) -> Result<(), String> {
-    on_main(&app, || unsafe {
-        yx_wemeet_bring_top();
-    })
+    let rc = call_main(&app, Duration::from_secs(5), || unsafe { yx_wemeet_bring_top() })?;
+    check(rc, "置顶会议窗口")
 }
 
 #[tauri::command]
 pub async fn wemeet_logout(app: AppHandle) -> Result<(), String> {
-    on_main(&app, || unsafe {
-        yx_wemeet_logout();
-    })
+    let rc = call_main(&app, Duration::from_secs(5), || unsafe { yx_wemeet_logout() })?;
+    check(rc, "登出")
 }
 
 #[tauri::command]
 pub async fn wemeet_release(app: AppHandle) -> Result<(), String> {
-    on_main(&app, || unsafe {
+    call_main(&app, Duration::from_secs(10), || unsafe {
         yx_wemeet_release();
     })
+}
+
+/// 应用退出时释放。`RunEvent::Exit` 本身就在主线程，不能再投递回主线程。
+pub fn release_blocking() {
+    unsafe { yx_wemeet_release() }
 }

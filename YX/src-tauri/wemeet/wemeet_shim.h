@@ -20,6 +20,7 @@ void yx_wemeet_set_event_callback(yx_wemeet_event_cb cb);
 int yx_wemeet_init(const char* sdk_id, const char* sdk_token, const char* data_path,
                    const char* app_name, const char* server_host);
 int yx_wemeet_is_initialized(void);
+int yx_wemeet_is_logged_in(void);
 
 int yx_wemeet_refresh_token(const char* sdk_token);
 int yx_wemeet_login(const char* sso_url);

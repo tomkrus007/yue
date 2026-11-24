@@ -173,6 +173,7 @@ pub fn run() {
             media_stream::media_response_end,
             wemeet::wemeet_init,
             wemeet::wemeet_status,
+            wemeet::wemeet_is_logged_in,
             wemeet::wemeet_refresh_token,
             wemeet::wemeet_login,
             wemeet::wemeet_join,
@@ -184,10 +185,14 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, _event| {
+        .run(|app, event| {
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = _event {
+            if let tauri::RunEvent::Reopen { .. } = event {
                 show_main_window(app);
+            }
+            // 退出时结束 SDK（会中会被强制离会），避免 TMSDKHelper 残留。
+            if let tauri::RunEvent::Exit = event {
+                wemeet::release_blocking();
             }
             #[cfg(not(target_os = "macos"))]
             let _ = app;

@@ -21,6 +21,7 @@ int yx_wemeet_init(const char*, const char*, const char*, const char*, const cha
 }
 
 int yx_wemeet_is_initialized(void) { return 0; }
+int yx_wemeet_is_logged_in(void) { return 0; }
 int yx_wemeet_refresh_token(const char*) { return -100; }
 int yx_wemeet_login(const char*) { return -100; }
 int yx_wemeet_join(const char*, const char*, const char*, bool, bool, bool) { return -100; }

@@ -7,7 +7,7 @@
   - IM：配置中心下发的 `embWebSocketUri`（生产为 `wss://…:443`）
   - 网盘：`https://streamapi.bingolink.biz/openapi`
   - 登录：`https://www.bingolink.biz/sso/oauth2/token`（OAuth2 password 模式 + RSA 密码加密）
-- **不复刻**：视频会议、日程、红包等重业务；零信任不自研隧道，只驱动本机官方零信任客户端的登录接口
+- **不复刻**：日程、红包等重业务；视频会议直接复用官方腾讯会议 SDK（TMSDK）的原生窗口，不在本仓库重写会议 UI；零信任不自研隧道，只驱动本机官方零信任客户端的登录接口
 
 ## 功能范围
 
@@ -80,6 +80,15 @@ sudo launchctl bootout system/com.legendsec.trustdservice
 - 部门盘入口按 `panServerUri /v1/principals/departments` 列出用户可见的部门链；旧 `/openapi/org/list` 加 `fileNotEmpty` 会漏掉仍有文档的上级部门
 - 公开文档入口按 `/openapi/public/list_class` 列出文档库分类
 - 个人/团队/部门/公开四类盘的目录 id：`CurrentUserId` / groupId（团队群） / orgId / classId
+
+### 会议（腾讯会议）
+- 直接链接官方 `TMSDK.framework`（C++ 接口），没有 Electron/Node 中间层；`src-tauri/wemeet/` 是唯一的原生桥
+- 入口在左侧导航「会议」：打开会前界面（设置／预约／历史都在这里）、快速会议、按会议号加入
+- 账号配置走配置中心 `rtcUri` 的 `v1/tencent/meeting/config`（`sdkKey/sdkToken/ssoUrlPrefix/idToken`），登录态与 YX 登录绑定
+- 首次操作才初始化（约 3–10 秒）；退出登录或退出应用时释放 SDK，避免 `TMSDKHelper` 残留
+- `OnSDKTokenExpired` 时自动重新拉配置并 `RefreshSDKToken`
+- 会议 UI 全部是腾讯原生窗口，不受 YX 主题影响；入会默认关麦克风、关摄像头（与官方一致）
+- 会议中关闭 YX 主窗口只会隐藏窗口，会议继续；从托盘恢复后可点「回到会议」把会中窗口置前
 
 ## 目录结构
 
@@ -177,6 +186,9 @@ pnpm tauri build  # 打包
 - 官方客户端升级会重写 launchd plist（恢复 `RunAtLoad`/`KeepAlive`），需要重新关闭才能保持按需启动
 - 图片/附件下载走带 `access_token` 的 query，链接有时效性
 - 设备序列号用随机 UUID 替代（原版用 serial-number 模块）
+- 会议需要 `src-tauri/vendor/TMSDK.framework`（355 MB，从官方 DMG 用 `scripts/sync-wemeet.sh` 拷贝，不入库）；没有框架时构建走 stub，会议入口会提示不可用
+- TMSDK 要求进程运行在 `.app` 内（依赖 `CFBundleIdentifier`），所以会议只能用 `pnpm tauri build --debug` 出的 `YX.app` 验证，`pnpm tauri dev` 下调用会被前置检查拦下
+- 会议只有 arm64；TMSDK 3.21.303 由腾讯提供，服务端升级后需同步换框架
 
 
 ## 消息与文件转发

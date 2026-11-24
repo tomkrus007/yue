@@ -218,6 +218,12 @@ int yx_wemeet_is_initialized(void) {
   return g_sdk->IsInitialized() ? 1 : 0;
 }
 
+int yx_wemeet_is_logged_in(void) {
+  if (!g_sdk) return 0;
+  auto* account = g_sdk->GetAccountService();
+  return (account && account->IsLoggedIn()) ? 1 : 0;
+}
+
 int yx_wemeet_refresh_token(const char* sdk_token) {
   if (!g_sdk) return -1;
   return g_sdk->RefreshSDKToken(sdk_token ? sdk_token : "");

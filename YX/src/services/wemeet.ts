@@ -11,7 +11,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { listen } from '@tauri-apps/api/event'
-import { authService } from './auth'
 import { getServerPaths } from './config'
 import { httpJson } from './http'
 
@@ -74,6 +73,11 @@ export async function wemeetStatus(): Promise<boolean> {
   return invoke<boolean>('wemeet_status')
 }
 
+/** SDK 是否已经登录（进程内状态，不发起网络请求）。 */
+export async function wemeetIsLoggedIn(): Promise<boolean> {
+  return invoke<boolean>('wemeet_is_logged_in')
+}
+
 export async function wemeetRefreshToken(sdkToken: string): Promise<void> {
   return invoke('wemeet_refresh_token', { sdkToken })
 }
@@ -127,9 +131,4 @@ export async function listenWeMeetEvent(
       handler({ func: 'Raw', code: '', msg: String(e.payload) })
     }
   })
-}
-
-/** 当前登录态，供页面展示。 */
-export function currentUserName(): string {
-  return authService.getCurrentUserName?.() || ''
 }
