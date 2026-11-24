@@ -73,6 +73,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useImStore } from '../stores/im'
 import { combineDetails, fmtMsgTime, messageText } from '../services/im/content'
+import { dedupeMeetingCards } from '../services/im/wemeet-invite'
 import type { ImMessage } from '../services/im/im-client'
 import MessageContent from './MessageContent.vue'
 import MessageGuard from './MessageGuard.vue'
@@ -112,7 +113,8 @@ function searchText(message: Pick<ImMessage, 'msg_type' | 'content' | 'from_name
 const filteredMessages = computed(() => {
   const query = keyword.value.trim().toLocaleLowerCase()
   const types = kindTypes[kind.value]
-  return messages.value.filter(message => (!types || types.includes(Number(message.msg_type))) &&
+  // 15 + 99 的重复会议卡片在历史里也只显示一张
+  return dedupeMeetingCards(messages.value).filter(message => (!types || types.includes(Number(message.msg_type))) &&
     (kind.value !== 'mentions' || im.isAtMe(message)) &&
     (!query || (isProtected(message) ? message.from_name : searchText(message)).toLocaleLowerCase().includes(query)))
 })
