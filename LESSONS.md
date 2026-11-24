@@ -99,3 +99,11 @@
 - **另一个坑**：`invoke` 若把分片塞进普通对象参数（`{ data: Uint8Array }`），`processIpcMessage` 同样 `Array.from` 化成数字数组；必须用 `invoke(cmd, uint8, { headers })` 的原始字节通道，且 CSP `connect-src` 要放行 `ipc:`，否则自定义协议 IPC 失败会整体退化成 JSON 字符串。
 - **做法**：`src-tauri/src/store_upload.rs` 提供 `store_upload_begin/chunk/commit/cancel`：前端 `file.slice()` 按 8MB 分片写临时文件，Rust 用 `reqwest` 从临时文件流式发 multipart（`Part::stream_with_length` 保证 Content-Length），进度经 `Channel` 回传。内存与文件大小无关；上传成功/失败都 `store_upload_cancel` 删临时文件，启动时清理残留。官方客户端也是走本机 Go 服务读文件，而不是浏览器直传。
 - **验证**：`cargo test store_upload` 用本地假存储服务校验 multipart 字段（`file/fileName/size`）、`Content-Length`、Bearer 头与正文完整性；`pnpm build` 只做类型检查，抓不到这类运行时卡死。
+
+## 「团队文档」列表要认新文档模块，不是旧云盘团队
+
+- **现象**：复刻客户端的「云盘 → 团队文档」只有 10 个团队，原版能列出 40+ 个。
+- **原因**：原版 5.2.97 的 `imlayout.tab` 含 `Document`，`homeHasTab("Document")` 为真，云盘实际走新文档模块 `link-module-document`；它的团队文档是「正式团队群空间」，数据来自 `{taskUri}/v1/group/formal/page?scope=1&isCount=true`，按 `offset/limit` 分页。旧云盘 `/openapi/team/list?filter={"onlyMember":true}` 只返回单独创建的云盘团队，和群空间不是同一批数据。
+- **做法**：团队文档统一用 task 接口拉全正式团队群，条目 id 用 `groupId`，目录内容仍走 `panServerUri /v1/directories/{groupId}/items`。不要再用 IM 最近会话（`/emb/sessions/latest`）推导团队文档，它只包含有消息往来的群，也不要再保留重复的「群文档」入口。
+- **部门/个人/公共**：部门列表用 `panServerUri /v1/principals/departments`（实测 4 个），旧 `/openapi/org/list?filter={"fileNotEmpty":true}` 只有 3 个，会漏掉仍有文档的上级部门；个人根目录 id 取自 `principals/info` 的 `rootId`（实测等于 `CurrentUserId`）；公共文档分类仍可用 `/openapi/public/list_class`，导航项与名称的原版来源是 `/v1/space/menu`。
+- **排查**：先看原版 `web/config.json` 的 `imlayout` 是否启用 `Document`，再对照新模块 bundle 里 `getAllSpace` / `groupsList` 的接口，避免继续在旧云盘接口上找原因。

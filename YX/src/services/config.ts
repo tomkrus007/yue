@@ -175,6 +175,7 @@ export const STORAGE_KEYS = {
   imUnreadAt: 'yl.im.unreadAt',
   imUnreadIds: 'yl.im.unreadIds',
   imFolded: 'yl.im.folded',
+  imPinned: 'yl.im.pinned',
   imMuted: 'yl.im.muted',
   imGroupMeta: 'yl.im.groupMeta',
   imLeftGroups: 'yl.im.leftGroups',

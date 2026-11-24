@@ -4,7 +4,7 @@
  * 全部对齐 web 参考实现（2026-10 实测）：
  * - 免打扰按会话类型分流，且这些接口只收表单参数（发 JSON 会报「参数缺失」）
  * - 折叠存服务端 `ms_behavior.expInfo.isFold`
- * - 置顶 `msgstick/list`
+ * - 置顶 `msgstick/list|add|{id}/delete`
  * - 团队群靠群详情 `templateCode === workGroupDefault` 或 extendParams.tag === '团队'
  */
 import { getServerPaths } from '../config'
@@ -86,23 +86,47 @@ export async function loadDirectory(): Promise<Map<string, DirectoryEntry>> {
 /**
  * 置顶会话：GET {uamApiUri}/v1/msgstick/list → [{ stickId, stickTime, type }]
  * 有些置顶会话在离线窗口里没有消息，需要按 id 补出来。
+ * 网络失败时抛错，让调用方保留本地缓存（对齐官方先读本地 user_msgsticks 表）。
  */
 export async function loadPinned(): Promise<
   Array<{ id: string; type: number; time: number }>
 > {
   const base = uamBase()
   if (!base) return []
-  try {
-    const d = await httpJson<any>(base + '/v1/msgstick/list')
-    return normalizeList(d)
-      .filter((it) => it && it.stickId)
-      .map((it) => ({
-        id: String(it.stickId),
-        type: Number(it.type) || 1,
-        time: Number(it.stickTime) || 0,
-      }))
-  } catch {
-    return []
+  const d = await httpJson<any>(base + '/v1/msgstick/list')
+  return normalizeList(d)
+    .filter((it) => it && it.stickId)
+    .map((it) => ({
+      id: String(it.stickId),
+      type: Number(it.type) || 1,
+      time: Number(it.stickTime) || 0,
+    }))
+}
+
+/**
+ * 置顶会话：POST {uamApiUri}/v1/msgstick/add，表单参数 stickId + type。
+ * 官方用本地时间作为 topTime（回调里写 `t: Date.now()`），这里保持一致。
+ */
+export async function addPin(s: SessionRef): Promise<number> {
+  const base = uamBase()
+  if (!base) throw new Error('缺少 uamApiUri')
+  await postForm(base + '/v1/msgstick/add', {
+    stickId: s.id,
+    type: Number(s.type) || 1,
+  })
+  return Date.now()
+}
+
+/** 取消置顶：POST {uamApiUri}/v1/msgstick/{stickId}/delete，官方不带请求体。 */
+export async function removePin(id: string): Promise<void> {
+  const base = uamBase()
+  if (!base) throw new Error('缺少 uamApiUri')
+  const d = await httpJson<any>(
+    base + '/v1/msgstick/' + encodeURIComponent(id) + '/delete',
+    { method: 'POST' },
+  )
+  if (d && d.code && d.code !== 200) {
+    throw new Error(d.message || d.msg || '取消置顶失败')
   }
 }
 

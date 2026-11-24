@@ -29,12 +29,14 @@ import { useMentionsStore } from './mentions'
 import { useReceiptAudienceStore } from './receipts'
 import { groupService, type GroupDetail } from '../services/group-client'
 import {
+  addPin,
   isServiceAccount,
   isTeamGroup,
   loadDirectory,
   loadFoldStates,
   loadMuteStates,
   loadPinned,
+  removePin,
   setFold,
   sessionOfMsg,
   supportsMute,
@@ -294,6 +296,7 @@ export const useImStore = defineStore('im', () => {
     )
     muted.value = new Set(readJson<string[]>(STORAGE_KEYS.imMuted, []))
     folded.value = new Set(readJson<string[]>(STORAGE_KEYS.imFolded, []))
+    pinned.value = readJson<Record<string, number>>(STORAGE_KEYS.imPinned, {})
     try {
       for (const [id, team] of readJson<Array<[string, boolean]>>(
         STORAGE_KEYS.imGroupMeta,
@@ -342,6 +345,10 @@ export const useImStore = defineStore('im', () => {
 
   function persistFolded(): void {
     writeJson(STORAGE_KEYS.imFolded, [...folded.value])
+  }
+
+  function persistPinned(): void {
+    writeJson(STORAGE_KEYS.imPinned, pinned.value)
   }
 
   function persistGroupMeta(): void {
@@ -635,6 +642,7 @@ export const useImStore = defineStore('im', () => {
         }
       }
       pinned.value = map
+      persistPinned()
       persistSessions()
     } catch {
       /* 忽略 */
@@ -952,6 +960,10 @@ export const useImStore = defineStore('im', () => {
     return Object.values(pendingReadCommands.value).find(command => String(command.content?.readMsgIds || '').split(',').includes(id))?.__error || ''
   }
 
+  function readConfirmationPending(id: string): boolean {
+    return Object.values(pendingReadCommands.value).some(command => String(command.content?.readMsgIds || '').split(',').includes(id))
+  }
+
   function confirmMessageRead(message: ImMessage): void {
     const sessionId = (message as ChatMessage).sessionId
     const session = sessions.value.find(item => item.id === sessionId) || currentSession.value
@@ -1144,6 +1156,7 @@ export const useImStore = defineStore('im', () => {
       STORAGE_KEYS.imUnreadAt,
       STORAGE_KEYS.imUnreadIds,
       STORAGE_KEYS.imFolded,
+      STORAGE_KEYS.imPinned,
       STORAGE_KEYS.imMuted,
       STORAGE_KEYS.imGroupMeta,
       STORAGE_KEYS.imLeftGroups,
@@ -1202,10 +1215,23 @@ export const useImStore = defineStore('im', () => {
   const sessionSortTime = (s: ChatSession) =>
     Math.max(s.lastTime || 0, sessionBoosts.value[s.id] || 0)
 
+  /**
+   * 置顶排序键，对齐官方 `mutiKeySort("topTime","sendTime","desc")`：
+   * 置顶会话按 max(置顶时间, 最新消息时间) 排在最前，未置顶为 0（再按消息时间排）。
+   */
+  const sessionTopTime = (s: ChatSession): number => {
+    const pin = pinned.value[s.id] || 0
+    return pin ? Math.max(pin, sessionSortTime(s)) : 0
+  }
+
   const sortedSessions = computed(() =>
     sessions.value
       .filter((s) => !(s.id in hiddenSessions.value))
-      .sort((a, b) => sessionSortTime(b) - sessionSortTime(a)),
+      .sort(
+        (a, b) =>
+          sessionTopTime(b) - sessionTopTime(a) ||
+          sessionSortTime(b) - sessionSortTime(a),
+      ),
   )
 
   const tabDefs: Array<{
@@ -1442,6 +1468,28 @@ export const useImStore = defineStore('im', () => {
     }
   }
 
+  /** 置顶 / 取消置顶：服务端成功后更新本地，失败保持原状 */
+  async function togglePinSession(s: ChatSession): Promise<boolean> {
+    const on = !(pinned.value[s.id] > 0)
+    try {
+      if (on) {
+        const time = await addPin(s)
+        pinned.value = { ...pinned.value, [s.id]: time }
+      } else {
+        await removePin(s.id)
+        const next = { ...pinned.value }
+        delete next[s.id]
+        pinned.value = next
+      }
+      persistPinned()
+      log((on ? '已置顶：' : '已取消置顶：') + s.name)
+      return on
+    } catch (e: any) {
+      log('置顶设置失败：' + (e?.message || e))
+      return pinned.value[s.id] > 0
+    }
+  }
+
   /** 折叠 / 展开：先更新本地，再同步服务端，失败回滚 */
   async function toggleFoldSession(s: ChatSession): Promise<void> {
     const wantFold = !folded.value.has(s.id)
@@ -1629,6 +1677,7 @@ export const useImStore = defineStore('im', () => {
     pendingReadCommands,
     burnDeadlines,
     readConfirmationError,
+    readConfirmationPending,
     uploads,
     unread,
     unreadAt,
@@ -1679,6 +1728,7 @@ export const useImStore = defineStore('im', () => {
     confirmMessageRead,
     burnMessage,
     toggleMuteSession,
+    togglePinSession,
     toggleFoldSession,
     ensureTeam,
     ensureGroupDetail,

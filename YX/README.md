@@ -19,7 +19,7 @@
 - 大文件上传走 Rust 流式链路（前端 8MB 分片写临时文件，Rust 读文件发 multipart），600MB+ 文件不再撑爆 WebView 内存
 - 离线消息拉取（Cmd.uOfflineStart=102 / dEOFoffline=97 / dEOFonline=101）
 - 历史消息（`get/history/date`）与继续往前翻页
-- REST 会话列表（`emb/sessions/latest`）、未读数、置顶、折叠、免打扰
+- REST 会话列表（`emb/sessions/latest`）、未读数、置顶（置顶/取消置顶、置顶优先排序）、折叠、免打扰
 - 富文本 / 复杂消息（type 0/1）与合并转发的文本与 HTML 白名单渲染；普通文本消息按字面显示，标签不会被解析掉；正文中的 http/https 地址会变成可点击链接，点击交给系统浏览器打开（`src/services/im/autolink.ts`）
 - 待办通知卡片展示标题、摘要与更多信息；点击「查看待办／待阅／已办」直接在系统浏览器打开对应详情
 - 消息无直链时，后台按来源与完整标题查询待办／待阅／已办，唯一匹配后直接打开原始详情地址；同名歧义、缺少链接或仅移动端可办时在消息下提示原因，不执行快捷审批
@@ -76,9 +76,10 @@ sudo launchctl bootout system/com.legendsec.trustdservice
 - 搜索（`/openapi/file/search`）
 - 文件下载（`/openapi/stream/download`，302 到 S3 签名地址）
 - 在线编辑（优先 `panDocUri /v1/doc/open`；仅旧 openapi 的历史文件退回 `driveWpsUri /v1/api/file/wps3rd`）
-- 群文档入口：把聊天群/团队群的文档空间聚合成一个盘，进入后按群 id 浏览
-- 团队盘入口按 `filter={"onlyMember":true}` 拉取全部已加入团队；旧实现发送 `filter.onlyMember`，服务端忽略该键后团队列表不全
-- 个人/团队/部门/公开四类盘的目录 id：`CurrentUserId` / teamId / orgId / classId
+- 团队盘入口按 `taskUri /v1/group/formal/page` 列出全部正式团队群（分页拉全），进入后按 groupId 浏览；旧实现走 `/openapi/team/list?filter={"onlyMember":true}`，只返回单独创建的云盘团队，团队数量远少于原版
+- 部门盘入口按 `panServerUri /v1/principals/departments` 列出用户可见的部门链；旧 `/openapi/org/list` 加 `fileNotEmpty` 会漏掉仍有文档的上级部门
+- 公开文档入口按 `/openapi/public/list_class` 列出文档库分类
+- 个人/团队/部门/公开四类盘的目录 id：`CurrentUserId` / groupId（团队群） / orgId / classId
 
 ## 目录结构
 

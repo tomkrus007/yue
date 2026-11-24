@@ -3,12 +3,12 @@ import { computed, ref } from 'vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { authService } from '../services/auth'
 import { getServerPaths } from '../services/config'
-import { useImStore } from './im'
-import { fetchSessions } from '../services/im/session-api'
 import {
   createFolder,
   deleteItem,
+  listDepartmentSpaces,
   listDir,
+  listTeamSpaces,
   type PanDiskItem,
 } from '../services/disk-pan'
 import {
@@ -18,11 +18,11 @@ import {
 import { editUrl } from '../services/pan-client'
 
 export interface DiskDrive {
-  /** 盘标识：/Private /Team /Org /Groups /Public/<classId> */
+  /** 盘标识：/Private /Team /Org /Public/<classId> */
   id: string
   name: string
-  /** private | team | org | group | public */
-  kind: 'private' | 'team' | 'org' | 'group' | 'public'
+  /** private | team | org | public */
+  kind: 'private' | 'team' | 'org' | 'public'
   classId?: string
 }
 
@@ -102,8 +102,6 @@ export const useDiskStore = defineStore('disk', () => {
       } catch {
         /* 无公开盘 */
       }
-      // 群文档：把聊天群/团队群的文档空间聚合成一个入口
-      list.push({ id: '/Groups', name: '群文档', kind: 'group' })
       drives.value = list
       if (list.length && !currentDrive.value) {
         await openDrive(list[0]!)
@@ -130,11 +128,6 @@ export const useDiskStore = defineStore('disk', () => {
       await loadSub('/Org')
       return
     }
-    if (drive.kind === 'group') {
-      trail.value = []
-      await loadGroups()
-      return
-    }
     const rootId =
       drive.kind === 'private'
         ? authService.getCurrentUserId()
@@ -148,35 +141,14 @@ export const useDiskStore = defineStore('disk', () => {
     loading.value = true
     error.value = ''
     try {
-      const r = await (path === '/Org' ? diskClient.orgList() : diskClient.teamList())
-      subEntries.value = r.files
+      if (path === '/Org') {
+        subEntries.value = (await listDepartmentSpaces()).map(toDiskFile)
+      } else {
+        subEntries.value = (await listTeamSpaces()).map(toDiskFile)
+      }
       files.value = []
     } catch (e: any) {
       error.value = e.message
-      subEntries.value = []
-    } finally {
-      loading.value = false
-    }
-  }
-
-  /** 群文档：聊天群/团队群的文档空间 */
-  async function loadGroups() {
-    loading.value = true
-    error.value = ''
-    try {
-      const im = useImStore()
-      let groups: Array<{ id: string; name: string; type: number }> =
-        im.sessions.filter((s) => s.type === 2)
-      if (!groups.length) {
-        groups = (await fetchSessions()).filter((s) => s.type === 2)
-      }
-      subEntries.value = groups
-        .map((s) => ({ id: s.id, name: s.name, path: '', type: 'D' as const }))
-        .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
-      files.value = []
-      trail.value = []
-    } catch (e: any) {
-      error.value = '群文档加载失败：' + (e?.message || String(e))
       subEntries.value = []
     } finally {
       loading.value = false
@@ -217,13 +189,12 @@ export const useDiskStore = defineStore('disk', () => {
       await list(currentDirId.value)
       return
     }
-    // 团队/部门/群文档从具体目录返回入口列表
+    // 团队/部门从具体目录返回入口列表
     const kind = currentDrive.value?.kind
-    if (kind === 'team' || kind === 'org' || kind === 'group') {
+    if (kind === 'team' || kind === 'org') {
       trail.value = []
       if (kind === 'team') await loadSub('/Team')
-      else if (kind === 'org') await loadSub('/Org')
-      else await loadGroups()
+      else await loadSub('/Org')
     }
   }
 

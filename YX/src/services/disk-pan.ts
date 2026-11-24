@@ -16,6 +16,7 @@
 import { fetch } from '@tauri-apps/plugin-http'
 import { authService } from './auth'
 import { getServerPaths } from './config'
+import { tokenGet } from './http'
 
 export interface PanDiskItem {
   id: string
@@ -73,6 +74,56 @@ async function request<T>(
 export async function listDir(dirId: string): Promise<PanDiskItem[]> {
   const data = await request<PanDiskItem[]>('GET', `/v1/directories/${encodeURIComponent(dirId)}/items`)
   return Array.isArray(data) ? data : []
+}
+
+/**
+ * 团队文档空间（原版首页「文档 → 团队文档」的数据源）。
+ * 原版 5.2.97 已启用新文档模块，团队文档列的是全部正式团队群：
+ *   GET {taskUri}/v1/group/formal/page?scope=1&isCount=true&offset=&limit=
+ * 旧的 /openapi/team/list 只返回单独创建的云盘团队，数量远少于群空间。
+ */
+export async function listTeamSpaces(): Promise<PanDiskItem[]> {
+  const base = String(getServerPaths().taskUri || '').replace(/\/+$/, '')
+  if (!base) throw new Error('缺少 taskUri，无法加载团队文档')
+  const limit = 100
+  const out: PanDiskItem[] = []
+  const seen = new Set<string>()
+  for (let offset = 0; ; offset += limit) {
+    const q = new URLSearchParams({
+      scope: '1',
+      isCount: 'true',
+      offset: String(offset),
+      limit: String(limit),
+    })
+    const r = await tokenGet<any>(base + '/v1/group/formal/page?' + q.toString())
+    const list = Array.isArray(r && r.data) ? r.data : []
+    let added = 0
+    for (const g of list) {
+      const id = String(g.groupId || g.id || '')
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      out.push({ id, name: String(g.name || id), type: 'D' })
+      added += 1
+    }
+    const total = Number(r && r.total) || 0
+    if (list.length < limit || added === 0 || (total > 0 && out.length >= total))
+      break
+  }
+  return out
+}
+
+/**
+ * 部门文档空间：与原版「部门文档」一致。
+ * 原版新文档模块用 {pan} /v1/principals/departments，返回用户可见的部门链；
+ * 旧 /openapi/org/list 的 fileNotEmpty 过滤会漏掉仍有文档的上级部门。
+ */
+export async function listDepartmentSpaces(): Promise<PanDiskItem[]> {
+  const data = await request<any[]>('GET', '/v1/principals/departments')
+  return (Array.isArray(data) ? data : []).map((d) => ({
+    id: String(d.id),
+    name: String(d.name || d.id),
+    type: 'D',
+  }))
 }
 
 /** 新建目录 */

@@ -53,26 +53,19 @@
       <div class="file-list">
         <div v-if="disk.loading" class="loading">加载中…</div>
 
-        <!-- 团队、部门、群文档入口列表 -->
+        <!-- 团队、部门入口列表 -->
         <table v-else-if="disk.subEntries.length > 0">
           <thead><tr><th>{{ subEntryLabel() }}</th><th>类型</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="t in disk.subEntries" :key="t.id" @dblclick="disk.enterTeam(t)">
               <td class="name">
-                <span class="f-icon">{{ disk.currentDrive?.kind === 'group' ? '💬' : '👥' }}</span>{{ t.name }}
+                <span class="f-icon">👥</span>{{ t.name }}
               </td>
               <td>{{ subEntryLabel() }}</td>
               <td class="ops"><button class="small" @click.stop="disk.enterTeam(t)">进入</button></td>
             </tr>
           </tbody>
         </table>
-
-        <div
-          v-else-if="disk.currentDrive?.kind === 'group' && disk.trail.length === 0 && !disk.loading"
-          class="empty"
-        >
-          没有可用的群文档
-        </div>
 
         <!-- 普通文件列表 -->
         <table v-else>
@@ -169,7 +162,6 @@ function driveIcon(kind: string): string {
     case 'private': return '👤'
     case 'team': return '👥'
     case 'org': return '🏢'
-    case 'group': return '💬'
     case 'public': return '📢'
     default: return '📁'
   }
@@ -177,7 +169,7 @@ function driveIcon(kind: string): string {
 
 function subEntryLabel(): string {
   const kind = disk.currentDrive?.kind
-  return kind === 'org' ? '部门' : kind === 'group' ? '群' : '团队'
+  return kind === 'org' ? '部门' : '团队'
 }
 
 async function onOpenDrive(d: DiskDrive) {

@@ -126,35 +126,6 @@ export class DiskClient {
     return this.request<any>('GET', '/system/info')
   }
 
-  /** 团队盘列表（仅我加入的） */
-  teamList(): Promise<DiskListResult> {
-    return this.request<any>('GET', '/team/list', {
-      // 服务端只认 filter=<JSON>；写成 filter.onlyMember 会被忽略，
-      // 返回的团队不完整（表现为「团队文档里少了很多团队」）。
-      filter: JSON.stringify({ onlyMember: true }),
-      options: 'withPermissions',
-    }).then((r) => ({
-      files: (r.rows || r.files || r.items || []).map(this.normalizeFile),
-      path: '/Team',
-      hasMore: !!r.hasMore,
-    }))
-  }
-
-  /** 部门文档入口：与原版一致，列出有文档的部门及其下级部门。 */
-  orgList(): Promise<DiskListResult> {
-    return this.request<any>('GET', '/org/list', {
-      filter: JSON.stringify({ fileNotEmpty: true, withDescendants: true }),
-    }).then((r) => ({
-      files: (r.rows || []).map((org: any) => this.normalizeFile({
-        ...org,
-        path: '/Org/' + org.id,
-        type: 'D',
-      })),
-      path: '/Org',
-      hasMore: !!r.hasMore,
-    }))
-  }
-
   /** 公开文档分类列表 */
   publicClasses(): Promise<any[]> {
     return this.request<any>('GET', '/public/list_class').then((r) =>

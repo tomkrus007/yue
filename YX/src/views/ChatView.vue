@@ -153,6 +153,13 @@
               </svg>
               查看联系人详情
             </button>
+            <button role="menuitem" @click="pinFromSessionMenu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9.5 3.5h5l-1 6 4 4h-11l4-4-1-6z" />
+                <path d="M12 13.5V21" />
+              </svg>
+              {{ im.pinned[sessionMenu.session.id] ? '取消置顶' : '置顶会话' }}
+            </button>
             <button role="menuitem" @click="foldFromSessionMenu">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path :d="im.folded.has(sessionMenu.session.id) ? 'm6 9 6 6 6-6' : 'm18 15-6-6-6 6'" />
@@ -899,7 +906,7 @@ function openSessionMenu(session: ChatSession, event: MouseEvent) {
   }
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const width = sessionDetailKind(session) ? 168 : 132
-  const height = sessionDetailKind(session) ? 118 : 84
+  const height = sessionDetailKind(session) ? 152 : 118
   sessionMenu.value = {
     session,
     left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
@@ -917,6 +924,11 @@ function closeSessionMenu() {
   window.removeEventListener('resize', closeSessionMenu)
   window.removeEventListener('scroll', closeSessionMenu, true)
   window.removeEventListener('keydown', onSessionMenuKeydown)
+}
+function pinFromSessionMenu() {
+  const session = sessionMenu.value?.session
+  closeSessionMenu()
+  if (session) void im.togglePinSession(session)
 }
 function foldFromSessionMenu() {
   const session = sessionMenu.value?.session
