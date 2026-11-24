@@ -199,7 +199,7 @@ pnpm tauri build  # 打包
 - 会议需要 `src-tauri/vendor/TMSDK.framework`（355 MB，从官方 DMG 用 `scripts/sync-wemeet.sh` 拷贝，不入库）；没有框架时构建走 stub，会议入口会提示不可用
 - TMSDK 要求进程运行在 `.app` 内（依赖 `CFBundleIdentifier`），所以会议只能用 `pnpm tauri build --debug` 出的 `YX.app` 验证，`pnpm tauri dev` 下调用会被前置检查拦下
 - 收到会议邀请时会弹全局「加入会议」窗口（离线补发的旧邀请不弹，会议中也不弹）；响铃邀请走 SDK 原生接听窗口（默认开，可在会议页关闭），官方客户端没有启用这套通道，因此只能按 IM 邀请联调
-- 会中/会前「邀请」按钮仍是腾讯原生 UI；接管它需要 `EnableInviteCallback` 并双账号联调，暂未实现
+- 会中/会前「邀请」按钮仍是腾讯原生 UI；已评估接管方案（`EnableInviteCallback` 等），因增量收益有限且会丢掉复制链接/PSTN/Rooms 入口，暂不实施，见 `doc/腾讯会议邀请按钮接管方案.md`
 - 会议只有 arm64；TMSDK 3.21.303 由腾讯提供，服务端升级后需同步换框架
 
 
