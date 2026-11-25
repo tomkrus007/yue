@@ -563,8 +563,13 @@ cd src-tauri && cargo test -- --ignored real_release
 **PR6 已完成：CI 与发布**
 
 - `.github/workflows/release.yml`：tag `v*` 或手动触发，矩阵 `macos-14`（dmg）+ `windows-latest`（nsis）；
-  macOS 先从组件 Release 里只解出 `payload/TMSDK.framework/Versions/A/Headers` 再编译 shim；
-  构建后断言产物里**没有** `TMSDK.framework`、`otool -L` 里**没有** tmsdk；tag 时用 `softprops/action-gh-release` 挂 Release。
+  构建后断言产物里**没有** `TMSDK.framework`、`otool -L` 里**没有** tmsdk，Windows 断言目标目录里没有 wemeet 相关 DLL；
+  tag 时用 `softprops/action-gh-release` 挂 Release。
+- 头文件不再在 workflow 里写死 URL，统一走 `YX/scripts/fetch-tmsdk-headers.sh <平台>`：地址从
+  `components.json` 读（与运行时组件下载同一处默认值），带 `curl --retry`，并支持 `TMSDK_ARCHIVE=...` 用本地包离线执行。
+  Windows 目前 `component: ""`，不取头文件、编 stub；等 Windows 组件包做出来再填 `windows-x64`。
+- 仓库根目录没有 `package.json`（应用在 `YX/`），所以 job 用 `defaults.run.working-directory: YX`；
+  `uses:` 步骤不吃这个设置，`upload-artifact` / `action-gh-release` 的产物路径要带 `YX/` 前缀。
 - `package.json` 加 `"packageManager": "pnpm@12.23.0"`，CI 用 `corepack enable`。
 
 **首次引导（必须做一次，否则 CI 的 macOS 构建取不到头文件）**
