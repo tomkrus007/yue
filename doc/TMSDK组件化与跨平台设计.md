@@ -9,7 +9,7 @@
 
 | # | 问题 | 目标 |
 |---|---|---|
-| G1 | DMG 155 MB，改几个页面也要全量重下 | 安装包降到 **≈5 MB**；TMSDK 从"随包分发"改为"独立组件" |
+| G1 | DMG 155 MB，改几个页面也要全量重下 | 安装包降到 **≈6 MB**；TMSDK 从"随包分发"改为"独立组件" |
 | G2 | 组件只能靠重新发版获取 | 组件支持 **本地文件** 与 **网络 URL** 两条源，同一个压缩包、同一套校验 |
 | G3 | 下载地址写死，换源要发版 | 默认地址入库（SQLite），运行时可改，改完立即生效 |
 | G4 | 没有 CI，只能手工打包 | GitHub Actions 出 macOS / Windows 安装包；先出 macOS 组件包，Windows 后续 |
@@ -44,11 +44,13 @@ TMSDK 压缩后：`tar.gz` 150 MB，`tar.zst -19` **118 MB**（`zstd -T0 -19`，
 
 **拆分后实测（PR1，`pnpm tauri build`）**：
 
-| 项 | 拆分前 | 拆分后 |
-|---|---|---|
-| `YX_0.1.26_aarch64.dmg` | 155 MB | **5.16 MB** |
-| `YX.app` | 365 MB | 9.21 MB |
-| `otool -L Contents/MacOS/YX` | 含 `@rpath/tmsdk_wemeet_sdk…` | 无 tmsdk 依赖 |
+| 项 | 拆分前 | 拆分后（PR1） | 当前（0.1.27） |
+|---|---|---|---|
+| DMG | 155 MB | **5.16 MB** | **6.17 MB** |
+| `YX.app` | 365 MB | 9.21 MB | 11.16 MB |
+| `otool -L Contents/MacOS/YX` | 含 `@rpath/tmsdk_wemeet_sdk…` | 无 tmsdk 依赖 | 无 tmsdk 依赖 |
+
+> PR1→当前 多出的 1 MB 是 `rusqlite`（bundled SQLite）与 `tauri-plugin-dialog`。
 
 ### 1.2 TMSDK 的加载方式与硬约束（已实测）
 
@@ -243,7 +245,8 @@ app_cache_dir/components/
 ```
 
 - 安装（无论本地还是网络）成功后把包留档。
-- 启动/进入会议页时：bundle 内没有组件但缓存有 → **静默本地安装**（约 2–4 秒，无网络）。
+- 进入会议（或任何调用 `ensureReady` 的入口）时：组件缺失但缓存有 → **自动本地安装**（约 2–4 秒，无网络）。
+  不在应用启动时无条件回装：那会让从不开会的人也白占 355 MB。
 - 缓存只保留最近 1 个版本，升级版本时清理旧的。
 - 缓存目录可被系统清理工具删除，所以只当加速，不当唯一来源。
 
@@ -519,18 +522,30 @@ open src-tauri/target/debug/bundle/macos/YX.app
 |---|---|
 | 组件路径 / `dlopen` / 状态查询 / 安装 / 取消 / 清理缓存 / 重新加载 | `src/component.rs` |
 | 解压（`/usr/bin/tar`，自动识别 zstd）→ 结构校验 → 腾讯签名校验 → `ditto` 落位（同级 incoming + 备份换入）→ `codesign --force --sign -` + `--verify --deep --strict` → `dlopen` | 同上 |
-| 组件包留档到 `app_cache_dir/components/`，只保留 1 份；覆盖安装 app 后启动时**后台静默回装**（已实测） | 同上 |
+| 组件包留档到 `app_cache_dir/components/`，只保留 1 份；覆盖安装 app 后，进会议时由 `ensureComponent()` 用同一安装器从缓存回装（实测走的就是 `source=cache` 这条路径） | 同上 |
 | `components.json` 提供默认下载地址，启动时种子进 `settings`（`schema_meta` 记住种子值：用户没改过就跟随新版本，改过就永久保留） | `components.json`、`db.rs` |
 | 前端「会议组件」卡片：状态/版本/占用、选本地包、URL 下载、保存/恢复默认、从缓存恢复、清理缓存、进度 | `services/component.ts`、`stores/wemeet.ts`、`views/WemeetView.vue` |
 | 选文件用 `tauri-plugin-dialog`（HTML file input 拿不到真实路径） | `Cargo.toml`、`capabilities/default.json` |
 | 打包脚本：`ditto` → `component.json` → `tar --no-xattrs` → `zstd -19`，产物 118 MiB + `.sha256` | `scripts/pack-tmsdk.sh` |
 
-实测（debug 包）：把 118 MiB 包放进 `~/Library/Caches/com.tom.YX/components/` 后启动 app，
-自动完成解压/校验/落位/重签/加载，日志 `组件回装完成：Some("3.21.303.110")`，
-`codesign --verify --deep --strict` 通过，`components` 表写入 `source=cache`。
+实测（debug 包）：把 118 MiB 包放进 `~/Library/Caches/com.tom.YX/components/` 后触发安装（当时接的是启动钩子，
+现在改为进会议时触发，调用的是同一个 `install_archive`），完成解压/校验/落位/重签/加载，
+`codesign --verify --deep --strict` 通过，`components` 表写入 `source=cache`，版本读出 `3.21.303.110`。
 `schema_meta` 里记录了种子地址；`user_version` 从 1 迁到 2。
 
+下载加了 3 次重试（700ms/1400ms 退避）：实测本机经代理访问 GitHub 时，TLS 握手阶段约两成概率
+被中途掐断（`connection closed via error`），同样的 URL 下一次就成功，不重试会直接把失败抛给用户。
+重试只针对「请求发不出去」，已经开始传输后的中断仍需重新下载。
+
 未做：断点续传（`Range`）。弱网重下的代价是 118 MiB，等有人反馈再加。
+
+真实地址连通性有一个 `#[ignore]` 测试（下载 118 MiB，约 1 分钟），发版前手动跑一次：
+
+```bash
+cd src-tauri && cargo test -- --ignored real_release
+```
+
+它校验 `components.json` 里的地址能下到完整的 zstd 包（含重试），避免「地址写错/资产没传上去」到用户手里才发现。
 
 **PR5 已完成：跨平台 gate 与能力视图**
 

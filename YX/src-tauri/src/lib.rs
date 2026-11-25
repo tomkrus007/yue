@@ -198,9 +198,6 @@ pub fn run() {
             store_download::cleanup_stale(&download_dir);
             app.manage(db);
             app.manage(component::InstallState::default());
-            // 覆盖安装 app 会丢组件；缓存里还有包就在后台静默装回去。
-            let handle = app.handle().clone();
-            std::thread::spawn(move || component::restore_from_cache(&handle));
             app.manage(store_upload::UploadSpool::default());
             app.manage(store_download::Downloads::default());
             app.manage(media_stream::MediaStreams::default());

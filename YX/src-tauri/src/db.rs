@@ -306,7 +306,7 @@ pub fn current_arch() -> &'static str {
 /// 随包分发的组件默认地址（`src-tauri/components.json`）。
 ///
 /// 这是默认值的唯一出处：换地址改这里 + 发版，不用改代码逻辑。
-fn default_component_url() -> Option<String> {
+pub fn default_component_url() -> Option<String> {
     let file: serde_json::Value = serde_json::from_str(include_str!("../components.json")).ok()?;
     let key = format!("{}-{}", current_platform(), current_arch());
     file.get("tmsdk")?

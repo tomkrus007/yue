@@ -662,6 +662,21 @@ pub async fn component_install_url(
     outcome
 }
 
+/// reqwest 的 `Display` 只给「error sending request」，真正原因在 source 链里。
+fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut text = e.to_string();
+    let mut source = e.source();
+    while let Some(err) = source {
+        let detail = err.to_string();
+        if !text.contains(&detail) {
+            text.push_str("：");
+            text.push_str(&detail);
+        }
+        source = err.source();
+    }
+    text
+}
+
 /// 下载到缓存目录的临时文件；返回临时文件路径。
 ///
 /// 进度通过回调上抛（而不是直接 emit），这样这段逻辑能脱离 `AppHandle` 测试。
@@ -671,15 +686,56 @@ fn download(
     cancel: &AtomicBool,
     on_progress: &dyn Fn(u64, Option<u64>),
 ) -> Result<PathBuf, String> {
+    match fetch_to(url, target, cancel, on_progress) {
+        Ok(()) => Ok(target.to_path_buf()),
+        Err(e) => {
+            // 半截包不留：缓存目录里只该有完整的 .tar.zst
+            let _ = std::fs::remove_file(target);
+            Err(e)
+        }
+    }
+}
+
+/// 发请求并重试：GitHub 的 TLS 连接在国内网络下常被中途掐断（约两成概率），
+/// 而失败发生在握手阶段，重试是唯一有效的处理方式。
+fn send_with_retry(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    cancel: &AtomicBool,
+) -> Result<reqwest::blocking::Response, String> {
+    const ATTEMPTS: u32 = 3;
+    let mut last = String::new();
+    for attempt in 0..ATTEMPTS {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("已取消".into());
+        }
+        match client.get(url).send() {
+            Ok(response) => return Ok(response),
+            Err(e) => {
+                last = error_chain(&e);
+                if attempt + 1 < ATTEMPTS {
+                    std::thread::sleep(Duration::from_millis(
+                        700 * u64::from(attempt + 1),
+                    ));
+                }
+            }
+        }
+    }
+    Err(format!("下载组件失败（已重试 {ATTEMPTS} 次）：{last}"))
+}
+
+fn fetch_to(
+    url: &str,
+    target: &Path,
+    cancel: &AtomicBool,
+    on_progress: &dyn Fn(u64, Option<u64>),
+) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .timeout(None)
         .build()
-        .map_err(|e| format!("初始化下载失败：{e}"))?;
-    let mut response = client
-        .get(url)
-        .send()
-        .map_err(|e| format!("下载组件失败：{e}"))?;
+        .map_err(|e| format!("初始化下载失败：{}", error_chain(&e)))?;
+    let mut response = send_with_retry(&client, url, cancel)?;
     if !response.status().is_success() {
         return Err(format!("下载组件失败：HTTP {}", response.status().as_u16()));
     }
@@ -691,13 +747,12 @@ fn download(
     let mut buffer = vec![0u8; 256 * 1024];
     loop {
         if cancel.load(Ordering::Relaxed) {
-            let _ = std::fs::remove_file(target);
             return Err("已取消".into());
         }
         use std::io::Read;
         let n = response
             .read(&mut buffer)
-            .map_err(|e| format!("下载中断：{e}"))?;
+            .map_err(|e| format!("下载中断：{}", error_chain(&e)))?;
         if n == 0 {
             break;
         }
@@ -711,11 +766,10 @@ fn download(
         }
     }
     if received == 0 {
-        let _ = std::fs::remove_file(target);
         return Err("下载到的组件包为空".into());
     }
     on_progress(received, total);
-    Ok(target.to_path_buf())
+    Ok(())
 }
 
 #[tauri::command]
@@ -742,31 +796,6 @@ pub fn component_clear_cache(app: AppHandle, db: State<'_, Db>) -> Result<u64, S
     }
     let after = dir_bytes(&dir);
     Ok(before.saturating_sub(after))
-}
-
-/// 启动时的静默回装：覆盖安装 app 会换掉 `Contents/Frameworks`，但组件包缓存还在，
-/// 于是本地重装一次（约 2–4 秒），不必再下 118 MB。
-pub fn restore_from_cache(app: &AppHandle) {
-    if !cfg!(target_os = "macos") || dylib_path().map(|p| p.exists()).unwrap_or(false) {
-        return;
-    }
-    let db = app.state::<Db>().inner().clone();
-    let Some(archive) = cached_archive(app, &db) else {
-        return;
-    };
-    eprintln!("检测到组件缓存，正在本地回装：{}", archive.display());
-    let cancel = AtomicBool::new(false);
-    match install_archive(
-        app,
-        &db,
-        &archive,
-        "cache",
-        Some(archive.to_string_lossy().into_owned()),
-        &cancel,
-    ) {
-        Ok(status) => eprintln!("组件回装完成：{:?}", status.version),
-        Err(e) => eprintln!("组件回装失败（会议暂不可用）：{e}"),
-    }
 }
 
 /// 重新加载已安装的组件（例如用户手工替换后）。
@@ -828,6 +857,26 @@ mod tests {
         let error = download(&url, &target, &AtomicBool::new(false), &|_, _| {}).unwrap_err();
         assert!(error.contains("404"), "unexpected error: {error}");
         assert!(!target.exists(), "失败的下载不该留下临时文件");
+    }
+
+    /// 真实 Release 地址的连通性检查（118 MiB，手动跑一次）：
+    /// `cargo test -- --ignored real_release`
+    #[test]
+    #[ignore = "需要网络：从 GitHub Release 下载 118 MiB"]
+    fn real_release_url_serves_zstd_archive() {
+        let url = crate::db::default_component_url().expect("components.json 缺本平台默认地址");
+        let dir = std::env::temp_dir().join(format!("yx-real-dl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("release.tar.zst");
+        download(&url, &target, &AtomicBool::new(false), &|_, _| {}).unwrap();
+        let bytes = std::fs::read(&target).unwrap();
+        assert!(
+            bytes.len() > 100 * 1024 * 1024,
+            "包太小（{} 字节），可能被重定向到了错误页面",
+            bytes.len()
+        );
+        assert_eq!(&bytes[..4], &[0x28, 0xB5, 0x2F, 0xFD], "不是 zstd 文件");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

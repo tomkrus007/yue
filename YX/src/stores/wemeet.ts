@@ -258,6 +258,24 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     }
   }
 
+  /**
+   * 确保组件可用。覆盖安装新版本会换掉 app 包内的组件，但组件包还在本地缓存，
+   * 这时直接本地装回去（约 2–4 秒，不走网络），而不是让用户重新下 118 MB。
+   */
+  async function ensureComponent(): Promise<void> {
+    if (component.value?.state !== 'ready') await refreshComponent()
+    const current = component.value
+    if (current?.state === 'ready') return
+    if (current?.state === 'unsupported') {
+      throw fail('当前平台没有可用的会议组件，腾讯会议功能不可用')
+    }
+    if (current?.cached_archive) {
+      await installComponent(() => componentInstallLocal(current.cached_archive as string))
+      return
+    }
+    throw fail('会议组件未安装：请先在「会议」页的「会议组件」里选择组件包或从地址下载')
+  }
+
   /** 确保 SDK 已初始化并登录；并发调用共用同一次连接。 */
   async function ensureReady(): Promise<void> {
     if (state.value === 'ready') return
@@ -267,6 +285,7 @@ export const useWeMeetStore = defineStore('wemeet', () => {
 
     const task = (async () => {
       try {
+        await ensureComponent()
         const acc = await fetchWeMeetAccount()
         const uid = authService.getCurrentUserId() || ''
 
