@@ -22,7 +22,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # 必须 arm64：组件包只有 macos-arm64（TMSDK 无 x86 slice）。
+          # macos-14 镜像已由 GitHub 于 2026-11-02 退役，现在用 macos-15。
+          - os: macos-15
             bundles: dmg
             artifact: yx-macos
             # 组件包平台键，对应 YX/src-tauri/components.json 的 platforms

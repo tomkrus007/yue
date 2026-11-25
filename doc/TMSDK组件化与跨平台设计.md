@@ -409,7 +409,7 @@ CI 里需要 TMSDK **头文件**才能编译 shim：workflow 从已发布的组�
 
 ```
 matrix:
-  - macos-14        (aarch64-apple-darwin; TMSDK 只有 arm64)
+  - macos-15        (aarch64-apple-darwin; TMSDK 只有 arm64)
   - windows-latest  (x86_64-pc-windows-msvc; stub shim)
 steps:
   1. checkout / pnpm install / rust toolchain + target
@@ -422,7 +422,8 @@ steps:
 
 要点：
 
-- macOS 用 `macos-14`（arm64）。`macos-13` 是 x86_64，交叉编译 arm64 会因 framework 缺失失败。
+- macOS 用 `macos-15`（arm64）。`macos-13` / `macos-15-intel` 是 x86_64，交叉编译 arm64 会因 framework 缺失失败；
+  `macos-14` 镜像已于 2026-11-02 退役，`runs-on: macos-14` 会在分配 runner 时直接失败（`The configuration 'macos-14-arm64-us-default' is not supported`）。
 - 签名：无 Developer ID，`bundle.macOS.signingIdentity: "-"`（ad-hoc；Tauri CLI 是否接受该值需在 PR5 用一次真实构建确认，退路是显式不配置签名）。`hardenedRuntime` 保持默认 `true`，entitlements 继续放行库校验。
 - 缓存：`~/.cargo/registry`、`target`、pnpm store；组件头文件也可 cache（key 用版本号）。
 - Windows 首次跑通需要修 `build.rs`/`cfg`（见 §4.2），与"能否编译"这一步绑定。
@@ -562,7 +563,7 @@ cd src-tauri && cargo test -- --ignored real_release
 
 **PR6 已完成：CI 与发布**
 
-- `.github/workflows/release.yml`：tag `v*` 或手动触发，矩阵 `macos-14`（dmg）+ `windows-latest`（nsis）；
+- `.github/workflows/release.yml`：tag `v*` 或手动触发，矩阵 `macos-15`（arm64，dmg）+ `windows-latest`（nsis）；
   构建后断言产物里**没有** `TMSDK.framework`、`otool -L` 里**没有** tmsdk，Windows 断言目标目录里没有 wemeet 相关 DLL；
   tag 时用 `softprops/action-gh-release` 挂 Release。
 - 头文件不再在 workflow 里写死 URL，统一走 `YX/scripts/fetch-tmsdk-headers.sh <平台>`：地址从
