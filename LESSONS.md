@@ -115,6 +115,13 @@
 - **实测**：账号 A taskapi 43 / uam-pin 34 / 并集 51；账号 B taskapi 23 / uam-pin 33 / 并集 37（差的 14 个里 5 个是团队空间、9 个是被授权的团队协作群模版）。两个接口结果互不包含，`pinToPan=false` 的 uam 结果与 taskapi 一致。
 - **做法**：`listTeamSpaces()` 先拉 taskapi，再用 `uamApiUri /v3/groups/formal/page?pinToPan=true` 追加并按 `groupId` 去重；uam 失败只告警，不影响主列表。不要只换成 uam（会丢掉 17 个未 Pin 但我加入的群）。
 
+## macOS 分发包必须整体 codesign，否则下载后报「已损坏」
+
+- **现象**：CI 打出的 dmg 装到 `/Applications` 后双击提示「“YX.app”已损坏，无法打开。你应该将它移到废纸篓」，右键「打开」也不给机会。
+- **原因**：没有签名身份时，`pnpm tauri build` 只保留链接器自动加在可执行文件上的 ad-hoc 签名（`flags=adhoc,linker-signed`、`Info.plist=not bound`、`Sealed Resources=none`），bundle 的 Info.plist 与资源没有 seal，`codesign -v --deep --strict` 直接报 `code has no resources but signature indicates they must be present`。这不算「未识别开发者」（那种还能去隐私与安全性里放行），macOS 判定为签名损坏，所以只给「已损坏」。
+- **做法**：打包时设 `APPLE_SIGNING_IDENTITY=-`（Tauri 用 `-` 表示 ad-hoc）。它会在生成 dmg 之前先签主程序、再签整个 `.app`，得到 `Identifier=com.tom.YX` 和完整 seal。校验要 `hdiutil attach` 看 dmg 里的 app——`--bundles dmg` 打完会删掉 `bundle/macos/YX.app`，直接查那个路径是空跑。
+- **遗留**：ad-hoc + 未公证仍过不了 Gatekeeper 的「已识别开发者」检查，首次打开要在 系统设置 → 隐私与安全性 里点「仍要打开」；已经下发的坏包可以 `xattr -cr /Applications/YX.app` 解除隔离后启动。要去掉这一步只能上 Developer ID 证书 + `APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`（Tauri 自动公证）；那时装 TMSDK 的运行时重签不能再写死 `--sign -`，否则外层签名会降级成 ad-hoc。
+
 ## 会议组件切分：打包要落 tar 再压，装回 app 必须整体重签
 
 - **压缩**：`tar -cf - … | zstd -19` 比先 `tar -cf package.tar` 再压大 **9%**（129 MB vs 118 MB）。管道喂给 zstd 时它不知道输入总长度，会按块切窗口。分发包固定用「tar 落文件 → zstd -19 → 删 tar」。

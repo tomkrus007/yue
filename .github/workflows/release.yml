@@ -63,12 +63,24 @@ jobs:
         run: ./scripts/fetch-tmsdk-headers.sh "${{ matrix.component }}"
 
       - name: 打包
+        env:
+          # 没有 Developer ID 也要以 ad-hoc 身份签整个 .app（Tauri 认 "-"）。只靠链接器
+          # 自动签名时 bundle 没有 seal，codesign 报 "code has no resources but signature
+          # indicates they must be present"，下载后 Gatekeeper 直接判「YX.app 已损坏」。
+          # Windows 上该变量无意义，置空。
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
         run: pnpm tauri build --bundles ${{ matrix.bundles }}
 
-      - name: 校验 macOS 包不含 TMSDK
+      - name: 校验 macOS 包不含 TMSDK 且签名完整
         if: runner.os == 'macOS'
         run: |
-          APP="src-tauri/target/release/bundle/macos/YX.app"
+          # --bundles dmg 打完后 bundle/macos/YX.app 会被清掉，只能从 dmg 里校验，
+          # 否则下面的检查全是空跑（路径不存在时 if/otool 都不会报错）。
+          DMG=$(ls src-tauri/target/release/bundle/dmg/*.dmg)
+          MNT=$(mktemp -d)
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" -quiet
+          trap 'hdiutil detach "$MNT" -quiet || true' EXIT
+          APP="$MNT/YX.app"
           if [ -d "$APP/Contents/Frameworks/TMSDK.framework" ]; then
             echo "::error::包里又出现了 TMSDK.framework，组件化被回退了"
             exit 1
@@ -77,7 +89,10 @@ jobs:
             echo "::error::主程序仍链接 tmsdk，dlopen 改造被回退了"
             exit 1
           fi
-          ls -lh src-tauri/target/release/bundle/dmg/*.dmg
+          # 未签名的 bundle 会在这里失败：signature 只描述了主程序，资源没有 seal
+          codesign -v --deep --strict "$APP"
+          codesign -dv "$APP" 2>&1 | grep -E "Identifier=|Signature=|Sealed Resources="
+          ls -lh "$DMG"
 
       - name: 校验 Windows 包不含 TMSDK
         if: runner.os == 'Windows'
