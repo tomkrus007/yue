@@ -1,6 +1,6 @@
 [package]
 name = "YX"
-version = "0.1.28"
+version = "0.1.29"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"
@@ -35,6 +35,9 @@ tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 # 本地配置库：bundled 自带 SQLite，Windows 不依赖系统库
 rusqlite = { version = "0.40", features = ["bundled"] }
+# 组件包是 tar.zst：zstd 解码要内置，macOS 的 bsdtar 没链 libzstd，会去 PATH 找命令
+zstd = "0.13"
+tar = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "io-util"] }

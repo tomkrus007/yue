@@ -130,3 +130,5 @@
 - **更新丢失**：覆盖安装 app 会整体换掉 `Contents/Frameworks`。组件包留档在 `app_cache_dir/components/`，进会议时用同一安装器本地回装（约 2–4 秒）；不要在启动时无条件回装，那是给从不开会的人白占 355 MB。
 - **默认地址**：`components.json` 提供 URL，启动时种子进 `settings`，同时在 `schema_meta` 记一份种子值——库里等于种子值说明用户没改过，换版本可跟随；用户改过就永不覆盖。
 - **下载**：GitHub 在国内代理下 TLS 握手约两成概率被掐断（`client error (Connect)：connection closed via error`），必须重试 2–3 次；`reqwest::Error` 的 `Display` 只有「error sending request」，要把 `source()` 链拼进错误文案才有排查价值。
+- **半截包要续传**：组件包 118 MB，重下代价太高。缓存目录固定留一份 `.download.part`（来源 URL 记在同名 `.json` 里，换地址就不续），按 `Range: bytes=<已有长度>-` 接着拉；服务器回 416 且 `Content-Range` 的总长等于本地长度就说明上次其实已经下完，直接用；服务器不认 Range 回 200 时截断重写。老版本遗留的 `.download-<pid>.part` 会被认领改名。只有解压阶段报错（包本身坏了）才丢掉半截包，取消/签名不符/落位失败都留着，省一次下载。
+- **解压不能调系统 tar**：macOS 的 `/usr/bin/tar`（bsdtar）没链 libzstd，遇到 `.tar.zst` 会去 `PATH` 找外部 `zstd`，报 `Can't initialize filter; unable to run program "zstd -d -qq"`。app 由 Finder/launchd 启动时 `PATH` 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，Homebrew 的 zstd 不在其中；而干净机器根本装不了。安装器用 `zstd` + `tar` crate 在进程内解码（保留权限位与符号链接，`..` 路径直接拒绝）。
