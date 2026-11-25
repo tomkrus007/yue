@@ -109,7 +109,7 @@ TMSDK 压缩后：`tar.gz` 150 MB，`tar.zst -19` **118 MB**（`zstd -T0 -19`，
 | `src/store_upload.rs` | `std::env::temp_dir()/YX/upload` | 可跑但不该写死 | 路径入 SQLite |
 | `src/store_download.rs` | `app.path().download_dir()/YX` | 已跨平台 | 默认值入 SQLite，允许覆盖 |
 | `src/media_stream.rs` | 纯 tokio/TCP | 跨平台 | 不动 |
-| `src/window_state.rs` | `app_config_dir()/window-state.json` | 跨平台 | 迁移到 SQLite（可选，PR2） |
+| `src/window_state.rs` | `app_config_dir()/window-state.json` | 跨平台 | 保持 JSON（每次 resize 都写，塞进 SQLite 没有收益） |
 | `tauri.conf.json` | `bundle.macOS.frameworks` / entitlements / infoPlist | macOS | 移除 `frameworks`，其余保留（Windows 下自动忽略） |
 | `tauri.conf.json` | `titleBarStyle: Overlay` / `hiddenTitle` / `trafficLightPosition` | macOS 语义 | Windows 下退化为普通标题栏，可接受 |
 | `capabilities/default.json` | `http:default` 白名单 | 跨平台 | 组件下载走 **Rust reqwest**，不进白名单（用户可填任意 URL，白名单写不死） |
@@ -122,10 +122,11 @@ TMSDK 压缩后：`tar.gz` 150 MB，`tar.zst -19` **118 MB**（`zstd -T0 -19`，
 | `component.cache_dir` | 无 | `app_cache_dir()/components` |
 | `paths.download_dir` | `app.path().download_dir()/YX`（写死） | 同上 |
 | `paths.spool_dir` | `std::env::temp_dir()/YX/upload`（写死） | `app_cache_dir()/upload` |
-| `paths.ffmpeg` | 自动探测 + 两处 homebrew 写死 | `null`（自动），Windows 探测 `ffmpeg.exe` |
-| `platform.zt.client_path` | `/Applications/TrustAgentLauncher.app`（常量） | 同左（macOS） |
-| `platform.zt.port_range` | 常量 `35440-35443` | 同左（macOS） |
-| `ui.message_sound` | 无（永远播） | `true` |
+| `paths.ffmpeg` | 自动探测 + 两处 homebrew 写死 | `null`（自动探测），配了就优先用配置值 |
+| `ui.message_sound` | 无（永远播） | `1` |
+
+> 零信任的客户端路径与端口（`/Applications/TrustAgentLauncher.app`、`35440-35443`）**不进库**：这两个值由腾讯/品高官方客户端安装器决定，
+> 改了也用不了；PR5 只把它们收进 `cfg(target_os = "macos")`。真需要换路径时再加 key，避免现在就多一个没人改的开关。
 
 > 原则：**默认值仍由 Rust 按平台计算**，SQLite 只存"用户覆盖值"。这样升级后默认路径随平台 API 变化，不会被历史数据钉死。
 
@@ -509,6 +510,18 @@ open src-tauri/target/debug/bundle/macos/YX.app
 ```
 
 > 待 PR3/PR4 接入应用内安装器后，`install-wemeet.sh` 只保留给开发者。
+
+**PR2 已完成：本地配置库**
+
+| 改动 | 文件 |
+|---|---|
+| `rusqlite`（bundled）+ WAL，库在 `app_data_dir()/yx.db`；`user_version` 迁移建立 `settings` / `components` | `src/db.rs` |
+| `settings_get_all` / `settings_set`（未知 key 直接拒绝，空值=恢复默认） | `src/db.rs`、`src/lib.rs` |
+| 下载目录、上传 spool 目录、ffmpeg 路径、提示音开关改为读生效值 | `store_download.rs`、`store_upload.rs`、`lib.rs` |
+| 前端封装 | `src/services/settings.ts` |
+
+验收：启动后生成 `~/Library/Application Support/com.tom.YX/yx.db`（含 `-wal`/`-shm`），`PRAGMA user_version = 1`，
+表 `settings` / `components` 就位；下载/上传仍能正常写入（默认值未变，行为无差异）。
 
 ---
 

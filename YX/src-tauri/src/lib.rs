@@ -5,6 +5,7 @@ mod media_stream;
 mod window_state;
 mod zt_sdk;
 mod wemeet;
+mod db;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 
 #[tauri::command]
@@ -20,7 +21,10 @@ fn set_tray_unread(app: tauri::AppHandle, count: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn play_message_sound() {    // 由原生进程播放，避免 WebView 自动播放策略拦截后台提示音。
+fn play_message_sound(app: tauri::AppHandle, db: tauri::State<'_, db::Db>) {    // 由原生进程播放，避免 WebView 自动播放策略拦截后台提示音。
+    if db.effective(&app, db::MESSAGE_SOUND).as_deref() == Some("0") {
+        return;
+    }
     #[cfg(target_os = "macos")]
     std::thread::spawn(|| {
         let _ = std::process::Command::new("/usr/bin/afplay")
@@ -119,10 +123,14 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // 配置库先起来：下载目录、上传 spool 等都从它取生效值。
+            let db = db::Db::open(app.handle()).map_err(|e| format!("配置库初始化失败：{e}"))?;
             // 上次异常退出留下的上传分片直接清掉
-            store_upload::cleanup_stale();
+            store_upload::cleanup_stale(app.handle(), &db);
+            let download_dir = store_download::download_dir(app.handle(), &db);
+            store_download::cleanup_stale(&download_dir);
+            app.manage(db);
             app.manage(store_upload::UploadSpool::default());
-            if let Ok(directory) = app.path().download_dir() { store_download::cleanup_stale(&directory.join("YX")); }
             app.manage(store_download::Downloads::default());
             app.manage(media_stream::MediaStreams::default());
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
@@ -159,6 +167,8 @@ pub fn run() {
             greet,
             set_tray_unread,
             play_message_sound,
+            db::settings_get_all,
+            db::settings_set,
             zt_sdk_status,
             zt_sdk_login,
             zt_sdk_logout,

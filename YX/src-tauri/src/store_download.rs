@@ -4,6 +4,8 @@ use serde::Serialize;
 use tauri::{ipc::{InvokeBody, Request}, Manager, State};
 use tokio::io::AsyncWriteExt;
 
+use crate::db::{self, Db};
+
 const MAX_CHUNK: usize = 1024 * 1024;
 pub struct Download {
     file: tokio::sync::Mutex<tokio::fs::File>,
@@ -66,9 +68,16 @@ pub fn cleanup_stale(directory: &Path) {
     }
 }
 
+/// 下载落地目录：默认 `下载目录/YX`（见 `db::DOWNLOAD_DIR`），可在配置库里覆盖。
+pub fn download_dir(app: &tauri::AppHandle, db: &Db) -> PathBuf {
+    db.effective_path(app, db::DOWNLOAD_DIR)
+        .or_else(|| app.path().download_dir().ok().map(|dir| dir.join("YX")))
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 #[tauri::command]
-pub async fn attachment_download_begin(app: tauri::AppHandle, state: State<'_, Downloads>, id: String, name: String, total: Option<u64>) -> Result<(), String> {
-    let directory = app.path().download_dir().map_err(|_| "无法取得下载目录")?.join("YX");
+pub async fn attachment_download_begin(app: tauri::AppHandle, db: State<'_, Db>, state: State<'_, Downloads>, id: String, name: String, total: Option<u64>) -> Result<(), String> {
+    let directory = download_dir(&app, &db);
     begin_download(&state, &directory, id, name, total).await
 }
 async fn begin_download(state: &Downloads, directory: &Path, id: String, name: String, total: Option<u64>) -> Result<(), String> {
@@ -144,11 +153,19 @@ pub fn attachment_download_open(app: tauri::AppHandle, state: State<'_, Download
 }
 
 #[tauri::command]
-pub fn media_codec_support() -> bool { ffmpeg_path().is_some() }
-fn ffmpeg_path() -> Option<PathBuf> {
+pub fn media_codec_support(app: tauri::AppHandle, db: State<'_, Db>) -> bool { ffmpeg_path(&app, &db).is_some() }
+fn ffmpeg_path(app: &tauri::AppHandle, db: &Db) -> Option<PathBuf> {
+    // 配置库里存了绝对路径就直接用（Windows 没有 homebrew 之类的约定目录）。
+    if let Some(configured) = db.effective_path(app, db::FFMPEG_PATH) {
+        if configured.is_file() {
+            return Some(configured);
+        }
+    }
     let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
-    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|p| p.join(name))
-        .chain([PathBuf::from("/opt/homebrew/bin/ffmpeg"), PathBuf::from("/usr/local/bin/ffmpeg")])
+    let mut candidates: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|p| p.join(name)).collect();
+    #[cfg(target_os = "macos")]
+    candidates.extend([PathBuf::from("/opt/homebrew/bin/ffmpeg"), PathBuf::from("/usr/local/bin/ffmpeg")]);
+    candidates.into_iter()
         .find(|path| {
             if !path.is_file() { return false; }
             #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; return path.metadata().is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0); }
@@ -156,8 +173,8 @@ fn ffmpeg_path() -> Option<PathBuf> {
         })
 }
 #[tauri::command]
-pub async fn attachment_transcode(state: State<'_, Downloads>, id: String, video: bool) -> Result<SavedDownload, String> {
-    let executable = ffmpeg_path().ok_or("未安装 ffmpeg，请使用系统播放器打开下载文件")?;
+pub async fn attachment_transcode(app: tauri::AppHandle, db: State<'_, Db>, state: State<'_, Downloads>, id: String, video: bool) -> Result<SavedDownload, String> {
+    let executable = ffmpeg_path(&app, &db).ok_or("未安装 ffmpeg，请使用系统播放器打开下载文件")?;
     let input = state.saved.lock().map_err(|_| "下载状态不可用")?.get(&id).cloned().ok_or("请先下载文件")?;
     let target = reserve_path(input.parent().ok_or("下载目录无效")?, if video { "转换后视频.mp4" } else { "转换后音频.m4a" })?;
     let mut command = tokio::process::Command::new(executable);

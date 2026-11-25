@@ -31,6 +31,8 @@ reqwest = { version = "0.12", features = ["stream", "multipart"] }
 tokio = { version = "1", features = ["fs", "io-util", "net", "time", "macros", "process"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
+# 本地配置库：bundled 自带 SQLite，Windows 不依赖系统库
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "io-util"] }
