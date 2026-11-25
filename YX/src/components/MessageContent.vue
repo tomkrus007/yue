@@ -212,7 +212,7 @@ async function openTodo(card: Extract<MessageSegment, { type: 'card' }>) {
   todoError.value = ''
   let stage = '查询待办详情'
   try {
-    const url = await resolveTodoNotice(card)
+    const url = await resolveTodoNotice({ ...card, messageId: props.actionContext?.messageId || props.actionContext?.message?.msg_id })
     stage = '打开系统浏览器'
     await openTodoInBrowser(url)
   } catch (e) {

@@ -77,7 +77,7 @@ async function execute(value: string, title = '') {
         break
       }
       case 'todo':
-        await openUrl(await resolveTodoNotice({ title: props.content?.title || title || props.content?.brief || '', brief: props.content?.brief || '', action: plan.action }))
+        await openUrl(await resolveTodoNotice({ title: props.content?.title || title || props.content?.brief || '', brief: props.content?.brief || '', action: plan.action, messageId: context.messageId || context.message?.msg_id }))
         break
       case 'favorite':
         await favoriteMessage(context.message!, { name: context.sessionName || '', type: context.sessionType || 1 })

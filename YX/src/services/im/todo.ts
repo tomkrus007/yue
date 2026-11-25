@@ -14,6 +14,8 @@ export interface TodoItem {
   source?: string
   dealTerminal?: number
   action?: string | { pc?: string; android?: string }
+  /** 生成该条待办的通知消息 ID；官方列表接口用它回指 IM 消息。 */
+  notifyLog?: string
 }
 
 /** 同时兼容真实换行与动作字符串中的字面量 \\n，保留 URL 内的等号。 */
@@ -149,8 +151,11 @@ export async function listTodos(tab: TodoTab, source: string, title: string, pag
   return { items, total: Number(response.total ?? data?.total ?? items.length) }
 }
 
-/** 通知没有条目 ID 时，只打开来源和标题能唯一匹配的详情。 */
-export async function resolveTodoNotice(card: { title: string; brief: string; action: string }): Promise<string> {
+/**
+ * 通知没有条目 ID 时，先用通知消息 ID 反查列表项的 `notifyLog`（官方接口用该字段回指消息），
+ * 再退回来源和标题能唯一匹配的详情。
+ */
+export async function resolveTodoNotice(card: { title: string; brief: string; action: string; messageId?: string }): Promise<string> {
   const direct = todoUrl(card.action)
   if (direct) return direct
   const target = todoTarget(card.action)
@@ -165,31 +170,48 @@ export async function resolveTodoNotice(card: { title: string; brief: string; ac
   // 历史通知对应的条目可能已经从待办移到已办。
   const tabs: TodoTab[] = [target.tab, ...(['todo', 'read', 'done'] as TodoTab[]).filter(tab => tab !== target.tab)]
   const fallbackErrors: string[] = []
+  let ambiguous = false
+  const detailUrl = (item: TodoItem) => {
+    if (Number(item.dealTerminal) === 3) throw new Error('该待办请在移动端处理')
+    const url = todoUrl(item.action)
+    if (!url) throw new Error('该待办未提供可打开的电脑端链接')
+    return url
+  }
   for (const tab of tabs) {
     const matches = new Map<string, TodoItem>()
+    let exact: TodoItem | undefined
     try {
       for (let page = 1; ; page++) {
         const result = await listTodos(tab, target.source, title, page)
         for (const item of result.items) {
           if (target.source && item.source !== target.source) continue
-          if (normalize(title) === normalize(item.title)) matches.set(String(item.id), item)
+          if (card.messageId && String(item.notifyLog || '') === card.messageId) {
+            exact = item
+            break
+          }
+          if (normalize(title) !== normalize(item.title)) continue
+          matches.set(String(item.id), item)
         }
-        if (matches.size > 1) break
-        if (page * 20 >= result.total || !result.items.length) break
+        if (exact || !result.items.length || page * 20 >= result.total) break
       }
     } catch (e) {
       if (tab === target.tab) throw e
       fallbackErrors.push(e instanceof Error ? e.message : String(e))
       continue
     }
-    if (matches.size > 1) throw new Error('找到多条同名待办，无法确定这条消息对应的详情')
+    if (exact) return detailUrl(exact)
+    if (matches.size > 1) {
+      if (!card.messageId) throw new Error('找到多条同名待办，无法确定这条消息对应的详情')
+      // 同名条目可能分布在不同分类，继续查找能唯一回指本消息的记录。
+      ambiguous = true
+      continue
+    }
+    if (ambiguous) continue
     const item = matches.values().next().value
     if (!item) continue
-    if (Number(item.dealTerminal) === 3) throw new Error('该待办请在移动端处理')
-    const url = todoUrl(item.action)
-    if (!url) throw new Error('该待办未提供可打开的电脑端链接')
-    return url
+    return detailUrl(item)
   }
+  if (ambiguous) throw new Error('找到多条同名待办，无法确定这条消息对应的详情')
   if (fallbackErrors.length) throw new Error(fallbackErrors.join('；'))
   throw new Error('未找到这条消息对应的待办，可能已删除或不再可见')
 }
