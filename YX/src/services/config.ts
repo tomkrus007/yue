@@ -103,6 +103,8 @@ export const DEFAULT_CONFIG: AppConfig = {
 export interface ServerPaths {
   /** 仅用于覆盖 ssoUrl */
   ssoUri?: string
+  /** 腾讯会议（TMSDK）账号配置服务，形如 https://host/，拼接 v1/tencent/meeting/config */
+  rtcUri?: string
   embWebSocketUri?: string
   embHttpUri?: string
   embQueryUri?: string

@@ -16,6 +16,7 @@ import { compatibleCardActions, planCardActions, type CardActionContext } from '
 import { getServerPaths } from '../services/config'
 import { loadApps } from '../services/app-client'
 import { useImStore } from '../stores/im'
+import { useWeMeetStore } from '../stores/wemeet'
 import { favoriteMessage } from '../services/im/favorites'
 import { resolveTodoNotice } from '../services/im/todo'
 const props = defineProps<{ content: any; actionContext?: CardActionContext }>()
@@ -44,6 +45,17 @@ async function execute(value: string, title = '') {
         await openUrl(url.href)
         break
       }
+      case 'meeting': {
+        const meeting = useWeMeetStore()
+        if (plan.code) {
+          status.value = '正在加入会议…'
+          await meeting.joinMeeting(plan.code)
+          status.value = '已发起入会请求'
+        } else {
+          await meeting.openHome()
+        }
+        break
+      }
       case 'chat':
         im.openChat(plan.id, plan.name || plan.id, plan.type)
         await router.push('/chat')
@@ -65,7 +77,7 @@ async function execute(value: string, title = '') {
         break
       }
       case 'todo':
-        await openUrl(await resolveTodoNotice({ title: props.content?.title || title || props.content?.brief || '', brief: props.content?.brief || '', action: plan.action }))
+        await openUrl(await resolveTodoNotice({ title: props.content?.title || title || props.content?.brief || '', brief: props.content?.brief || '', action: plan.action, messageId: context.messageId || context.message?.msg_id }))
         break
       case 'favorite':
         await favoriteMessage(context.message!, { name: context.sessionName || '', type: context.sessionType || 1 })

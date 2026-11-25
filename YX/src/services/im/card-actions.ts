@@ -12,6 +12,8 @@ export interface CardActionContext {
 export type CardActionPlan =
   | { kind: 'url'; url: string }
   | { kind: 'app'; code: string; params: Record<string, string> }
+  /** 腾讯会议：`code` 为空表示打开会前主页 */
+  | { kind: 'meeting'; code: string }
   | { kind: 'chat'; id: string; type: number; name: string }
   | { kind: 'contact'; id: string; type: number; name: string }
   | { kind: 'request'; data: { url: string; method: string; params: Record<string, unknown>; contentType: string } }
@@ -89,6 +91,10 @@ export function planCardActions(value: string, context: CardActionContext = {}, 
         return { kind: 'url', url: url.href }
       }
       case 'OpenApp': {
+        // 腾讯会议邀请：原版点击后直接入会，不经过应用列表
+        if (params.appCode === 'linkMeeting' && params.supplier === 'tencent') {
+          return { kind: 'meeting', code: (params.meetingCode || '').trim() }
+        }
         if (params.pcHomeUrl) {
           const url = new URL(actionUrl(params.pcHomeUrl, paths))
           for (const [key, entry] of Object.entries(params)) if (!['pcHomeUrl', 'pcNoTitleWindow', 'appCode', 'appUrl'].includes(key)) url.searchParams.set(key, entry)
@@ -122,6 +128,8 @@ export function planCardActions(value: string, context: CardActionContext = {}, 
         return { kind: 'message', target, type: 1, content: requireText(params.content, '消息内容') }
       }
       case 'UnityTodo': return { kind: 'todo', action: instruction }
+      case 'StartWeMeet': return { kind: 'meeting', code: '' }
+      case 'JoinWeMeet': return { kind: 'meeting', code: requireText(params.meetingCode, '会议号') }
       case 'FavorMsg':
         if (!context.message) throw new Error('缺少原消息，无法收藏此卡片')
         return { kind: 'favorite' }

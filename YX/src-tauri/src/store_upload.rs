@@ -18,6 +18,8 @@ use futures_util::StreamExt;
 use serde::Serialize;
 use tauri::ipc::{Channel, InvokeBody, Request};
 use tauri::State;
+
+use crate::db::{self, Db};
 use tokio::io::AsyncWriteExt;
 
 /// 上传进度，前端换算成 0-100。
@@ -39,11 +41,13 @@ pub struct UploadSpool {
     files: Mutex<HashMap<String, PathBuf>>,
 }
 
-fn spool_dir() -> PathBuf {
-    std::env::temp_dir().join("YX").join("upload")
+/// 上传分片目录：默认在应用缓存目录下（见 `db::SPOOL_DIR`），可在配置库里覆盖。
+fn spool_dir(app: &tauri::AppHandle, db: &Db) -> PathBuf {
+    db.effective_path(app, db::SPOOL_DIR)
+        .unwrap_or_else(|| std::env::temp_dir().join("YX").join("upload"))
 }
 
-fn spool_path(id: &str) -> Result<PathBuf, String> {
+fn spool_path(app: &tauri::AppHandle, db: &Db, id: &str) -> Result<PathBuf, String> {
     // id 由前端生成，只允许字母数字和横线，避免路径穿越。
     let safe: String = id
         .chars()
@@ -52,7 +56,7 @@ fn spool_path(id: &str) -> Result<PathBuf, String> {
     if safe.is_empty() {
         return Err("上传 id 无效".into());
     }
-    Ok(spool_dir().join(format!("{safe}.part")))
+    Ok(spool_dir(app, db).join(format!("{safe}.part")))
 }
 
 fn header_str(headers: &tauri::http::HeaderMap, name: &str) -> Result<String, String> {
@@ -74,8 +78,8 @@ fn lookup(state: &State<'_, UploadSpool>, id: &str) -> Result<PathBuf, String> {
 }
 
 /// 应用启动时清掉上次崩溃残留的分片文件。
-pub fn cleanup_stale() {
-    let _ = std::fs::remove_dir_all(spool_dir());
+pub fn cleanup_stale(app: &tauri::AppHandle, db: &Db) {
+    let _ = std::fs::remove_dir_all(spool_dir(app, db));
 }
 
 /// 流式读本地文件，按 `file / fileName / size` 三个字段发 multipart 请求。
@@ -141,8 +145,13 @@ async fn post_multipart(
 
 /// 开始一次上传：创建空的临时文件占位。
 #[tauri::command]
-pub fn store_upload_begin(id: String, state: State<'_, UploadSpool>) -> Result<(), String> {
-    let path = spool_path(&id)?;
+pub fn store_upload_begin(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    id: String,
+    state: State<'_, UploadSpool>,
+) -> Result<(), String> {
+    let path = spool_path(&app, &db, &id)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建临时目录失败：{e}"))?;
     }

@@ -30,25 +30,38 @@
         <div class="path-bar">
           <button class="secondary small" @click="disk.back()" :disabled="disk.history.length <= 1">← 返回</button>
           <button class="secondary small" @click="disk.refresh()">刷新</button>
-          <button class="secondary small" @click="showMkdir = !showMkdir">+ 新建目录</button>
-          <button class="small" :disabled="!disk.currentDirId" @click="pickUpload">上传</button>
-          <input ref="uploadInput" type="file" multiple hidden @change="onUploadChange" />
-          <div class="path">📁 {{ disk.currentDrive?.name }} · {{ disk.currentPath }}</div>
+          <button v-if="!disk.currentShareId" class="secondary small" @click="showMkdir = !showMkdir">+ 新建目录</button>
+          <button v-if="!disk.currentShareId" class="small" :disabled="!disk.currentDirId" @click="pickUpload">上传</button>
+          <input v-if="!disk.currentShareId" ref="uploadInput" type="file" multiple hidden @change="onUploadChange" />
+          <div class="path">
+            📁 {{ disk.currentDrive?.name }}<template v-if="disk.currentPath !== '/'"> · {{ disk.currentPath }}</template>
+          </div>
           <span v-if="activeUploads" class="upload-note">{{ activeUploads }} 个上传中</span>
         </div>
+        <div v-if="isShareRoot" class="share-hint">别人分享给我的文件与目录；目录可直接进入浏览。</div>
         <div class="search-bar">
-          <input v-model="keyword" placeholder="搜索文件" @keydown.enter="onSearch" />
-          <button class="small" @click="onSearch">搜索</button>
-          <button class="secondary small" @click="disk.openDrive(disk.currentDrive!)">回到盘根</button>
+          <input
+            v-model="keyword"
+            :placeholder="filterPlaceholder"
+            @keydown.esc="keyword = ''"
+          />
+          <button v-if="disk.currentDrive?.kind !== 'shared'" class="small" :disabled="!keyword.trim()" @click="onGlobalSearch">全盘搜索</button>
+          <button class="secondary small" @click="onOpenDrive(disk.currentDrive!)">回到盘根</button>
         </div>
       </header>
 
-      <div v-if="showMkdir" class="mkdir-bar">
+      <div v-if="showMkdir && !disk.currentShareId" class="mkdir-bar">
         <input v-model="mkdirName" placeholder="新目录名" @keydown.enter="onMkdir" />
         <button class="small" @click="onMkdir">创建</button>
       </div>
 
       <div v-if="disk.error" class="error">{{ disk.error }}</div>
+
+      <div v-if="!disk.loading" class="list-meta">
+        <span class="count-text">{{ countText }}</span>
+        <button v-if="hasFilter" class="link-btn" @click="keyword = ''">清除筛选</button>
+        <button v-if="disk.searchKeyword" class="link-btn" @click="disk.exitSearch()">退出全盘搜索</button>
+      </div>
 
       <div class="file-list">
         <div v-if="disk.loading" class="loading">加载中…</div>
@@ -57,12 +70,46 @@
         <table v-else-if="disk.subEntries.length > 0">
           <thead><tr><th>{{ subEntryLabel() }}</th><th>类型</th><th>操作</th></tr></thead>
           <tbody>
-            <tr v-for="t in disk.subEntries" :key="t.id" @dblclick="disk.enterTeam(t)">
+            <tr v-for="t in visibleSubEntries" :key="t.id" @dblclick="disk.enterTeam(t)">
               <td class="name">
                 <span class="f-icon">👥</span>{{ t.name }}
               </td>
               <td>{{ subEntryLabel() }}</td>
               <td class="ops"><button class="small" @click.stop="disk.enterTeam(t)">进入</button></td>
+            </tr>
+            <tr v-if="visibleSubEntries.length === 0">
+              <td colspan="3" class="empty">{{ emptyHint }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- 共享给我：收到的分享 -->
+        <table v-else-if="isShareRoot">
+          <thead>
+            <tr><th>名称</th><th>分享人</th><th>类型</th><th>有效期</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in visibleShares" :key="s.id" @dblclick="onOpenShare(s)">
+              <td class="name">
+                <span class="f-icon">{{ s.resourceType === 'D' ? '📁' : iconFor(extOf(s.title)) }}</span>
+                {{ s.title }}
+                <span v-if="s.status !== 0" class="invalid-tag">已失效</span>
+              </td>
+              <td>{{ s.creatorName || '-' }}</td>
+              <td>{{ s.resourceType === 'D' ? '目录' : (extOf(s.title) || '文件') }}</td>
+              <td>{{ fmtExpire(s.expireDate) }}</td>
+              <td class="ops">
+                <template v-if="s.status === 0 && s.resourceType === 'D'">
+                  <button class="small" @click.stop="onOpenShare(s)">进入</button>
+                </template>
+                <template v-else-if="s.status === 0">
+                  <button v-if="canPreviewName(s.title) && s.permissions?.previewable !== false" class="small" @click.stop="onPreviewShare(s)">预览</button>
+                  <button v-if="s.permissions?.downloadable !== false" class="secondary small" @click.stop="onDownloadShare(s)">下载</button>
+                </template>
+              </td>
+            </tr>
+            <tr v-if="visibleShares.length === 0">
+              <td colspan="5" class="empty">{{ hasFilter ? emptyHint : '暂无共享给我的内容' }}</td>
             </tr>
           </tbody>
         </table>
@@ -75,7 +122,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="f in disk.files" :key="f.id" @dblclick="onDblClick(f)">
+            <tr v-for="f in visibleFiles" :key="f.id" @dblclick="onDblClick(f)">
               <td class="name">
                 <span class="f-icon">{{ f.type === 'D' ? '📁' : iconFor(f.ext) }}</span>
                 {{ f.name }}
@@ -84,13 +131,14 @@
               <td>{{ f.size ? fmtSize(f.size) : '-' }}</td>
               <td>{{ fmtTime(f.updateTime) }}</td>
               <td class="ops">
-                <button v-if="canOnlineEdit(f)" class="small" @click.stop="onOnlineEdit(f)">在线编辑</button>
-                <button v-if="f.type === 'F'" class="secondary small" @click.stop="onDownload(f)">下载</button>
-                <button class="secondary small danger-btn" @click.stop="onDelete(f)">删除</button>
+                <button v-if="disk.currentShareId && canPreview(f) && f.permissions?.previewable !== false" class="small" @click.stop="onPreview(f)">预览</button>
+                <button v-if="!disk.currentShareId && canOnlineEdit(f)" class="small" @click.stop="onOnlineEdit(f)">在线编辑</button>
+                <button v-if="f.type === 'F' && (!disk.currentShareId || f.permissions?.downloadable !== false)" class="secondary small" @click.stop="onDownload(f)">下载</button>
+                <button v-if="!disk.currentShareId" class="secondary small danger-btn" @click.stop="onDelete(f)">删除</button>
               </td>
             </tr>
-            <tr v-if="disk.files.length === 0 && !disk.loading">
-              <td colspan="5" class="empty">空目录</td>
+            <tr v-if="visibleFiles.length === 0 && !disk.loading">
+              <td colspan="5" class="empty">{{ emptyHint }}</td>
             </tr>
           </tbody>
         </table>
@@ -133,6 +181,7 @@ import { useDiskStore, type DiskDrive } from '../stores/disk'
 import { OFFICE_EXT } from '../services/pan-client'
 import { useUploadStore } from '../stores/uploads'
 import { type DiskFile } from '../services/disk-client'
+import type { PanShareItem } from '../services/disk-pan'
 
 const auth = useAuthStore()
 const disk = useDiskStore()
@@ -145,9 +194,70 @@ const mkdirName = ref('')
 const uploadInput = ref<HTMLInputElement | null>(null)
 const uploads = useUploadStore()
 const dragging = ref(false)
+const isShareRoot = computed(
+  () => disk.currentDrive?.kind === 'shared' && !disk.currentShareId,
+)
 const activeUploads = computed(
   () => uploads.tasks.filter((t) => ['queued', 'uploading', 'saving'].includes(t.status)).length,
 )
+
+/** 当前目录的即时筛选（不区分大小写，匹配名称或扩展名） */
+const hasFilter = computed(() => keyword.value.trim().length > 0)
+const filterPlaceholder = computed(() => {
+  if (isShareRoot.value) return '筛选共享给我的文档或目录'
+  if (disk.searchKeyword) return '在搜索结果中筛选'
+  return '筛选当前目录的文档或目录'
+})
+
+function matchKeyword(name: string, ext?: string): boolean {
+  const q = keyword.value.trim().toLowerCase()
+  if (!q) return true
+  return (
+    name.toLowerCase().includes(q) ||
+    (!!ext && ext.toLowerCase().includes(q))
+  )
+}
+
+const visibleFiles = computed(() => disk.files.filter((f) => matchKeyword(f.name, f.ext)))
+const visibleShares = computed(() => disk.shares.filter((s) => matchKeyword(s.title)))
+const visibleSubEntries = computed(() => disk.subEntries.filter((t) => matchKeyword(t.name)))
+
+/** 列表项数量：目录 / 共享给我 / 团队入口三种形态 */
+const listTotal = computed(() => {
+  if (disk.subEntries.length) return disk.subEntries.length
+  if (isShareRoot.value) return disk.shares.length
+  return disk.files.length
+})
+const listShown = computed(() => {
+  if (disk.subEntries.length) return visibleSubEntries.value.length
+  if (isShareRoot.value) return visibleShares.value.length
+  return visibleFiles.value.length
+})
+
+const countText = computed(() => {
+  const parts: string[] = []
+  if (disk.searchKeyword) parts.push(`全盘搜索「${disk.searchKeyword}」`)
+  if (hasFilter.value) parts.push(`筛选「${keyword.value.trim()}」`)
+  const prefix = parts.length ? parts.join(' · ') + '：' : ''
+  const size = hasFilter.value ? `${listShown.value} / ${listTotal.value}` : `${listTotal.value}`
+
+  if (disk.subEntries.length) return `${prefix}共 ${size} 个${subEntryLabel()}`
+
+  if (isShareRoot.value) {
+    const dirs = visibleShares.value.filter((s) => s.resourceType === 'D').length
+    return `${prefix}共 ${size} 项（目录 ${dirs} · 文件 ${visibleShares.value.length - dirs}）`
+  }
+
+  const dirs = visibleFiles.value.filter((f) => f.type === 'D').length
+  return `${prefix}共 ${size} 项（目录 ${dirs} · 文件 ${visibleFiles.value.length - dirs}）`
+})
+
+const emptyHint = computed(() => {
+  if (hasFilter.value) return `没有匹配「${keyword.value.trim()}」的条目`
+  if (disk.searchKeyword) return `全盘搜索「${disk.searchKeyword}」没有结果`
+  if (disk.subEntries.length) return `暂无${subEntryLabel()}`
+  return '空目录'
+})
 
 onMounted(async () => {
   if (!auth.isLoggedIn) {
@@ -163,6 +273,7 @@ function driveIcon(kind: string): string {
     case 'team': return '👥'
     case 'org': return '🏢'
     case 'public': return '📢'
+    case 'shared': return '🤝'
     default: return '📁'
   }
 }
@@ -181,9 +292,28 @@ async function onDblClick(f: DiskFile) {
   if (f.type === 'D') await disk.enter(f)
 }
 
-async function onSearch() {
-  if (keyword.value.trim()) await disk.search(keyword.value.trim())
-  else await disk.refresh()
+async function onOpenShare(s: PanShareItem) {
+  if (s.resourceType === 'D') await disk.enterShare(s)
+  else if (s.permissions?.downloadable !== false) await disk.downloadShare(s)
+}
+
+async function onDownloadShare(s: PanShareItem) {
+  await disk.downloadShare(s)
+}
+
+async function onPreviewShare(s: PanShareItem) {
+  await disk.previewShare(s)
+}
+
+async function onPreview(f: DiskFile) {
+  await disk.preview(f)
+}
+
+async function onGlobalSearch() {
+  const kw = keyword.value.trim()
+  if (!kw) return
+  keyword.value = ''
+  await disk.search(kw)
 }
 
 async function onMkdir() {
@@ -276,6 +406,22 @@ function canOnlineEdit(f: DiskFile): boolean {
   return f.type === 'F' && !!f.ext && OFFICE_EXT.has(f.ext.toLowerCase())
 }
 
+/** 预览只对文档类有效：图片/压缩包等 `/v1/files/{id}/preview` 会返回 430601 */
+const PREVIEW_EXT = new Set([...OFFICE_EXT, 'pdf'])
+
+function canPreview(f: DiskFile): boolean {
+  return f.type === 'F' && !!f.ext && PREVIEW_EXT.has(f.ext.toLowerCase())
+}
+
+function extOf(name: string): string | undefined {
+  return name.includes('.') ? name.split('.').pop()!.toLowerCase() : undefined
+}
+
+function canPreviewName(name: string): boolean {
+  const ext = extOf(name)
+  return !!ext && PREVIEW_EXT.has(ext)
+}
+
 function iconFor(ext?: string): string {
   if (!ext) return '📄'
   const e = ext.toLowerCase()
@@ -301,6 +447,11 @@ function fmtSize(n: number): string {
 function fmtTime(t?: number): string {
   if (!t) return '-'
   return new Date(t).toLocaleString('zh-CN', { hour12: false })
+}
+
+function fmtExpire(t?: number | null): string {
+  if (!t) return '永久'
+  return new Date(t).toLocaleDateString('zh-CN')
 }
 </script>
 
@@ -342,6 +493,11 @@ function fmtTime(t?: number): string {
 }
 .search-bar { display: flex; gap: 8px; }
 .search-bar input { flex: 1; }
+.share-hint { color: var(--text-muted); font-size: 12px; }
+.invalid-tag {
+  margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+  background: var(--bg-subtle); color: var(--text-muted);
+}
 .small { padding: 5px 12px; font-size: 12px; }
 .danger-btn { color: var(--danger); }
 
@@ -351,6 +507,18 @@ function fmtTime(t?: number): string {
 }
 
 .error { margin: 12px 20px; padding: 8px 12px; background: var(--danger-soft); color: var(--danger); border-radius: 6px; }
+
+.list-meta {
+  padding: 6px 20px; background: var(--bg-subtle); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+  font-size: 12px; color: var(--text-muted);
+}
+.count-text { flex: 1; }
+.link-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--primary); font-size: 12px;
+}
+.link-btn:hover { text-decoration: underline; }
 
 .file-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
 .loading, .empty { text-align: center; color: var(--text-muted); padding: 20px; }

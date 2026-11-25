@@ -2,7 +2,14 @@
 mod store_upload;
 mod store_download;
 mod media_stream;
+mod window_state;
+mod wemeet;
+// 零信任只有官方 macOS 客户端；其它平台保留同名命令，直接返回「不支持」，
+// 前端按 capabilities() 隐藏入口（见 platform 能力视图）。
+#[cfg(target_os = "macos")]
 mod zt_sdk;
+mod db;
+mod component;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 
 #[tauri::command]
@@ -18,7 +25,10 @@ fn set_tray_unread(app: tauri::AppHandle, count: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn play_message_sound() {    // 由原生进程播放，避免 WebView 自动播放策略拦截后台提示音。
+fn play_message_sound(app: tauri::AppHandle, db: tauri::State<'_, db::Db>) {    // 由原生进程播放，避免 WebView 自动播放策略拦截后台提示音。
+    if db.effective(&app, db::MESSAGE_SOUND).as_deref() == Some("0") {
+        return;
+    }
     #[cfg(target_os = "macos")]
     std::thread::spawn(|| {
         let _ = std::process::Command::new("/usr/bin/afplay")
@@ -32,7 +42,43 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[cfg(not(target_os = "macos"))]
+mod zt_unsupported {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    pub struct SdkStatus {
+        pub port: u16,
+        pub state: String,
+    }
+
+    pub fn unavailable<T>() -> Result<T, String> {
+        Err("零信任只支持 macOS：需要官方 TrustAgentLauncher 客户端".into())
+    }
+}
+
+/// 本机能力视图：前端据此显隐入口，而不是到处判断平台。
+#[derive(serde::Serialize)]
+pub struct Capabilities {
+    /// 本平台是否有会议组件（Windows 等还没有）
+    pub meeting: bool,
+    /// 本平台是否支持零信任（只有 macOS 官方客户端）
+    pub zero_trust: bool,
+    /// 是否有系统提示音
+    pub message_sound: bool,
+}
+
+#[tauri::command]
+fn capabilities() -> Capabilities {
+    Capabilities {
+        meeting: cfg!(target_os = "macos"),
+        zero_trust: cfg!(target_os = "macos"),
+        message_sound: cfg!(target_os = "macos"),
+    }
+}
+
 /// 本机零信任 SDK 状态（不依赖云上越秀客户端）。
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn zt_sdk_status() -> Result<zt_sdk::SdkStatus, String> {
     tauri::async_runtime::spawn_blocking(|| zt_sdk::status().map_err(|e| e.to_string()))
@@ -41,6 +87,7 @@ async fn zt_sdk_status() -> Result<zt_sdk::SdkStatus, String> {
 }
 
 /// 用云上越秀 AccessToken 让本机零信任 SDK 登录（等价官方 App 登录后的动作）。
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn zt_sdk_login(user_token: String, host: Option<String>, port: Option<u16>) -> Result<String, String> {
     let h = host.filter(|s| !s.is_empty()).unwrap_or_else(|| zt_sdk::DEFAULT_HOST.to_string());
@@ -53,6 +100,7 @@ async fn zt_sdk_login(user_token: String, host: Option<String>, port: Option<u16
     .map_err(|e| e.to_string())?
 }
 
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn zt_sdk_logout() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -78,6 +126,7 @@ async fn zt_sdk_logout() -> Result<String, String> {
 }
 
 /// 网关支持的认证方式（YX_TOKEN / AD / LOCAL_UP）。
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn zt_sdk_auth_types(host: Option<String>, port: Option<u16>) -> Result<Vec<String>, String> {
     let h = host.filter(|s| !s.is_empty()).unwrap_or_else(|| zt_sdk::DEFAULT_HOST.to_string());
@@ -87,6 +136,30 @@ async fn zt_sdk_auth_types(host: Option<String>, port: Option<u16>) -> Result<Ve
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn zt_sdk_status() -> Result<zt_unsupported::SdkStatus, String> {
+    zt_unsupported::unavailable()
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn zt_sdk_login(_user_token: String, _host: Option<String>, _port: Option<u16>) -> Result<String, String> {
+    zt_unsupported::unavailable()
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn zt_sdk_logout() -> Result<String, String> {
+    zt_unsupported::unavailable()
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn zt_sdk_auth_types(_host: Option<String>, _port: Option<u16>) -> Result<Vec<String>, String> {
+    zt_unsupported::unavailable()
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
@@ -102,19 +175,30 @@ pub fn run() {
     tauri::Builder::default()
         .on_window_event(|window, event| {
             if window.label() == "main" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    // 保留 WebView 和连接；只有成功隐藏后才阻止系统关闭。
-                    if window.hide().is_ok() {
-                        api.prevent_close();
+                match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        // 保留 WebView 和连接；只有成功隐藏后才阻止系统关闭。
+                        if window.hide().is_ok() {
+                            window_state::save(window.app_handle(), true);
+                            api.prevent_close();
+                        }
                     }
+                    // 只记尺寸，拖拽过程中按间隔节流，最终值由关闭/退出兜底。
+                    tauri::WindowEvent::Resized(_) => window_state::save(window.app_handle(), false),
+                    _ => {}
                 }
             }
         })
         .setup(|app| {
+            // 配置库先起来：下载目录、上传 spool 等都从它取生效值。
+            let db = db::Db::open(app.handle()).map_err(|e| format!("配置库初始化失败：{e}"))?;
             // 上次异常退出留下的上传分片直接清掉
-            store_upload::cleanup_stale();
+            store_upload::cleanup_stale(app.handle(), &db);
+            let download_dir = store_download::download_dir(app.handle(), &db);
+            store_download::cleanup_stale(&download_dir);
+            app.manage(db);
+            app.manage(component::InstallState::default());
             app.manage(store_upload::UploadSpool::default());
-            if let Ok(directory) = app.path().download_dir() { store_download::cleanup_stale(&directory.join("YX")); }
             app.manage(store_download::Downloads::default());
             app.manage(media_stream::MediaStreams::default());
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
@@ -140,15 +224,21 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+            // 上次的窗口大小（窗口已创建后再应用；过小会被限制到最小尺寸）
+            window_state::restore(app.handle());
             Ok(())
         })
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             greet,
+            capabilities,
             set_tray_unread,
             play_message_sound,
+            db::settings_get_all,
+            db::settings_set,
             zt_sdk_status,
             zt_sdk_login,
             zt_sdk_logout,
@@ -170,13 +260,37 @@ pub fn run() {
             media_stream::media_response_head,
             media_stream::media_response_chunk,
             media_stream::media_response_end,
+            wemeet::wemeet_init,
+            component::component_status,
+            component::component_install_local,
+            component::component_install_url,
+            component::component_cancel,
+            component::component_clear_cache,
+            component::component_reload,
+            wemeet::wemeet_status,
+            wemeet::wemeet_is_logged_in,
+            wemeet::wemeet_refresh_token,
+            wemeet::wemeet_login,
+            wemeet::wemeet_join,
+            wemeet::wemeet_quick,
+            wemeet::wemeet_show_home,
+            wemeet::wemeet_bring_top,
+            wemeet::wemeet_enable_ring,
+            wemeet::wemeet_purge_cache,
+            wemeet::wemeet_logout,
+            wemeet::wemeet_release,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, _event| {
+        .run(|app, event| {
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = _event {
+            if let tauri::RunEvent::Reopen { .. } = event {
                 show_main_window(app);
+            }
+            // 退出时结束 SDK（会中会被强制离会），避免 TMSDKHelper 残留。
+            if let tauri::RunEvent::Exit = event {
+                window_state::save(app, true);
+                wemeet::release_blocking();
             }
             #[cfg(not(target_os = "macos"))]
             let _ = app;

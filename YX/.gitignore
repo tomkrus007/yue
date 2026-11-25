@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# 腾讯会议原生框架（357MB，从官方 DMG 拷贝，不入库）
+src-tauri/vendor/TMSDK.framework/
+# 组件包产物（118MB，发布到 GitHub Release，不入库）
+dist-components/
+# TMSDK 运行时生成的覆盖率采样文件
+*.profraw
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

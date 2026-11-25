@@ -7,7 +7,7 @@
   - IM：配置中心下发的 `embWebSocketUri`（生产为 `wss://…:443`）
   - 网盘：`https://streamapi.bingolink.biz/openapi`
   - 登录：`https://www.bingolink.biz/sso/oauth2/token`（OAuth2 password 模式 + RSA 密码加密）
-- **不复刻**：视频会议、日程、红包等重业务；零信任不自研隧道，只驱动本机官方零信任客户端的登录接口
+- **不复刻**：日程、红包等重业务；视频会议直接复用官方腾讯会议 SDK（TMSDK）的原生窗口，不在本仓库重写会议 UI；零信任不自研隧道，只驱动本机官方零信任客户端的登录接口
 
 ## 功能范围
 
@@ -22,7 +22,7 @@
 - REST 会话列表（`emb/sessions/latest`）、未读数、置顶（置顶/取消置顶、置顶优先排序）、折叠、免打扰
 - 富文本 / 复杂消息（type 0/1）与合并转发的文本与 HTML 白名单渲染；普通文本消息按字面显示，标签不会被解析掉；正文中的 http/https 地址会变成可点击链接，点击交给系统浏览器打开（`src/services/im/autolink.ts`）
 - 待办通知卡片展示标题、摘要与更多信息；点击「查看待办／待阅／已办」直接在系统浏览器打开对应详情
-- 消息无直链时，后台按来源与完整标题查询待办／待阅／已办，唯一匹配后直接打开原始详情地址；同名歧义、缺少链接或仅移动端可办时在消息下提示原因，不执行快捷审批
+- 消息无直链时，先用通知消息 ID 反查列表项 `notifyLog` 精确定位，再按来源与完整标题做唯一匹配；同名歧义、缺少链接或仅移动端可办时在消息下提示原因，不执行快捷审批
 - 直接使用系统默认浏览器打开待办原始链接，不尝试 AccessToken／CAS 自动登录，也不提前访问认证页；登录由浏览器和业务系统处理
 - 会话已读回执（Cmd.uReadedSession=19）
 - Token 刷新通知（Cmd.dRefreshToken=99）
@@ -38,7 +38,7 @@
 - 团队文档（品高云盘目录、上传、下载、预览、在线编辑、删除）
 - 仅 `templateCode = workGroupDefault` 的团队群显示任务/文档抽屉
 
-待办通知通常只带 `[UnityTodo]` 入口，不带条目 ID 或详情地址。客户端优先在消息指定分类中跨页匹配来源与完整标题，唯一匹配后直接使用详情；没有匹配时才查询其他分类，避免无关接口故障阻断打开。卡片标题是「您有一条新的待办」时，用卡片摘要中的实际标题匹配。点击过程不弹出待办列表。待办列表接口依据 `doc/官方客户端待办与待阅实现分析.md` 实现，真实账号的接口响应仍需联调确认。`node scripts/check-todo.cjs` 可执行文档样例与模拟响应的离线回归，覆盖卡片字段、动作参数、来源过滤、详情定位、直接外部打开和失败处理；质量门禁仍为 `pnpm build`。
+待办通知通常只带 `[UnityTodo]` 入口，不带条目 ID 或详情地址。客户端优先用通知消息 ID 匹配列表项的 `notifyLog`（同一条通知生成的唯一待办），匹配不到时再在消息指定分类中跨页匹配来源与完整标题；没有匹配时才查询其他分类，避免无关接口故障阻断打开。同名待办（例如同一流程被重复发起）只能靠 `notifyLog` 区分，不能直接按标题取第一条。卡片标题是「您有一条新的待办」时，用卡片摘要中的实际标题匹配。点击过程不弹出待办列表。待办列表接口依据 `doc/官方客户端待办与待阅实现分析.md` 实现。`node scripts/check-todo.cjs` 可执行文档样例与模拟响应的离线回归，覆盖卡片字段、动作参数、来源过滤、`notifyLog` 精确匹配、详情定位、直接外部打开和失败处理；质量门禁仍为 `pnpm build`。
 
 ### 零信任
 - 用当前云上越秀 AccessToken 调本机官方客户端 SDK（`127.0.0.1:35440-35443/trustagent`）完成登录
@@ -73,13 +73,28 @@ sudo launchctl bootout system/com.legendsec.trustdservice
 - 列目录 / 进入 / 返回 / 刷新（`panServerUri /v1/directories/{dirId}/items`）
 - 创建目录 / 删除 / 重命名 / 移动（`/v1/directories|files/*`，与「任务与文档 → 团队文档」同一套接口）
 - 上传文件（选择或拖拽；浮动窗口显示进度，失败可点击重试）
-- 搜索（`/openapi/file/search`）
+- 目录内即时筛选（按名称/扩展名过滤文档与子目录，不区分大小写），并显示条目总数及目录/文件数量
+- 全盘搜索（`/openapi/file/search`，结果可继续筛选，可一键退出回到当前目录）
 - 文件下载（`/openapi/stream/download`，302 到 S3 签名地址）
 - 在线编辑（优先 `panDocUri /v1/doc/open`；仅旧 openapi 的历史文件退回 `driveWpsUri /v1/api/file/wps3rd`）
 - 团队盘入口按 `taskUri /v1/group/formal/page` 列出全部正式团队群（分页拉全），进入后按 groupId 浏览；旧实现走 `/openapi/team/list?filter={"onlyMember":true}`，只返回单独创建的云盘团队，团队数量远少于原版
 - 部门盘入口按 `panServerUri /v1/principals/departments` 列出用户可见的部门链；旧 `/openapi/org/list` 加 `fileNotEmpty` 会漏掉仍有文档的上级部门
 - 公开文档入口按 `/openapi/public/list_class` 列出文档库分类
+- 共享给我（共享协作）：左侧「共享给我」入口按 `panServerUri /v1/share/2/list` 列出别人分享的文件/目录，支持进入目录浏览、下载、预览（文档类）
 - 个人/团队/部门/公开四类盘的目录 id：`CurrentUserId` / groupId（团队群） / orgId / classId
+
+### 会议（腾讯会议）
+- 直接链接官方 `TMSDK.framework`（C++ 接口），没有 Electron/Node 中间层；`src-tauri/wemeet/` 是唯一的原生桥
+- 入口在左侧导航「会议」：打开会前界面（设置／预约／历史都在这里）、快速会议、按会议号加入
+- 账号配置走配置中心 `rtcUri` 的 `v1/tencent/meeting/config`（`sdkKey/sdkToken/ssoUrlPrefix/idToken`），登录态与 YX 登录绑定
+- 首次操作才初始化（约 3–10 秒）；退出登录或退出应用时释放 SDK，避免 `TMSDKHelper` 残留
+- 缓存按账号隔离：`{app_cache_dir}/{Uid}/wemeet_cache`（与官方一致）；退出登录会删掉当前账号的缓存
+- `OnSDKTokenExpired` 时自动重新拉配置并 `RefreshSDKToken`
+- 响铃邀请默认开启：SDK 自绘接听窗口，会议页「连接状态」可关闭；邀请始终以 IM 消息为主通道
+- 会议 UI 全部是腾讯原生窗口，不受 YX 主题影响；入会默认关麦克风、关摄像头（与官方一致）
+- IM 联动：邀请消息（`msg_type 15`，以及官方「分享到聊天」的 `99/type 3`）在会话里显示为会议卡片，点「加入会议」直接入会；收到实时邀请还会弹一次全局「加入会议」窗口（离线补发的旧邀请、会议中都不弹）；卡片指令 `[JoinWeMeet]`、`[StartWeMeet]`、`[OpenApp appCode=linkMeeting]` 都走会议模块
+- 聊天顶部「视频会议」：单聊直接邀请对方，群/部门会话先选人；先开快速会议，拿到 `OnJoinMeeting` 回调里的会议号后再逐个发邀请（15 触发弹窗 + 99 卡片留记录，与官方 `joinWeMeetCallback` 一致），会议页也能「邀请同事」；收到官方邀请时会把配套的 99 卡片去重，只显示一张会议卡片
+- 会议中关闭 YX 主窗口只会隐藏窗口，会议继续；从托盘恢复后可点「回到会议」把会中窗口置前
 
 ## 目录结构
 
@@ -93,6 +108,7 @@ YX/
 │   │   ├── AppPanel.vue         # 应用面板
 │   │   ├── ChatDrawer.vue       # 团队任务 / 文档抽屉
 │   │   ├── UploadProgress.vue   # 上传进度浮窗
+│   │   ├── MeetingInvitePrompt.vue # 会议邀请弹窗
 │   │   └── TaskNode.vue         # 任务树节点
 │   ├── services/
 │   │   ├── im/
@@ -103,6 +119,7 @@ YX/
 │   │   │   ├── media.ts         # 附件上传/图片获取
 │   │   │   ├── prefs.ts         # 免打扰/折叠/置顶/团队群
 │   │   │   ├── session-api.ts   # 会话列表/历史
+│   │   │   ├── wemeet-invite.ts # 腾讯会议邀请消息解析/构造
 │   │   │   └── im-client.ts     # WebSocket 客户端
 │   │   ├── auth.ts              # OAuth2 + RSA + 配置中心
 │   │   ├── http.ts              # 统一 HTTP + 401 续期
@@ -119,18 +136,22 @@ YX/
 │   │   ├── auth.ts              # 登录态
 │   │   ├── im.ts                # 会话/消息/未读/上传
 │   │   ├── uploads.ts           # 上传队列/进度/重试
+│   │   ├── wemeet.ts            # 会议状态机/邀请/生命周期
 │   │   └── disk.ts              # 文件列表
 │   ├── views/
 │   │   ├── LoginView.vue        # 登录页
 │   │   ├── ChatView.vue         # 聊天页
 │   │   ├── ContactsView.vue     # 通讯录
 │   │   ├── DiskView.vue         # 网盘页
+│   │   ├── WemeetView.vue       # 会议（会前/快速会议/入会/邀请）
 │   │   └── ZtView.vue           # 零信任（登录/状态）
 │   ├── assets/styles.css
 │   ├── App.vue
 │   └── main.ts
 └── src-tauri/
     ├── src/zt_sdk.rs            # 零信任：驱动官方客户端 SDK 的 JSON-RPC
+    ├── src/wemeet.rs            # 腾讯会议：Tauri 命令 + 主线程投递 + 事件
+    ├── wemeet/                  # 腾讯会议 C++ 桥（框架缺失时走 stub）
     ├── src/store_upload.rs      # 附件上传：Rust 流式读临时文件发 multipart（大文件不占 WebView 内存）
     ├── tauri.conf.json          # CSP 允许 blob/ws/wss/http/https
     └── capabilities/default.json  # http 域名白名单 *.bingolink.biz *.yuexiu.com
@@ -177,6 +198,14 @@ pnpm tauri build  # 打包
 - 官方客户端升级会重写 launchd plist（恢复 `RunAtLoad`/`KeepAlive`），需要重新关闭才能保持按需启动
 - 图片/附件下载走带 `access_token` 的 query，链接有时效性
 - 设备序列号用随机 UUID 替代（原版用 serial-number 模块）
+- 会议组件（TMSDK.framework，355 MB）不随安装包分发：安装包只有约 5 MB，首次进会议页点「从地址下载」或「选择本地组件包」安装，装完立即生效。
+  覆盖安装新版本会换掉 app 包内的组件，但组件包会留档在本地缓存，下次启动自动回装（不走网络）；缓存可在会议页清理。
+  本地打包组件包用 `scripts/pack-tmsdk.sh`，发到 GitHub Release 即可（默认地址在 `src-tauri/components.json`，运行时可改）。
+  开发态把框架装进 `.app` 用 `scripts/install-wemeet.sh`（`scripts/sync-wemeet.sh` 仍用于把官方 DMG 里的框架拷到 `vendor/`）
+- TMSDK 要求进程运行在 `.app` 内（依赖 `CFBundleIdentifier`），所以会议只能用 `pnpm tauri build --debug` 出的 `YX.app` 验证，`pnpm tauri dev` 下调用会被前置检查拦下
+- 收到会议邀请时会弹全局「加入会议」窗口（离线补发的旧邀请不弹，会议中也不弹）；响铃邀请走 SDK 原生接听窗口（默认开，可在会议页关闭），官方客户端没有启用这套通道，因此只能按 IM 邀请联调
+- 会中/会前「邀请」按钮仍是腾讯原生 UI；已评估接管方案（`EnableInviteCallback` 等），因增量收益有限且会丢掉复制链接/PSTN/Rooms 入口，暂不实施，见 `doc/腾讯会议邀请按钮接管方案.md`
+- 会议只有 arm64；TMSDK 3.21.303 由腾讯提供，服务端升级后需同步换框架
 
 
 ## 消息与文件转发

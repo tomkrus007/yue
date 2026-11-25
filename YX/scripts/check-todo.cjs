@@ -4,7 +4,7 @@ const path = require('path');
 function load(file) {
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8').replace(/import\.meta\.glob/g, '__assetGlob'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const module = {exports:{}};
-  new Function('require','module','exports','__assetGlob',code)(id => load(path.resolve(path.dirname(file),id+'.ts')),module,module.exports,() => ({}));
+  new Function('require','module','exports','__assetGlob',code)(id => id.startsWith('.') ? load(path.resolve(path.dirname(file),id+'.ts')) : require(id),module,module.exports,() => ({}));
   return module.exports;
 }
 const assert = require('assert/strict');
@@ -108,6 +108,12 @@ assert.equal(service,'https://work.yuexiu.com/task?id=1');
   assert.equal(listCalls.length,2);
   mocks['../http'].httpJson = async () => ({data:[matched,{...matched,id:'duplicate'}],total:2});
   await assert.rejects(todo.resolveTodoNotice(notice),/多条同名/);
+  const dupeAction = {pc:'[OpenUrl]\nurl=https://work.yuexiu.com/task?id=old'};
+  const dupeNotice = {...notice,messageId:'msg-2'};
+  mocks['../http'].httpJson = async () => ({data:[{...matched,id:'old',action:dupeAction},{...matched,id:'new',notifyLog:'msg-2'}],total:2});
+  assert.equal(await todo.resolveTodoNotice(dupeNotice),service,'同名待办按通知消息 ID 精确匹配');
+  mocks['../http'].httpJson = async () => ({data:[{...matched,id:'old',action:dupeAction},{...matched,id:'new',notifyLog:'other-msg'}],total:2});
+  await assert.rejects(todo.resolveTodoNotice(dupeNotice),/多条同名/,'无消息 ID 回指时仍保留歧义提示');
   mocks['../http'].httpJson = async url => ({data:[{...matched,id:new URL(url).pathname}],total:1});
   assert.equal(await todo.resolveTodoNotice(notice),service,'优先采用消息指定分类的唯一匹配，不被其他分类同名记录干扰');
   mocks['../http'].httpJson = async () => ({data:[{...matched,dealTerminal:3}],total:1});

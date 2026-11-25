@@ -107,3 +107,19 @@
 - **做法**：团队文档统一用 task 接口拉全正式团队群，条目 id 用 `groupId`，目录内容仍走 `panServerUri /v1/directories/{groupId}/items`。不要再用 IM 最近会话（`/emb/sessions/latest`）推导团队文档，它只包含有消息往来的群，也不要再保留重复的「群文档」入口。
 - **部门/个人/公共**：部门列表用 `panServerUri /v1/principals/departments`（实测 4 个），旧 `/openapi/org/list?filter={"fileNotEmpty":true}` 只有 3 个，会漏掉仍有文档的上级部门；个人根目录 id 取自 `principals/info` 的 `rootId`（实测等于 `CurrentUserId`）；公共文档分类仍可用 `/openapi/public/list_class`，导航项与名称的原版来源是 `/v1/space/menu`。
 - **排查**：先看原版 `web/config.json` 的 `imlayout` 是否启用 `Document`，再对照新模块 bundle 里 `getAllSpace` / `groupsList` 的接口，避免继续在旧云盘接口上找原因。
+
+## 团队文档数量仍偏少：taskapi 忽略 pinToPan，要补 uam 的云盘可见空间
+
+- **现象**：换成另一个账号（非群主、只被授权了部分团队文档）后，团队文档只有 23 个，官方能看到 30+，云盘里创建的「团队空间」一个都不出现。
+- **原因**：`{taskUri}/v1/group/formal/page` 会忽略 `pinToPan`，实际只返回「我加入的正式群」；云盘里用「团队空间」模板创建的空间、以及别人 Pin 到云盘/授权给我的团队，成员关系上查不到，taskapi 就漏掉了。`{uamApiUri}/v3/groups/formal/page?scope=1&isCount=true&pinToPan=true` 才返回「云盘可见的团队文档空间」（含 `typeName=团队空间` 与 `memberRole=0` 的被授权团队）。
+- **实测**：账号 A taskapi 43 / uam-pin 34 / 并集 51；账号 B taskapi 23 / uam-pin 33 / 并集 37（差的 14 个里 5 个是团队空间、9 个是被授权的团队协作群模版）。两个接口结果互不包含，`pinToPan=false` 的 uam 结果与 taskapi 一致。
+- **做法**：`listTeamSpaces()` 先拉 taskapi，再用 `uamApiUri /v3/groups/formal/page?pinToPan=true` 追加并按 `groupId` 去重；uam 失败只告警，不影响主列表。不要只换成 uam（会丢掉 17 个未 Pin 但我加入的群）。
+
+## 会议组件切分：打包要落 tar 再压，装回 app 必须整体重签
+
+- **压缩**：`tar -cf - … | zstd -19` 比先 `tar -cf package.tar` 再压大 **9%**（129 MB vs 118 MB）。管道喂给 zstd 时它不知道输入总长度，会按块切窗口。分发包固定用「tar 落文件 → zstd -19 → 删 tar」。
+- **落位**：TMSDK 只能装回 `YX.app/Contents/Frameworks/TMSDK.framework`（124 处 `LC_RPATH` 写死 `@executable_path/../Frameworks`），所以「装组件」= 改 app 包 = bundle seal 失效，必须 `codesign --force --sign - --options runtime --entitlements Entitlements.plist` 重签外层 app；嵌套框架的腾讯签名保持原样，`--deep --strict` 能过。
+- **校验锚点**：来源可信只看腾讯 `TeamIdentifier=5PMRFKHZTP`，压缩包的 sha256 只做记录（截断包解压后 `codesign --deep --strict` 必然失败）。签名校验要在**解压到临时目录之后、落位之前**做。
+- **更新丢失**：覆盖安装 app 会整体换掉 `Contents/Frameworks`。组件包留档在 `app_cache_dir/components/`，进会议时用同一安装器本地回装（约 2–4 秒）；不要在启动时无条件回装，那是给从不开会的人白占 355 MB。
+- **默认地址**：`components.json` 提供 URL，启动时种子进 `settings`，同时在 `schema_meta` 记一份种子值——库里等于种子值说明用户没改过，换版本可跟随；用户改过就永不覆盖。
+- **下载**：GitHub 在国内代理下 TLS 握手约两成概率被掐断（`client error (Connect)：connection closed via error`），必须重试 2–3 次；`reqwest::Error` 的 `Display` 只有「error sending request」，要把 `source()` 链拼进错误文案才有排查价值。

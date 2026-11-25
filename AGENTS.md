@@ -39,6 +39,7 @@ pnpm tauri build   # 打包；需要关窗不退出的常驻版用 pnpm tauri bu
 - 免打扰/折叠/置顶接口按会话类型分流，且多数只收表单参数；细节见 `src/services/im/prefs.ts`。
 - 应用面板 `appApiUri`、团队任务 `taskUri`、团队文档 `panServerUri`/`panDocUri` 都来自配置中心；云盘/任务接口只认 query `access_token`。
 - 零信任**不自研隧道**：`src-tauri/src/zt_sdk.rs` 调用本机官方客户端 `127.0.0.1:35440-35443/trustagent` 的 `login/logout/status/get_config`，把当前 AccessToken 交出去；隧道与内网路由由官方客户端负责（详见 `doc/官方零信任客户端架构与移植分析.md`）。
+- 会议组件（`TMSDK.framework`，355 MB）**不随安装包分发**：shim 用 `dlopen` 加载，安装器把它装回 `YX.app/Contents/Frameworks/TMSDK.framework` 并重签整个 app（`src-tauri/src/component.rs`）。组件包用 `scripts/pack-tmsdk.sh` 打成 `TMSDK-<ver>-macos-arm64.tar.zst` 发 GitHub Release，默认地址在 `src-tauri/components.json`（启动时种子进 SQLite，用户可改）；组件缓存留在 `app_cache_dir/components/`，进会议时缺失就本地回装。设计见 `doc/TMSDK组件化与跨平台设计.md`。
 
 ## 关键约束
 
@@ -48,6 +49,7 @@ pnpm tauri build   # 打包；需要关窗不退出的常驻版用 pnpm tauri bu
 - 登录是两步 OAuth2（v2 token 换 v3）+ RSA 加密密码。登录主流程只等 token；`getCurrentUser()` 必须保持异步/带超时，否则会卡住跳转（见 `LESSONS.md`）。
 - IM 是自定义二进制帧，不是 JSON/protobuf；`content` 的“加密”只是按位取反 + Base64。帧中“有无负载”看 byte 3（`operation`），不是 byte 2——注释已说明原版字段名写反，不要“修正”。
 - 网盘个人盘根路径是 `/Private`，传 `/` 会 500。
+- 「共享给我」（`/v1/share/2/list`，way=2）里的目录浏览/下载/预览必须带 `x-share-id: <分享 id>` 头；不带该头服务端按接收人自有权限过滤，返回空数组而不是 403（下载则是 45111001 Insufficient operation permission）。
 - 联系人过滤自己依赖 localStorage 的 `CurrentECode`。
 
 ## 文档与验证

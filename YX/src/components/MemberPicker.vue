@@ -29,7 +29,7 @@
               :disabled="busy"
               @change="toggle(m.id)"
             />
-            <span class="avatar" aria-hidden="true">{{ (m.name || '?').slice(0, 1) }}</span>
+            <ContactAvatar class="avatar" :id="m.id" :type="1" :name="m.name" />
             <span class="info">
               <span class="name" :title="m.name">{{ m.name }}</span>
               <small v-if="m.meta" class="meta">{{ m.meta }}</small>
@@ -66,6 +66,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { contactService, type ContactEntry } from '../services/contact-client'
 import { authService } from '../services/auth'
 import { useImStore } from '../stores/im'
+import ContactAvatar from './ContactAvatar.vue'
 import type { GroupMember } from '../services/group-client'
 
 export interface PickedMember {

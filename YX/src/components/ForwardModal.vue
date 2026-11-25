@@ -28,7 +28,13 @@
           :class="['target-row', { chosen: selected.includes(targetKey(t)), locked: started }]"
         >
           <input v-model="selected" type="checkbox" :value="`${t.type}|${t.id}`" :disabled="started" />
-          <span :class="['target-avatar', { group: t.type !== 1 }]" aria-hidden="true">{{ t.type === 1 ? t.name.slice(0, 1) : '群' }}</span>
+          <ContactAvatar
+            class="target-avatar"
+            :class="{ group: t.type !== 1 }"
+            :id="t.id"
+            :type="t.type"
+            :name="t.name"
+          />
           <span class="target-info">
             <span class="target-name" :title="t.name">{{ t.name }}</span>
             <small v-if="t.type === 1" class="target-meta">
@@ -55,6 +61,7 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import { contactService, type ContactEntry } from '../services/contact-client'
 import { splitForwardBatches } from '../services/im/forwarding'
 import { useImStore } from '../stores/im'
+import ContactAvatar from './ContactAvatar.vue'
 import type { ImMessage } from '../services/im/im-client'
 import { toPlainText } from '../services/im/content'
 const props = defineProps<{ messages: ImMessage[]; combine: boolean }>()

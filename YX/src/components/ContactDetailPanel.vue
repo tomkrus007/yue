@@ -6,7 +6,7 @@
     <div v-else class="detail-card">
       <div class="hero">
         <button
-          v-if="kind === 'user' && avatarSrc"
+          v-if="avatarSrc"
           class="big-avatar photo"
           type="button"
           title="查看头像"
@@ -124,6 +124,8 @@ const groupTypeLabel = computed(() => {
 })
 
 onMounted(async () => {
+  // 头像与详情互不影响：群/服务号也有自己的头像（type=2 / 5）。
+  void loadAvatar()
   try {
     if (props.kind === 'group') {
       detail.value = (await contactService.getGroupDetail(props.id)) || {}
@@ -137,7 +139,6 @@ onMounted(async () => {
       if (!resolvedName.value) {
         resolvedName.value = (u as any)?.name || (u as any)?.userName || (u as any)?.loginId || props.id
       }
-      void loadAvatar()
     }
   } catch (e: any) {
     error.value = e.message || '加载详情失败'
@@ -146,11 +147,13 @@ onMounted(async () => {
   }
 })
 
+/** 头像类型（FromType）：用户 1、群 2、服务号 5。 */
+const avatarType = computed(() => (props.kind === 'group' ? 2 : props.kind === 'serviceno' ? 5 : 1))
+
 /** 头像单独异步加载：失败或无头像时保留首字兜底，不影响详情展示。 */
 async function loadAvatar() {
-  if (props.kind !== 'user') return
   try {
-    avatarSrc.value = await getAvatarUrl(props.id, 1)
+    avatarSrc.value = await getAvatarUrl(props.id, avatarType.value)
   } catch {
     avatarSrc.value = ''
   }

@@ -31,7 +31,6 @@
           @click="im.setTab(t.id)"
         >
           {{ t.label }}
-          <i v-if="t.unread > 0">{{ t.unread > 99 ? '99+' : t.unread }}</i>
         </button>
       </div>
 
@@ -78,13 +77,20 @@
           ]"
           @click="im.selectSession(s.id)"
         >
-          <ContactAvatar
-            class="s-avatar"
-            :class="'t' + s.type"
-            :id="s.id"
-            :type="s.type"
-            :name="s.name"
-          />
+          <div class="s-avatar-wrap">
+            <ContactAvatar
+              class="s-avatar"
+              :class="'t' + s.type"
+              :id="s.id"
+              :type="s.type"
+              :name="s.name"
+            />
+            <span
+              v-if="im.unreadOf(s.id) > 0"
+              class="avatar-badge"
+              :title="`${im.unreadOf(s.id)} 条未读消息`"
+            >{{ im.unreadOf(s.id) > 99 ? '99+' : im.unreadOf(s.id) }}</span>
+          </div>
           <div class="s-info">
             <div class="s-name">
               <span v-if="im.pinned[s.id]" class="pin">📌</span>
@@ -121,9 +127,6 @@
                   <circle cx="19" cy="12" r="1.7" />
                 </svg>
               </button>
-              <span v-if="im.unreadOf(s.id) > 0" class="badge">
-                {{ im.unreadOf(s.id) > 99 ? '99+' : im.unreadOf(s.id) }}
-              </span>
             </div>
           </div>
         </li>
@@ -195,6 +198,14 @@
             </button>
             <button v-if="im.currentSession.type === 1" class="small secondary" @click="groupChatOpen = true">群聊</button>
             <button class="small secondary" @click="historyOpen = true">历史</button>
+            <button
+              v-if="[1, 2, 4, 8].includes(im.currentSession.type)"
+              class="small secondary"
+              :disabled="meetingBusy || !im.authed"
+              @click="startVideoMeeting"
+            >
+              {{ meetingBusy ? '会议启动中…' : '视频会议' }}
+            </button>
             <button v-if="[2, 4, 8].includes(im.currentSession.type)" class="small secondary" :disabled="locating" @click="mentionsOpen = true">待处理@（{{ currentPendingMentions.length }}）</button>
             <button
               v-if="drawerAllowed"
@@ -409,6 +420,16 @@
       @created="onGroupChatCreated"
     />
 
+    <!-- 群/部门会话发起会议：先选邀请人 -->
+    <MemberPicker
+      v-if="meetingPickerOpen"
+      :open="meetingPickerOpen"
+      title="选择要邀请的同事"
+      source="contacts"
+      @close="meetingPickerOpen = false"
+      @confirm="confirmMeetingInvitees"
+    />
+
     <ImageGallery v-if="previewUrl" :images="galleryImages" :initial-index="galleryIndex" :initial-url="previewUrl" :initial-name="previewName" @close="previewUrl = ''" />
 
     <!-- 应用日志：协议 + 登录 + console + 未捕获异常 -->
@@ -456,6 +477,7 @@ import MentionPicker from '../components/MentionPicker.vue'
 import type { LinkUserDetail } from '../services/contact-client'
 import type { ContactEntry } from '../services/contact-client'
 import { fmtMsgTime, fmtSessionTime, messageText, segmentsOf, combineDetails, type ImageMeta } from '../services/im/content'
+import { dedupeMeetingCards } from '../services/im/wemeet-invite'
 import {
   normalizeClipboardImage,
 } from '../services/im/media'
@@ -480,8 +502,11 @@ import MentionCenter from '../components/MentionCenter.vue'
 import ReceiptModal from '../components/ReceiptModal.vue'
 import GroupSettingsModal from '../components/GroupSettingsModal.vue'
 import CreateGroupModal from '../components/CreateGroupModal.vue'
+import MemberPicker from '../components/MemberPicker.vue'
+import type { PickedMember } from '../components/MemberPicker.vue'
 import { groupService } from '../services/group-client'
 import { FromType } from '../services/im/types'
+import { useWeMeetStore } from '../stores/wemeet'
 
 const auth = useAuthStore()
 const im = useImStore()
@@ -513,7 +538,9 @@ function readMessageState(): Record<string, MessageState> {
   try { return JSON.parse(localStorage.getItem(messageStateKey) || '{}') || {} } catch { return {} }
 }
 const messageState = ref<Record<string, MessageState>>(readMessageState())
-const allVisibleMessages = computed(() => im.currentMessages.filter(m => !messageState.value[m.msg_id]?.deleted))
+const allVisibleMessages = computed(() => dedupeMeetingCards(
+  im.currentMessages.filter(m => !messageState.value[m.msg_id]?.deleted),
+))
 const messageWindowEndId = ref('')
 const messageWindowEnd = computed(() => {
   const index = messageWindowEndId.value ? allVisibleMessages.value.findIndex(message => message.msg_id === messageWindowEndId.value) : -1
@@ -527,6 +554,43 @@ const actionError = ref('')
 // 操作提示属于当前会话，切换会话后不保留。
 watch(() => im.currentSessionId, () => { actionError.value = '' })
 const actionPending = ref(false)
+const wemeet = useWeMeetStore()
+const meetingBusy = ref(false)
+const meetingPickerOpen = ref(false)
+
+/**
+ * 聊天里发起视频会议：单聊直接邀请对方，群/部门会话先选人。
+ * 会议号由 SDK 的 `OnJoinMeeting` 回调带回，拿到后再发邀请。
+ */
+function startVideoMeeting() {
+  const session = im.currentSession
+  if (!session || meetingBusy.value) return
+  if (session.type === 1) {
+    void inviteToVideoMeeting([{ id: session.id, name: session.name }])
+  } else {
+    meetingPickerOpen.value = true
+  }
+}
+
+function confirmMeetingInvitees(items: PickedMember[]) {
+  meetingPickerOpen.value = false
+  if (items.length) void inviteToVideoMeeting(items)
+}
+
+async function inviteToVideoMeeting(invitees: { id: string; name: string }[]) {
+  meetingBusy.value = true
+  actionError.value = ''
+  try {
+    const { sent } = await wemeet.startMeetingAndInvite(invitees)
+    actionError.value = sent
+      ? `会议已开始，已向 ${sent} 人发送邀请`
+      : '会议已开始，但没有可邀请的人'
+  } catch (error) {
+    actionError.value = (error instanceof Error ? error.message : '发起会议失败，请重试').replace(/https?:\/\/[^\s)]+/g, '[请求地址]')
+  } finally {
+    meetingBusy.value = false
+  }
+}
 const favoritesOpen = ref(false)
 const replyThreadId = ref('')
 const receiptMessage = ref<ImMessage | null>(null)
@@ -1325,15 +1389,6 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 }
 .tab:hover { background: var(--hover); color: var(--text); }
 .tab.on { color: var(--primary); box-shadow: inset 0 -2px 0 var(--primary); }
-.tab i {
-  font-style: normal;
-  font-size: 10px;
-  background: var(--danger);
-  color: #fff;
-  padding: 0 5px;
-  border-radius: 8px;
-  margin-left: 4px;
-}
 
 .searching { padding: 6px 16px; font-size: 11px; color: var(--text-muted); }
 .search-entry { cursor: pointer; }
@@ -1398,10 +1453,23 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .icon-btn svg { width: 15px; height: 15px; display: block; }
 .icon-btn.more svg { width: 16px; height: 16px; }
 .icon-btn.mute-on { opacity: 1; }
-.badge {
-  background: var(--danger); color: #fff;
-  font-size: 11px; padding: 0 6px; border-radius: 10px;
-  line-height: 16px;
+.s-avatar-wrap { position: relative; flex-shrink: 0; }
+.avatar-badge {
+  position: absolute;
+  top: -4px;
+  right: -7px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* 会话「更多操作」菜单：Teleport 到 body，避免被列表滚动区域裁剪 */
