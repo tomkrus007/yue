@@ -340,19 +340,47 @@ export function appIconUrl(key: string): string {
 }
 
 /**
- * 用户/群等主体头像：官方客户端走 {storeUri}v2/avatar?id=&type=&access_token=。
+ * 用户/群等主体头像：官方客户端走 {storeUri}v2/avatar?id=&type=&size=0x180&access_token=。
  * type：1 用户、2 群、4 组织、5 服务号、7 机器人。
+ *
+ * 候选地址与 downloadCandidates 同理：某些网络下 store 主机的证书会被中间设备
+ * 替换（TLS 主机名校验失败），只有网关主机（uamApiUri 同源 + /store）可用。
+ * 头像此前只拼 storeUri，所以附件能显示、头像整片空着。
  */
-export function avatarUrl(id: string, type = 1): string {
-  if (!id) return ''
-  const base = String(getServerPaths().storeUri || '').replace(/\/+$/, '')
-  if (!base) return ''
+export function avatarCandidates(id: string, type = 1): string[] {
+  if (!id) return []
   const query = new URLSearchParams({
     id,
     type: String(type),
+    size: '0x180',
     access_token: authService.getAccessToken(),
-  })
-  return base + '/v2/avatar?' + query.toString()
+  }).toString()
+  const out: string[] = []
+  const push = (origin?: string, pathname?: string) => {
+    if (!origin) return
+    const path = String(pathname || '/store').replace(/\/+$/, '')
+    const url = origin.replace(/\/+$/, '') + path + '/v2/avatar?' + query
+    if (!out.includes(url)) out.push(url)
+  }
+  const paths = getServerPaths()
+  try {
+    const store = paths.storeUri ? new URL(paths.storeUri) : null
+    if (store) push(store.origin, store.pathname)
+  } catch {
+    /* 忽略 */
+  }
+  try {
+    const uam = paths.uamApiUri ? new URL(paths.uamApiUri) : null
+    if (uam) push(uam.origin, '/store')
+  } catch {
+    /* 忽略 */
+  }
+  return out
+}
+
+/** 头像地址（首选候选，storeUri 优先）；保留给调试与其他调用方。 */
+export function avatarUrl(id: string, type = 1): string {
+  return avatarCandidates(id, type)[0] || ''
 }
 
 export function mimeFromExt(ext?: string): string {
@@ -462,6 +490,59 @@ const avatarCache = new Map<string, string>()
 const avatarPending = new Map<string, Promise<string>>()
 /** 404 的主体不再重复请求（列表页重进时会重新挂载组件）。 */
 const avatarMissing = new Set<string>()
+/** 上次成功的主机，下次优先用它，避免每次都先撞不可用地址。 */
+let avatarPreferredHost = ''
+
+/** 存储服务在 token 失效时会 302 到登录页，正文是 HTML，不能当图片缓存。 */
+function looksLikeImage(bytes: Uint8Array): boolean {
+  if (bytes.length < 12) return false
+  if (bytes[0] === 0x89 && bytes[1] === 0x50) return true
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return true
+  if (bytes[0] === 0x47 && bytes[1] === 0x49) return true
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[8] === 0x57) return true
+  if (bytes[0] === 0x42 && bytes[1] === 0x4d) return true
+  return false
+}
+
+/**
+ * 依次尝试头像候选地址；token 失效（302 / 401）时刷新一次 token 后重来。
+ * 404 代表服务端确实没有这张图，直接抛给调用方记入 avatarMissing。
+ */
+async function fetchAvatarBytes(
+  id: string,
+  type: number,
+  refreshed = false,
+): Promise<{ buf: ArrayBuffer; host: string }> {
+  let urls = avatarCandidates(id, type)
+  if (!urls.length) throw new Error('缺少存储服务地址')
+  if (avatarPreferredHost) {
+    urls = urls
+      .slice()
+      .sort(
+        (a, b) =>
+          Number(b.startsWith(avatarPreferredHost)) -
+          Number(a.startsWith(avatarPreferredHost)),
+      )
+  }
+  let lastErr: Error | null = null
+  for (const url of urls) {
+    try {
+      const buf = await httpArrayBuffer(url, { maxRedirections: 0 })
+      if (!looksLikeImage(new Uint8Array(buf))) throw new Error('HTTP 302')
+      return { buf, host: new URL(url).origin }
+    } catch (e: any) {
+      lastErr = e instanceof Error ? e : new Error(String(e))
+      const message = lastErr.message
+      if (message.includes('404')) break
+      // 401 / 30x 是凭证问题，换主机没用，刷新 token 后重放一次。
+      if (!refreshed && /401|30[1278]/.test(message)) {
+        if (await authService.refreshToken()) return fetchAvatarBytes(id, type, true)
+        break
+      }
+    }
+  }
+  throw lastErr || new Error('头像加载失败')
+}
 
 /** 列表页一次会挂载很多头像，限制并发，避免瞬间打满连接。 */
 let avatarActive = 0
@@ -491,17 +572,17 @@ export async function getAvatarUrl(id: string, type = 1): Promise<string> {
   const pending = avatarPending.get(key)
   if (pending) return pending
   const task = (async () => {
-    const url = avatarUrl(id, type)
-    if (!url) throw new Error('缺少存储服务地址')
     await acquireAvatarSlot()
     try {
-      const buf = await httpArrayBuffer(url)
+      const { buf, host } = await fetchAvatarBytes(id, type)
       const blobUrl = URL.createObjectURL(
         new Blob([buf], { type: sniffImageType(new Uint8Array(buf)) }),
       )
       avatarCache.set(key, blobUrl)
+      avatarPreferredHost = host
       return blobUrl
     } catch (e: any) {
+      // 只有服务端明确回 404 才记住「没头像」；证书/token/网络问题不能让头像永久空白。
       if (String(e?.message || '').includes('404')) avatarMissing.add(key)
       throw e
     } finally {

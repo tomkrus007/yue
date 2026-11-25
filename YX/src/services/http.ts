@@ -169,11 +169,19 @@ export async function tokenGet<T = any>(
 /** 直接取二进制（图片 / 图标），走 Tauri HTTP 绕过 CORS。 */
 export async function httpArrayBuffer(
   url: string,
-  options: { token?: string; headers?: Record<string, string> } = {},
+  options: {
+    token?: string
+    headers?: Record<string, string>
+    /** 0 = 不跟随重定向；用于把「302 到登录页」当成失败而不是拿到一页 HTML。 */
+    maxRedirections?: number
+  } = {},
 ): Promise<ArrayBuffer> {
   const headers: Record<string, string> = { ...(options.headers || {}) }
   if (options.token) headers.Authorization = 'Bearer ' + options.token
-  const resp = await fetch(url, { headers })
+  const resp = await fetch(url, {
+    headers,
+    maxRedirections: options.maxRedirections,
+  })
   if (!resp.ok) throw new Error('HTTP ' + resp.status)
   return resp.arrayBuffer()
 }

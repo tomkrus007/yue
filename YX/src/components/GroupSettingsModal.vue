@@ -24,7 +24,7 @@
         <!-- ============ 群资料 ============ -->
         <div v-show="tab === 'profile'" class="panel">
           <div class="hero">
-            <div class="big-avatar">{{ (detail.name || '?').slice(0, 1) }}</div>
+            <ContactAvatar class="big-avatar" :id="groupId" :type="2" :name="detail.name" />
             <div class="hero-info">
               <input
                 v-if="canEditInfo"
@@ -184,7 +184,7 @@
               class="mm-row"
               :class="{ me: m.userId === selfId }"
             >
-              <span class="avatar">{{ (showName(m) || '?').slice(0, 1) }}</span>
+              <ContactAvatar class="avatar" :id="m.userId" :type="1" :name="showName(m)" />
               <span class="mm-info">
                 <span class="mm-name">
                   {{ showName(m) }}{{ m.userId === selfId ? '（我）' : '' }}
@@ -475,6 +475,7 @@ import {
 } from '../services/group-client'
 import { authService } from '../services/auth'
 import { useImStore } from '../stores/im'
+import ContactAvatar from './ContactAvatar.vue'
 import MemberPicker from './MemberPicker.vue'
 import type { PickedMember } from './MemberPicker.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
