@@ -171,12 +171,13 @@ TMSDK-3.21.303-macos-arm64.tar.zst        # 唯一分发形态，本地/网络�
 - `version` 取 `TMSDK.framework/Versions/A/Resources/Info.plist` 的 `CFBundleShortVersionString`。
 - `min_app`：老版本 app 拒绝"太新"的组件，避免 dlsym 头文件与实现 ABI 不匹配。
 - 打包脚本：`scripts/pack-tmsdk.sh`，用 `bsdtar --no-xattrs --no-mac-metadata` + `zstd -19`，产出 `.tar.zst` 与 `.sha256`（sidecar）。
+- 解压不能用系统 `tar`：macOS 的 bsdtar 没有链接 libzstd，`tar -xf` 遇到 zstd 会去 `PATH` 里找 `zstd` 命令；app 从 Finder/launchd 启动时 `PATH` 不含 Homebrew，必然失败。安装器用 `zstd` + `tar` crate 在进程内解码。
 
 ### 2.2 安装流水线（两源合一）
 
 ```
 来源A: 用户选本地文件（NSOpenPanel / 拖到页面）  ─┐
-来源B: HTTP(S) 下载（reqwest，含进度、Range 续传）─┴→ 落到临时文件
+来源B: HTTP(S) 下载（reqwest，含进度、Range 续传）─┴→ 落到临时文件（`cache/components/.download.part`，中途失败保留）
         ↓ ① 解压到 staging（cache/components/staging-<ts>/）
         ↓ ② 校验（见 2.3）
         ↓ ③ 原子安装：ditto/rename 到 Contents/Frameworks/TMSDK.framework
