@@ -16,6 +16,9 @@ open src-tauri/target/debug/bundle/macos/YX.app
 ```
 
 - `TMSDK.framework` 不提交 Git（见 `YX/.gitignore`）：355 MB，仓库里只放打包脚本与头文件流程。
+- 只想编译 shim（不需要 355 MB 框架、也不装进 app）时，只取头文件即可：
+  `./scripts/fetch-tmsdk-headers.sh macos-arm64`（从组件包 Release 里解出 `Headers`，地址取自 `components.json`；
+  `TMSDK_ARCHIVE=dist-components/TMSDK-*.tar.zst` 可离线执行）。CI 用的就是这条路径。
 - 框架内含 `TMSDKHelper.app` 与 40+ 嵌套 framework，必须整体拷贝、保持目录层级。
 - 腾讯 SDK 为公开可获取的组件，可按 `scripts/pack-tmsdk.sh` 打成 `TMSDK-<ver>-macos-arm64.tar.zst`
   发布到 GitHub Release，由应用内的组件安装器按需下载（见 `doc/TMSDK组件化与跨平台设计.md`）。
