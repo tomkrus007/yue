@@ -13,7 +13,8 @@ fn main() {
 
     // 组件化之后，TMSDK 只在编译期用到头文件（实现改为运行时 dlopen，见
     // wemeet/macos/wemeet_shim.cc）。头文件缺失时编占位实现，保证任何平台都能构建；
-    // 真实构建（CI / 本机）由 scripts/fetch-wemeet-headers.sh 或 sync-wemeet.sh 备好。
+    // 真实构建时由 scripts/sync-wemeet.sh（本机，从官方 DMG 拷整个框架）或 CI 从组件包
+    // 只解出 Headers（见 .github/workflows/release.yml）备好。
     let headers = manifest_dir
         .join("vendor")
         .join("TMSDK.framework")
