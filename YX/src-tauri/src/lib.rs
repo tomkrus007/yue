@@ -181,6 +181,7 @@ pub fn run() {
             media_stream::media_response_chunk,
             media_stream::media_response_end,
             wemeet::wemeet_init,
+            wemeet::wemeet_component_status,
             wemeet::wemeet_status,
             wemeet::wemeet_is_logged_in,
             wemeet::wemeet_refresh_token,

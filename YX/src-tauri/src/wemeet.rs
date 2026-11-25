@@ -42,6 +42,11 @@ unsafe extern "C" {
     fn yx_wemeet_enable_ring(enable: i32) -> i32;
     fn yx_wemeet_logout() -> i32;
     fn yx_wemeet_release();
+
+    // 组件化：框架不再链接进主程序，改为运行时加载（见 wemeet_shim.h）。
+    fn yx_wemeet_load_library(dylib_path: *const c_char) -> i32;
+    fn yx_wemeet_library_error() -> *const c_char;
+    fn yx_wemeet_version() -> *const c_char;
 }
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
@@ -114,6 +119,94 @@ fn check(rc: i32, action: &str) -> Result<(), String> {
     }
 }
 
+/// 会议组件在 app 包内的固定位置。
+///
+/// 腾讯把 `@executable_path/../Frameworks/TMSDK.framework/...` 写进 124 处 `LC_RPATH`，
+/// 所以组件只能装在这里，不能放外部路径（详见 `doc/TMSDK组件化与跨平台设计.md`）。
+fn component_dylib() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("取可执行文件路径失败：{e}"))?;
+    let macos_dir = exe.parent().ok_or("可执行文件没有父目录")?;
+    let contents = macos_dir.parent().ok_or("可执行文件不在 .app/Contents/MacOS 内")?;
+    Ok(contents
+        .join("Frameworks")
+        .join("TMSDK.framework")
+        .join("Versions/A/Frameworks")
+        .join("tmsdk_wemeet_sdk.framework")
+        .join("Versions/A/tmsdk_wemeet_sdk"))
+}
+
+/// 会议组件状态，供前端决定显示「可用 / 未安装 / 本平台不支持」。
+#[derive(serde::Serialize)]
+pub struct ComponentStatus {
+    /// `ready` | `absent` | `unsupported`
+    pub state: &'static str,
+    /// SDK 自报版本（只有加载成功后才拿得到）。
+    pub version: Option<String>,
+    /// 期望的框架路径，便于用户/日志定位。
+    pub path: Option<String>,
+    /// 失败原因原文。
+    pub error: Option<String>,
+}
+
+fn load_component(app: &AppHandle) -> Result<Option<String>, String> {
+    let dylib = component_dylib()?;
+    if !dylib.exists() {
+        return Ok(None);
+    }
+    let path = cstring(&dylib.to_string_lossy());
+    let rc = call_main(app, Duration::from_secs(10), move || unsafe {
+        yx_wemeet_load_library(path.as_ptr())
+    })?;
+    if rc != 0 {
+        let err = unsafe { CStr::from_ptr(yx_wemeet_library_error()) }
+            .to_string_lossy()
+            .to_string();
+        return Err(if err.is_empty() {
+            format!("加载会议组件失败（code={rc}）")
+        } else {
+            err
+        });
+    }
+    let version = unsafe { CStr::from_ptr(yx_wemeet_version()) }
+        .to_string_lossy()
+        .to_string();
+    Ok(Some(version))
+}
+
+/// 查询会议组件是否已安装（`absent` 时前端提示安装，`unsupported` 时不提示）。
+#[tauri::command]
+pub async fn wemeet_component_status(app: AppHandle) -> Result<ComponentStatus, String> {
+    if !cfg!(target_os = "macos") {
+        return Ok(ComponentStatus {
+            state: "unsupported",
+            version: None,
+            path: None,
+            error: None,
+        });
+    }
+    let path = component_dylib().ok().map(|p| p.to_string_lossy().to_string());
+    Ok(match load_component(&app) {
+        Ok(Some(version)) => ComponentStatus {
+            state: "ready",
+            version: Some(version),
+            path,
+            error: None,
+        },
+        Ok(None) => ComponentStatus {
+            state: "absent",
+            version: None,
+            path,
+            error: None,
+        },
+        Err(error) => ComponentStatus {
+            state: "absent",
+            version: None,
+            path,
+            error: Some(error),
+        },
+    })
+}
+
 /// 初始化并（由调用方随后）登录。缓存目录按账号隔离。
 #[tauri::command]
 pub async fn wemeet_init(
@@ -126,6 +219,15 @@ pub async fn wemeet_init(
 ) -> Result<(), String> {
     ensure_app(&app);
     unsafe { yx_wemeet_set_event_callback(Some(on_wemeet_event)) };
+
+    // 组件化后框架不在链接期依赖，首次使用前显式加载；未安装时给出可操作提示。
+    match load_component(&app) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return Err("会议组件未安装：请在「会议」页安装 TMSDK 组件后重试。".into());
+        }
+        Err(e) => return Err(format!("加载会议组件失败：{e}")),
+    }
 
     // TMSDK 依赖 CFBundleIdentifier 与 .app 内的资源目录：裸二进制（tauri dev 的
     // target/debug/YX）调用 Initialize 会直接 SIGSEGV。这里提前挡住并给出可读提示。

@@ -38,7 +38,6 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "frameworks": ["vendor/TMSDK.framework"],
       "entitlements": "Entitlements.plist",
       "infoPlist": "Info.plist"
     }

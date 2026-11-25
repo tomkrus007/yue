@@ -20,6 +20,7 @@ import {
   fetchWeMeetAccount,
   listenWeMeetEvent,
   wemeetBringTop,
+  wemeetComponentStatus,
   wemeetEnableRing,
   wemeetInit,
   wemeetIsLoggedIn,
@@ -31,6 +32,7 @@ import {
   wemeetRelease,
   wemeetShowHome,
   wemeetStatus,
+  type WeMeetComponentStatus,
   type WeMeetEvent,
 } from '../services/wemeet'
 
@@ -57,6 +59,8 @@ export const useWeMeetStore = defineStore('wemeet', () => {
   const ringEnabled = ref(localStorage.getItem(RING_KEY) !== '0')
   const error = ref('')
   const events = ref<WeMeetEvent[]>([])
+  /** 组件安装情况；null 表示还没查过 */
+  const component = ref<WeMeetComponentStatus | null>(null)
 
   let unlisten: UnlistenFn | null = null
   let connecting: Promise<void> | null = null
@@ -157,6 +161,21 @@ export const useWeMeetStore = defineStore('wemeet', () => {
   async function start() {
     if (unlisten) return
     unlisten = await listenWeMeetEvent(onEvent)
+    void refreshComponent()
+  }
+
+  /** 刷新组件状态；失败不写入 wemeet.error（只影响状态展示）。 */
+  async function refreshComponent() {
+    try {
+      component.value = await wemeetComponentStatus()
+    } catch (e) {
+      component.value = {
+        state: 'absent',
+        version: null,
+        path: null,
+        error: (e as any)?.message || String(e),
+      }
+    }
   }
 
   /** 退出登录 / 关闭会议时调用：停止监听并释放 SDK 进程。 */
@@ -356,8 +375,10 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     ringEnabled,
     error,
     events,
+    component,
     start,
     stop,
+    refreshComponent,
     ensureReady,
     openHome,
     quickMeeting,

@@ -42,6 +42,14 @@ TMSDK 压缩后：`tar.gz` 150 MB，`tar.zst -19` **118 MB**（`zstd -T0 -19`，
 
 结论：DMG 里 **97% 的字节是 TMSDK**，业务代码只有 9 MB。把 TMSDK 摘出去，包就是 5 MB 量级。
 
+**拆分后实测（PR1，`pnpm tauri build`）**：
+
+| 项 | 拆分前 | 拆分后 |
+|---|---|---|
+| `YX_0.1.26_aarch64.dmg` | 155 MB | **5.16 MB** |
+| `YX.app` | 365 MB | 9.21 MB |
+| `otool -L Contents/MacOS/YX` | 含 `@rpath/tmsdk_wemeet_sdk…` | 无 tmsdk 依赖 |
+
 ### 1.2 TMSDK 的加载方式与硬约束（已实测）
 
 **（1）当前是链接期强依赖。** `otool -L YX` 里有：
@@ -126,7 +134,7 @@ TMSDK 压缩后：`tar.gz` 150 MB，`tar.zst -19` **118 MB**（`zstd -T0 -19`，
 - 无 `.github/workflows`，全部手工 `pnpm tauri build`。
 - `bundle.targets: "all"`；macOS 侧 `frameworks` + `entitlements` + `infoPlist`。
 - `src-tauri/vendor/TMSDK.framework/` 已在 `.gitignore`（355 MB，不入库），靠 `scripts/sync-wemeet.sh` 从官方 DMG 拷入。
-- 许可证：腾讯专有，README 与脚本都注明"仅本地验证，不分发"——**组件包的分发合规性需要业务/法务确认**（见 §8）。
+- 许可证：腾讯 SDK 为公开可获取的组件，**已确认无二次分发合规风险**（2026-11 决策）。`vendor/README.md` 里"不分发"的旧措辞随 PR6 一并修正。
 - 当前分支状态：`spike/wemeet-p0` 比 `main` 领先 14 个提交（会议 P0–P3 都在此分支）。
 
 ---
@@ -210,9 +218,16 @@ TMSDK-3.21.303-macos-arm64.tar.zst        # 唯一分发形态，本地/网络�
 ### 2.5 加载方式：dlopen + dlsym
 
 - `build.rs` 不再 `-framework tmsdk_wemeet_sdk`，只保留头文件路径用于编译 shim。
-- shim 内首次使用时 `dlopen("<app>/Contents/Frameworks/TMSDK.framework/…/tmsdk_wemeet_sdk", RTLD_NOW|RTLD_LOCAL)`，再 `dlsym` 两个工厂函数；失败返回 `-100 "会议组件未安装"`。
+- shim 内首次使用时 `dlopen("<app>/Contents/Frameworks/TMSDK.framework/…/tmsdk_wemeet_sdk", RTLD_NOW|RTLD_LOCAL)`，再 `dlsym` 三个符号（`GetWemeetSDKInstance` / `ReleaseWemeetSDKInstance` / `GetWemeetSDKVersion`）；失败返回 `-100 "会议组件未安装"`。
 - 未安装时行为与现有 stub 一致（前端已有"会议组件不可用"的提示路径），不再因缺框架而无法启动。
 - 组件装好后 `dlopen` 立即生效，不需要重启进程。
+
+**实测补充（PR1）**：框架内部的嵌套层级比表面更深——`tmsdk_wemeet_sdk` 依赖的 `wemeet_base.framework` 实际位于
+`TMSDK.framework/Versions/A/Frameworks/tmsdk_wemeet_sdk.framework/Versions/A/Frameworks/TMSDKFramework.framework/Versions/A/Frameworks/wemeet_base.framework`，
+而它自己的 `LC_RPATH` 只有 `@executable_path/../Frameworks`、`@loader_path/Frameworks` 和那条超长的 `@executable_path` 链。也就是说，
+**dlopen 的成功依赖 `@executable_path` 正好是 `YX.app/Contents/MacOS`**——这从另一侧再次证明"组件必须装回 bundle 内"。
+把框架放在临时目录、用一个裸可执行文件 dlopen 会报 `Library not loaded: @rpath/wemeet_base.framework…`；放进
+`Test.app/Contents/{MacOS,Frameworks}` 的临时 .app 里再 dlopen，返回 `rc=0`，`GetWemeetSDKVersion` 读出 `3.21.303.110`。
 
 ### 2.6 与 app 更新的关系（**关键**）
 
@@ -382,7 +397,7 @@ CI 里需要 TMSDK **头文件**才能编译 shim：workflow 从已发布的组�
 | `raw.githubusercontent.com` | ❌ 单文件 100 MB 上限，118 MB 超限 |
 | 内网静态服务器 | ✅ 可用；把 `component.url` 指过去即可（这正是"运行时改 URL"的价值） |
 
-**注意：私有仓库的 Release 资产不支持匿名下载**，app 内置的默认 URL 会 401。三条出路：仓库转公开、组件放内网/对象存储、或允许用户填带 token 的镜像地址（URL 可改，已满足）。
+**仓库已转为公共仓库**，因此默认 URL 可直接指向 Releases 资产匿名下载；若将来改回私有或换内网源，只需改 `component.url`（设计已解耦）。
 
 ### 5.3 Workflow 设计
 
@@ -463,23 +478,49 @@ component_cancel() -> ()
 | PR1 | `build.rs` 改 dlsym、移除 `bundle.macOS.frameworks`、`wemeet/` 按平台分目录、`component_status`（仅探测） | `pnpm tauri build` 后 DMG ≈5 MB；无组件时 app 能启动，会议页报"未安装"；装上 vendor 的框架后功能如常 |
 | PR2 | `db.rs`（rusqlite + 迁移）、`settings_*`、路径改造（下载目录/spool/ffmpeg） | `~/Library/Application Support/com.tom.YX/yx.db` 生成；改下载目录后下载落到新目录；重装 app 不丢设置 |
 | PR3 | 安装器：本地文件 + URL 下载 + 校验 + 重签 + dlopen；缓存留档与自动回装 | 两条源都能装；装完立即能开会；重装 app 后首启自动从缓存恢复 |
-| PR4 | 前端：组件面板、URL 设置、进度、失败提示 | 断网/坏包/只读卷都有可读错误 |
+| PR4 | 前端：组件面板、URL 设置、进度、失败提示、"清理组件缓存"（含占用大小） | 断网/坏包/只读卷都有可读错误 |
 | PR5 | `platform.rs`、`cfg` gate、`capabilities()`、Windows 编译打通 | Windows 出安装包，IM 可用，会议/零信任入口隐藏 |
 | PR6 | `scripts/pack-tmsdk.sh`、`release.yml`、首个组件 Release、文档更新 | tag 推上去自动出 macOS/Windows 包并挂 Release |
 
 每步都必须过 `pnpm build`（`vue-tsc --noEmit && vite build`）与 Rust `cargo check`；PR1/PR3/PR4 需要真实账号在 `.app` 里验一次（不能用 `pnpm tauri dev`，见 P0 记录）。
 
+### 7.1 进展
+
+**PR1 已完成（`feat/tmsdk-component`）**
+
+| 改动 | 文件 |
+|---|---|
+| 去掉链接期依赖，改运行时 `dlopen` + `dlsym`，新增 `yx_wemeet_load_library/library_error/version` | `wemeet/wemeet_shim.{h,cc}` |
+| shim 按平台分目录：`wemeet/macos/`、`wemeet/stub/`；`build.rs` 只保留头文件路径，不再加 `-framework` / `-rpath` / dev 软链 | `build.rs`、`wemeet/` |
+| 移除 `bundle.macOS.frameworks` | `tauri.conf.json` |
+| `wemeet_component_status`（`ready` / `absent` / `unsupported`）、初始化前先加载组件 | `src/wemeet.rs`、`src/lib.rs` |
+| 会议页显示组件状态与缺失提示；store 增加 `component` / `refreshComponent()` | `src/services/wemeet.ts`、`src/stores/wemeet.ts`、`src/views/WemeetView.vue` |
+| 开发态安装脚本（`ditto` + 重签），临时替代尚未接入的安装器 | `scripts/install-wemeet.sh` |
+
+验收结果：`pnpm tauri build` 产出 **5.16 MB** DMG，`otool -L` 无 tmsdk；`ditto` 装回框架并重签后 `codesign --verify --deep --strict` 通过、app 正常启动；
+临时 .app 里 dlopen 返回 0 且读出版本 `3.21.303.110`。
+
+本地验证方式：
+
+```bash
+pnpm tauri build --debug
+./scripts/install-wemeet.sh src-tauri/target/debug/bundle/macos/YX.app
+open src-tauri/target/debug/bundle/macos/YX.app
+```
+
+> 待 PR3/PR4 接入应用内安装器后，`install-wemeet.sh` 只保留给开发者。
+
 ---
 
 ## 8. 风险与未决问题
 
-1. **合规**：118 MB 腾讯专有框架放进 GitHub Releases 相当于二次分发。`vendor/README.md` 与 `sync-wemeet.sh` 目前明确"仅供本地验证"。→ **需要业务/法务确认后**才能把 Release 资产公开；否则只能走内网静态服务器（功能设计对此已解耦）。
-2. **私有仓库**：默认 URL 会 401。见 §5.2 三条出路。
+1. ~~合规~~ **已解决**：腾讯 SDK 公开可用，组件包可放 GitHub Releases。
+2. ~~私有仓库~~ **已解决**：仓库已转公共，Releases 匿名可下。
 3. **未公证 + 自改包**：ad-hoc 签名 + 运行时重签后，首次运行仍需"右键 → 打开"；若企业策略强制 Gatekeeper，可能报"已损坏"。这是当前分发方式的既有代价，组件化只是多了一次重签。
 4. **TCC 归属**：相机/麦克风/屏幕录制仍然记在 `com.tencent.TMSDKHelper` 上（路径不变，不会因此重新授权，这是选"装回 bundle"的额外好处）。
 5. **Windows 组件来源未验证**：官方 Windows 客户端是否内嵌同款 SDK、能否提取、API 是否同构，都还没看过。PR5 只保证"app 能编译能跑，会议不可用"。
 6. **下载健壮性**：118 MB 无断点续传时，弱网体验差 → 建议用 `Range` + `.part` 临时文件（设计已预留，可放 PR3 或后续）。
-7. **磁盘占用**：组件缓存 118 MB + 安装后 355 MB，共约 473 MB。是否需要在"组件管理"里提供"清理缓存"按钮（PR4 可加）。
+7. **磁盘占用**：组件缓存 118 MB + 安装后 355 MB，共约 473 MB。**已确认需要**"清理组件缓存"入口，落在 PR3（命令 `component_clear_cache`）+ PR4（按钮与用量展示）。
 8. **arm64-only**：Intel Mac 用不了会议（现状如此），CI 也只出 arm64 包；若将来要支持 Intel，需要腾讯提供 x86_64 slice，属于外部依赖。
 
 ---

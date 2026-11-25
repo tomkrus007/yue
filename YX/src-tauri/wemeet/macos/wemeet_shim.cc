@@ -7,6 +7,8 @@
 
 #include "wemeet_sdk.h"
 
+#include <dlfcn.h>
+
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -18,6 +20,16 @@ yx_wemeet_event_cb g_cb = nullptr;
 std::mutex g_mu;
 IWemeetSDK* g_sdk = nullptr;
 bool g_released = true;
+
+// 组件化：框架不在链接期依赖，改为运行时 dlopen + dlsym（只需要这三个导出符号）。
+using GetInstanceFn = IWemeetSDK* (*)();
+using ReleaseInstanceFn = void (*)();
+using VersionFn = void (*)(char*, int);
+
+GetInstanceFn g_get_instance = nullptr;
+ReleaseInstanceFn g_release_instance = nullptr;
+VersionFn g_version = nullptr;
+std::string g_load_error;
 
 std::string json_escape(const char* s) {
   std::string out;
@@ -185,10 +197,55 @@ void yx_wemeet_set_event_callback(yx_wemeet_event_cb cb) {
   g_cb = cb;
 }
 
+int yx_wemeet_load_library(const char* dylib_path) {
+  std::lock_guard<std::mutex> lock(g_mu);
+  if (g_get_instance && g_release_instance) return 0;
+  if (!dylib_path || !dylib_path[0]) {
+    g_load_error = "未提供 TMSDK 动态库路径";
+    return -1;
+  }
+  void* handle = dlopen(dylib_path, RTLD_NOW | RTLD_LOCAL);
+  if (!handle) {
+    const char* err = dlerror();
+    g_load_error = err ? err : "dlopen 失败";
+    return -1;
+  }
+  auto get_instance =
+      reinterpret_cast<GetInstanceFn>(dlsym(handle, "GetWemeetSDKInstance"));
+  auto release_instance = reinterpret_cast<ReleaseInstanceFn>(
+      dlsym(handle, "ReleaseWemeetSDKInstance"));
+  if (!get_instance || !release_instance) {
+    dlclose(handle);
+    g_load_error = "TMSDK 缺少 GetWemeetSDKInstance/ReleaseWemeetSDKInstance 导出符号";
+    return -2;
+  }
+  g_version = reinterpret_cast<VersionFn>(dlsym(handle, "GetWemeetSDKVersion"));
+  g_get_instance = get_instance;
+  g_release_instance = release_instance;
+  g_load_error.clear();
+  return 0;
+}
+
+const char* yx_wemeet_library_error(void) {
+  std::lock_guard<std::mutex> lock(g_mu);
+  return g_load_error.c_str();
+}
+
+const char* yx_wemeet_version(void) {
+  static thread_local char buf[64];
+  buf[0] = '\0';
+  if (g_version) g_version(buf, static_cast<int>(sizeof(buf)));
+  return buf;
+}
+
 int yx_wemeet_init(const char* sdk_id, const char* sdk_token,
                    const char* data_path, const char* app_name,
                    const char* server_host) {
-  IWemeetSDK* sdk = GetWemeetSDKInstance();
+  if (!g_get_instance) {
+    emit_event("OnShimError", -100, "会议组件未加载：请先安装 TMSDK 组件");
+    return -100;
+  }
+  IWemeetSDK* sdk = g_get_instance();
   if (!sdk) {
     emit_event("OnShimError", -1, "GetWemeetSDKInstance() 返回空");
     return -1;
@@ -325,7 +382,7 @@ void yx_wemeet_release(void) {
   g_released = true;
   if (g_sdk) {
     g_sdk->Uninitialize("{\"force\": true}");
-    ReleaseWemeetSDKInstance();
+    if (g_release_instance) g_release_instance();
   }
   g_sdk = nullptr;
 }

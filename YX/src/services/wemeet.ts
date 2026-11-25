@@ -29,6 +29,24 @@ export interface WeMeetEvent {
   param?: string
 }
 
+/**
+ * 会议组件（TMSDK.framework）状态。
+ * - `ready`：已装好并加载成功；
+ * - `absent`：本机有该平台能力但组件缺失，需要安装；
+ * - `unsupported`：本平台没有可用的会议组件（如 Windows）。
+ */
+export interface WeMeetComponentStatus {
+  state: 'ready' | 'absent' | 'unsupported'
+  version: string | null
+  path: string | null
+  error: string | null
+}
+
+/** 查询组件是否已安装；`absent` 时前端提示安装。 */
+export async function wemeetComponentStatus(): Promise<WeMeetComponentStatus> {
+  return invoke<WeMeetComponentStatus>('wemeet_component_status')
+}
+
 /** 拉取腾讯会议账号配置。`rtcUri` 缺省时用配置中心下发的值。 */
 export async function fetchWeMeetAccount(rtcUri?: string): Promise<WeMeetAccount> {
   const base = (rtcUri || getServerPaths().rtcUri || '').trim()

@@ -18,6 +18,19 @@ typedef void (*yx_wemeet_event_cb)(const char* json);
 
 void yx_wemeet_set_event_callback(yx_wemeet_event_cb cb);
 
+/**
+ * 加载 TMSDK 动态库。组件化后框架不再链接进主程序，改为运行时 dlopen：
+ * 返回 0 表示成功（可重复调用），-1 表示 dlopen 失败，-2 表示缺少必需导出符号。
+ * `dylib_path` 指向 tmsdk_wemeet_sdk 的实体文件（framework 内部路径）。
+ */
+int yx_wemeet_load_library(const char* dylib_path);
+
+/** 最近一次加载失败的原始错误（dlerror）；成功或未调用过时为空串。 */
+const char* yx_wemeet_library_error(void);
+
+/** TMSDK 版本号；未加载时为空串。 */
+const char* yx_wemeet_version(void);
+
 int yx_wemeet_init(const char* sdk_id, const char* sdk_token, const char* data_path,
                    const char* app_name, const char* server_host);
 int yx_wemeet_is_initialized(void);

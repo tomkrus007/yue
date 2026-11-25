@@ -27,6 +27,15 @@
         <button class="link" @click="wemeet.clearError()">知道了</button>
       </div>
 
+      <div v-if="wemeet.component?.state === 'unsupported'" class="banner">
+        当前平台没有可用的会议组件，腾讯会议相关功能不可用。
+      </div>
+      <div v-else-if="wemeet.component?.state === 'absent'" class="banner">
+        会议组件（TMSDK）未安装，无法发起或加入会议。
+        <template v-if="wemeet.component.error">原因：{{ wemeet.component.error }}</template>
+        <template v-else>开发态可用 scripts/install-wemeet.sh 把 vendor 里的框架装入 YX.app。</template>
+      </div>
+
       <section class="card">
         <div class="card-title">发起会议</div>
         <div class="row wrap">
@@ -173,6 +182,9 @@ const stateClass = computed(() => {
 })
 
 const componentLabel = computed(() => {
+  const c = wemeet.component
+  if (c?.state === 'unsupported') return '本平台不支持'
+  if (c?.state === 'absent') return '未安装'
   if (wemeet.state === 'ready') return '已初始化并登录'
   if (wemeet.state === 'connecting') return '正在启动'
   return '未启动'

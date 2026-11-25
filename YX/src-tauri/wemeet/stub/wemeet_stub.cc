@@ -13,6 +13,19 @@ extern "C" {
 
 void yx_wemeet_set_event_callback(yx_wemeet_event_cb cb) { g_cb = cb; }
 
+int yx_wemeet_load_library(const char*) {
+  if (g_cb) {
+    g_cb("{\"func\":\"OnShimError\",\"code\":\"-100\",\"msg\":\"当前构建未包含 TMSDK 支持（编译时缺少头文件）\"}");
+  }
+  return -1;
+}
+
+const char* yx_wemeet_library_error(void) {
+  return "当前构建未包含 TMSDK 支持（编译时缺少头文件）";
+}
+
+const char* yx_wemeet_version(void) { return ""; }
+
 int yx_wemeet_init(const char*, const char*, const char*, const char*, const char*) {
   if (g_cb) {
     g_cb("{\"func\":\"OnShimError\",\"code\":\"-100\",\"msg\":\"TMSDK.framework 未就绪：请运行 scripts/sync-wemeet.sh 后重新构建\"}");
