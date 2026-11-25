@@ -79,6 +79,7 @@ sudo launchctl bootout system/com.legendsec.trustdservice
 - 团队盘入口按 `taskUri /v1/group/formal/page` 列出全部正式团队群（分页拉全），进入后按 groupId 浏览；旧实现走 `/openapi/team/list?filter={"onlyMember":true}`，只返回单独创建的云盘团队，团队数量远少于原版
 - 部门盘入口按 `panServerUri /v1/principals/departments` 列出用户可见的部门链；旧 `/openapi/org/list` 加 `fileNotEmpty` 会漏掉仍有文档的上级部门
 - 公开文档入口按 `/openapi/public/list_class` 列出文档库分类
+- 共享给我（共享协作）：左侧「共享给我」入口按 `panServerUri /v1/share/2/list` 列出别人分享的文件/目录，支持进入目录浏览、下载、预览（文档类）
 - 个人/团队/部门/公开四类盘的目录 id：`CurrentUserId` / groupId（团队群） / orgId / classId
 
 ### 会议（腾讯会议）

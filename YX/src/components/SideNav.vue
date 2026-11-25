@@ -8,6 +8,7 @@
         <path d="M21 11.8a8.2 8.2 0 0 1-8.2 8.2H7.5L3 22.5l1.1-4.6A8.2 8.2 0 1 1 21 11.8Z" />
         <path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01" />
       </svg>
+      <small v-if="chatUnread" class="nav-badge">{{ chatUnread > 99 ? '99+' : chatUnread }}</small>
     </router-link>
 
     <button
@@ -88,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
@@ -107,6 +108,8 @@ const auth = useAuthStore()
 const im = useImStore()
 const wemeet = useWeMeetStore()
 const menuOpen = ref(false)
+/** 全部 + 折叠两个分组的未读之和（tabs 内已排除服务号） */
+const chatUnread = computed(() => im.tabs.reduce((sum, t) => sum + t.unread, 0))
 
 function onLogs() {
   menuOpen.value = false

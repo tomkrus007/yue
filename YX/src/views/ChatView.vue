@@ -31,7 +31,6 @@
           @click="im.setTab(t.id)"
         >
           {{ t.label }}
-          <i v-if="t.unread > 0">{{ t.unread > 99 ? '99+' : t.unread }}</i>
         </button>
       </div>
 
@@ -78,13 +77,20 @@
           ]"
           @click="im.selectSession(s.id)"
         >
-          <ContactAvatar
-            class="s-avatar"
-            :class="'t' + s.type"
-            :id="s.id"
-            :type="s.type"
-            :name="s.name"
-          />
+          <div class="s-avatar-wrap">
+            <ContactAvatar
+              class="s-avatar"
+              :class="'t' + s.type"
+              :id="s.id"
+              :type="s.type"
+              :name="s.name"
+            />
+            <span
+              v-if="im.unreadOf(s.id) > 0"
+              class="avatar-badge"
+              :title="`${im.unreadOf(s.id)} 条未读消息`"
+            >{{ im.unreadOf(s.id) > 99 ? '99+' : im.unreadOf(s.id) }}</span>
+          </div>
           <div class="s-info">
             <div class="s-name">
               <span v-if="im.pinned[s.id]" class="pin">📌</span>
@@ -121,9 +127,6 @@
                   <circle cx="19" cy="12" r="1.7" />
                 </svg>
               </button>
-              <span v-if="im.unreadOf(s.id) > 0" class="badge">
-                {{ im.unreadOf(s.id) > 99 ? '99+' : im.unreadOf(s.id) }}
-              </span>
             </div>
           </div>
         </li>
@@ -1386,15 +1389,6 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 }
 .tab:hover { background: var(--hover); color: var(--text); }
 .tab.on { color: var(--primary); box-shadow: inset 0 -2px 0 var(--primary); }
-.tab i {
-  font-style: normal;
-  font-size: 10px;
-  background: var(--danger);
-  color: #fff;
-  padding: 0 5px;
-  border-radius: 8px;
-  margin-left: 4px;
-}
 
 .searching { padding: 6px 16px; font-size: 11px; color: var(--text-muted); }
 .search-entry { cursor: pointer; }
@@ -1459,10 +1453,23 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .icon-btn svg { width: 15px; height: 15px; display: block; }
 .icon-btn.more svg { width: 16px; height: 16px; }
 .icon-btn.mute-on { opacity: 1; }
-.badge {
-  background: var(--danger); color: #fff;
-  font-size: 11px; padding: 0 6px; border-radius: 10px;
-  line-height: 16px;
+.s-avatar-wrap { position: relative; flex-shrink: 0; }
+.avatar-badge {
+  position: absolute;
+  top: -4px;
+  right: -7px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* 会话「更多操作」菜单：Teleport 到 body，避免被列表滚动区域裁剪 */

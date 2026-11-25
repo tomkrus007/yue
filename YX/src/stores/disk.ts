@@ -8,8 +8,14 @@ import {
   deleteItem,
   listDepartmentSpaces,
   listDir,
+  listReceivedShares,
+  listSharedDir,
   listTeamSpaces,
+  previewUrl,
+  sharedDownloadUrl,
+  sharedPreviewUrl,
   type PanDiskItem,
+  type PanShareItem,
 } from '../services/disk-pan'
 import {
   diskClient,
@@ -18,11 +24,11 @@ import {
 import { editUrl } from '../services/pan-client'
 
 export interface DiskDrive {
-  /** 盘标识：/Private /Team /Org /Public/<classId> */
+  /** 盘标识：/Private /Team /Org /Public/<classId> /Shared */
   id: string
   name: string
-  /** private | team | org | public */
-  kind: 'private' | 'team' | 'org' | 'public'
+  /** private | team | org | public | shared */
+  kind: 'private' | 'team' | 'org' | 'public' | 'shared'
   classId?: string
 }
 
@@ -36,6 +42,10 @@ export const useDiskStore = defineStore('disk', () => {
   const trail = ref<Array<{ id: string; name: string }>>([])
   /** 团队盘和部门盘的入口列表 */
   const subEntries = ref<DiskFile[]>([])
+  /** 共享给我列表（仅「共享给我」入口使用） */
+  const shares = ref<PanShareItem[]>([])
+  /** 当前正在浏览的分享 id；为空表示浏览自己的盘 */
+  const currentShareId = ref('')
 
   const currentPath = computed(
     () => trail.value.slice(1).map((x) => x.name).join(' / ') || '/',
@@ -102,6 +112,8 @@ export const useDiskStore = defineStore('disk', () => {
       } catch {
         /* 无公开盘 */
       }
+      // 共享协作 → 共享给我：服务端没有对应的「盘」，这里补一个本地入口
+      list.push({ id: '/Shared', name: '共享给我', kind: 'shared' })
       drives.value = list
       if (list.length && !currentDrive.value) {
         await openDrive(list[0]!)
@@ -117,14 +129,21 @@ export const useDiskStore = defineStore('disk', () => {
   async function openDrive(drive: DiskDrive) {
     currentDrive.value = drive
     subEntries.value = []
+    shares.value = []
+    currentShareId.value = ''
     error.value = ''
+    if (drive.kind === 'shared') {
+      trail.value = [{ id: '', name: drive.name }]
+      await loadShares()
+      return
+    }
     if (drive.kind === 'team') {
-      trail.value = []
+      trail.value = [{ id: '', name: drive.name }]
       await loadSub('/Team')
       return
     }
     if (drive.kind === 'org') {
-      trail.value = []
+      trail.value = [{ id: '', name: drive.name }]
       await loadSub('/Org')
       return
     }
@@ -172,33 +191,86 @@ export const useDiskStore = defineStore('disk', () => {
     }
   }
 
+  /** 共享给我：加载分享列表 */
+  async function loadShares() {
+    loading.value = true
+    error.value = ''
+    currentShareId.value = ''
+    try {
+      shares.value = await listReceivedShares()
+      files.value = []
+      subEntries.value = []
+    } catch (e: any) {
+      error.value = '加载共享给我的内容失败：' + (e?.message || String(e))
+      shares.value = []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /** 共享给我：列出分享目录内容（需带 x-share-id） */
+  async function listShared(dirId: string) {
+    loading.value = true
+    error.value = ''
+    try {
+      const items = (await listSharedDir(dirId, currentShareId.value)).map(toDiskFile)
+      files.value = sortFiles(items)
+      shares.value = []
+      subEntries.value = []
+    } catch (e: any) {
+      error.value = e.message
+      files.value = []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /** 共享给我：进入一条分享；文件分享不进入目录，由列表里的下载/预览处理 */
+  async function enterShare(share: PanShareItem) {
+    if (share.resourceType !== 'D' || share.status !== 0) return
+    currentShareId.value = share.id
+    const root = trail.value[0] || { id: '', name: currentDrive.value?.name || '共享给我' }
+    trail.value = [root, { id: share.resourceId, name: share.title }]
+    await listShared(share.resourceId)
+  }
+
   async function enter(dir: DiskFile) {
     if (dir.type !== 'D') return
     trail.value.push({ id: dir.id, name: dir.name })
-    await list(dir.id)
+    if (currentShareId.value) await listShared(dir.id)
+    else await list(dir.id)
   }
 
   async function enterTeam(team: DiskFile) {
-    trail.value = [{ id: team.id, name: team.name }]
+    const root = trail.value[0] || { id: '', name: currentDrive.value?.name || '' }
+    trail.value = [root, { id: team.id, name: team.name }]
     await list(team.id)
   }
 
   async function back() {
-    if (trail.value.length > 1) {
-      trail.value.pop()
-      await list(currentDirId.value)
+    if (trail.value.length <= 1) return
+    trail.value.pop()
+    if (currentShareId.value) {
+      if (trail.value.length === 1) await loadShares()
+      else await listShared(currentDirId.value)
       return
     }
-    // 团队/部门从具体目录返回入口列表
+    // 团队/部门根节点只是入口列表的标题，没有可列出的目录
     const kind = currentDrive.value?.kind
-    if (kind === 'team' || kind === 'org') {
-      trail.value = []
+    if (trail.value.length === 1 && (kind === 'team' || kind === 'org')) {
       if (kind === 'team') await loadSub('/Team')
       else await loadSub('/Org')
+      return
     }
+    await list(currentDirId.value)
   }
 
   async function refresh() {
+    if (currentShareId.value) {
+      if (trail.value.length > 1) await listShared(currentDirId.value)
+      else await loadShares()
+      return
+    }
     if (currentDirId.value) await list(currentDirId.value)
     else if (currentDrive.value) await openDrive(currentDrive.value)
   }
@@ -274,9 +346,47 @@ export const useDiskStore = defineStore('disk', () => {
   async function download(file: DiskFile) {
     error.value = ''
     try {
-      await openUrl(diskClient.getDownloadUrl(file.id))
+      const url = currentShareId.value
+        ? await sharedDownloadUrl(file.id, currentShareId.value)
+        : diskClient.getDownloadUrl(file.id)
+      await openUrl(url)
     } catch (e: any) {
       error.value = '下载失败：' + (e?.message || String(e))
+    }
+  }
+
+  /** 共享给我：下载文件分享（文件分享没有进入目录这一步） */
+  async function downloadShare(share: PanShareItem) {
+    if (share.resourceType !== 'F') return
+    error.value = ''
+    try {
+      await openUrl(await sharedDownloadUrl(share.resourceId, share.id))
+    } catch (e: any) {
+      error.value = '下载失败：' + (e?.message || String(e))
+    }
+  }
+
+  /** 预览：自己的文件与共享里的文件走同一入口，地址来源不同 */
+  async function preview(file: DiskFile) {
+    error.value = ''
+    try {
+      const url = currentShareId.value
+        ? await sharedPreviewUrl(file.id, currentShareId.value)
+        : await previewUrl(file.id)
+      await openUrl(url)
+    } catch (e: any) {
+      error.value = '预览失败：' + (e?.message || String(e))
+    }
+  }
+
+  /** 共享给我：预览文件分享 */
+  async function previewShare(share: PanShareItem) {
+    if (share.resourceType !== 'F') return
+    error.value = ''
+    try {
+      await openUrl(await sharedPreviewUrl(share.resourceId, share.id))
+    } catch (e: any) {
+      error.value = '预览失败：' + (e?.message || String(e))
     }
   }
 
@@ -285,7 +395,9 @@ export const useDiskStore = defineStore('disk', () => {
     currentDrive,
     currentPath,
     currentDirId,
+    currentShareId,
     files,
+    shares,
     loading,
     error,
     history,
@@ -293,8 +405,11 @@ export const useDiskStore = defineStore('disk', () => {
     subEntries,
     loadDrives,
     openDrive,
+    loadShares,
     list,
+    listShared,
     enter,
+    enterShare,
     enterTeam,
     back,
     refresh,
@@ -303,5 +418,8 @@ export const useDiskStore = defineStore('disk', () => {
     search,
     onlineEdit,
     download,
+    downloadShare,
+    preview,
+    previewShare,
   }
 })

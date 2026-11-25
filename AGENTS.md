@@ -48,6 +48,7 @@ pnpm tauri build   # 打包；需要关窗不退出的常驻版用 pnpm tauri bu
 - 登录是两步 OAuth2（v2 token 换 v3）+ RSA 加密密码。登录主流程只等 token；`getCurrentUser()` 必须保持异步/带超时，否则会卡住跳转（见 `LESSONS.md`）。
 - IM 是自定义二进制帧，不是 JSON/protobuf；`content` 的“加密”只是按位取反 + Base64。帧中“有无负载”看 byte 3（`operation`），不是 byte 2——注释已说明原版字段名写反，不要“修正”。
 - 网盘个人盘根路径是 `/Private`，传 `/` 会 500。
+- 「共享给我」（`/v1/share/2/list`，way=2）里的目录浏览/下载/预览必须带 `x-share-id: <分享 id>` 头；不带该头服务端按接收人自有权限过滤，返回空数组而不是 403（下载则是 45111001 Insufficient operation permission）。
 - 联系人过滤自己依赖 localStorage 的 `CurrentECode`。
 
 ## 文档与验证

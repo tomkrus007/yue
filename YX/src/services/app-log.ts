@@ -20,13 +20,6 @@ export interface AppLogEntry {
 const MAX_ENTRIES = 500
 const MAX_TEXT = 2000
 
-/** 日志会显示在界面上，先脱敏：token、密码、密钥等字段一律替换为 *** */
-const SENSITIVE_KEY = /("?(?:access_token|refresh_token|id_token|secret_key|secret|password|token)"?\s*[:=]\s*")([^"]{4,})"/gi
-
-function redact(text: string): string {
-  return text.replace(SENSITIVE_KEY, '$1***"')
-}
-
 export const appLog = reactive<{ entries: AppLogEntry[] }>({ entries: [] })
 let seq = 0
 let writing = false
@@ -42,7 +35,7 @@ export function logEvent(scope: string, text: string, level: LogLevel = 'info'):
   writing = true
   try {
     const trimmed = text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…` : text
-    appLog.entries.unshift({ id: ++seq, time: stamp(), scope, level, text: redact(trimmed) })
+    appLog.entries.unshift({ id: ++seq, time: stamp(), scope, level, text: trimmed })
     if (appLog.entries.length > MAX_ENTRIES) appLog.entries.length = MAX_ENTRIES
   } finally {
     writing = false

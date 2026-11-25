@@ -30,20 +30,26 @@
         <div class="path-bar">
           <button class="secondary small" @click="disk.back()" :disabled="disk.history.length <= 1">← 返回</button>
           <button class="secondary small" @click="disk.refresh()">刷新</button>
-          <button class="secondary small" @click="showMkdir = !showMkdir">+ 新建目录</button>
-          <button class="small" :disabled="!disk.currentDirId" @click="pickUpload">上传</button>
-          <input ref="uploadInput" type="file" multiple hidden @change="onUploadChange" />
-          <div class="path">📁 {{ disk.currentDrive?.name }} · {{ disk.currentPath }}</div>
+          <button v-if="!disk.currentShareId" class="secondary small" @click="showMkdir = !showMkdir">+ 新建目录</button>
+          <button v-if="!disk.currentShareId" class="small" :disabled="!disk.currentDirId" @click="pickUpload">上传</button>
+          <input v-if="!disk.currentShareId" ref="uploadInput" type="file" multiple hidden @change="onUploadChange" />
+          <div class="path">
+            📁 {{ disk.currentDrive?.name }}<template v-if="disk.currentPath !== '/'"> · {{ disk.currentPath }}</template>
+          </div>
           <span v-if="activeUploads" class="upload-note">{{ activeUploads }} 个上传中</span>
         </div>
-        <div class="search-bar">
+        <div v-if="disk.currentDrive?.kind !== 'shared'" class="search-bar">
           <input v-model="keyword" placeholder="搜索文件" @keydown.enter="onSearch" />
           <button class="small" @click="onSearch">搜索</button>
           <button class="secondary small" @click="disk.openDrive(disk.currentDrive!)">回到盘根</button>
         </div>
+        <div v-else class="search-bar">
+          <span class="share-hint">别人分享给我的文件与目录；目录可直接进入浏览。</span>
+          <button class="secondary small" @click="disk.openDrive(disk.currentDrive!)">回到盘根</button>
+        </div>
       </header>
 
-      <div v-if="showMkdir" class="mkdir-bar">
+      <div v-if="showMkdir && !disk.currentShareId" class="mkdir-bar">
         <input v-model="mkdirName" placeholder="新目录名" @keydown.enter="onMkdir" />
         <button class="small" @click="onMkdir">创建</button>
       </div>
@@ -67,6 +73,37 @@
           </tbody>
         </table>
 
+        <!-- 共享给我：收到的分享 -->
+        <table v-else-if="isShareRoot">
+          <thead>
+            <tr><th>名称</th><th>分享人</th><th>类型</th><th>有效期</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in disk.shares" :key="s.id" @dblclick="onOpenShare(s)">
+              <td class="name">
+                <span class="f-icon">{{ s.resourceType === 'D' ? '📁' : iconFor(extOf(s.title)) }}</span>
+                {{ s.title }}
+                <span v-if="s.status !== 0" class="invalid-tag">已失效</span>
+              </td>
+              <td>{{ s.creatorName || '-' }}</td>
+              <td>{{ s.resourceType === 'D' ? '目录' : (extOf(s.title) || '文件') }}</td>
+              <td>{{ fmtExpire(s.expireDate) }}</td>
+              <td class="ops">
+                <template v-if="s.status === 0 && s.resourceType === 'D'">
+                  <button class="small" @click.stop="onOpenShare(s)">进入</button>
+                </template>
+                <template v-else-if="s.status === 0">
+                  <button v-if="canPreviewName(s.title) && s.permissions?.previewable !== false" class="small" @click.stop="onPreviewShare(s)">预览</button>
+                  <button v-if="s.permissions?.downloadable !== false" class="secondary small" @click.stop="onDownloadShare(s)">下载</button>
+                </template>
+              </td>
+            </tr>
+            <tr v-if="disk.shares.length === 0">
+              <td colspan="5" class="empty">暂无共享给我的内容</td>
+            </tr>
+          </tbody>
+        </table>
+
         <!-- 普通文件列表 -->
         <table v-else>
           <thead>
@@ -84,9 +121,10 @@
               <td>{{ f.size ? fmtSize(f.size) : '-' }}</td>
               <td>{{ fmtTime(f.updateTime) }}</td>
               <td class="ops">
-                <button v-if="canOnlineEdit(f)" class="small" @click.stop="onOnlineEdit(f)">在线编辑</button>
-                <button v-if="f.type === 'F'" class="secondary small" @click.stop="onDownload(f)">下载</button>
-                <button class="secondary small danger-btn" @click.stop="onDelete(f)">删除</button>
+                <button v-if="disk.currentShareId && canPreview(f) && f.permissions?.previewable !== false" class="small" @click.stop="onPreview(f)">预览</button>
+                <button v-if="!disk.currentShareId && canOnlineEdit(f)" class="small" @click.stop="onOnlineEdit(f)">在线编辑</button>
+                <button v-if="f.type === 'F' && (!disk.currentShareId || f.permissions?.downloadable !== false)" class="secondary small" @click.stop="onDownload(f)">下载</button>
+                <button v-if="!disk.currentShareId" class="secondary small danger-btn" @click.stop="onDelete(f)">删除</button>
               </td>
             </tr>
             <tr v-if="disk.files.length === 0 && !disk.loading">
@@ -133,6 +171,7 @@ import { useDiskStore, type DiskDrive } from '../stores/disk'
 import { OFFICE_EXT } from '../services/pan-client'
 import { useUploadStore } from '../stores/uploads'
 import { type DiskFile } from '../services/disk-client'
+import type { PanShareItem } from '../services/disk-pan'
 
 const auth = useAuthStore()
 const disk = useDiskStore()
@@ -145,6 +184,9 @@ const mkdirName = ref('')
 const uploadInput = ref<HTMLInputElement | null>(null)
 const uploads = useUploadStore()
 const dragging = ref(false)
+const isShareRoot = computed(
+  () => disk.currentDrive?.kind === 'shared' && !disk.currentShareId,
+)
 const activeUploads = computed(
   () => uploads.tasks.filter((t) => ['queued', 'uploading', 'saving'].includes(t.status)).length,
 )
@@ -163,6 +205,7 @@ function driveIcon(kind: string): string {
     case 'team': return '👥'
     case 'org': return '🏢'
     case 'public': return '📢'
+    case 'shared': return '🤝'
     default: return '📁'
   }
 }
@@ -179,6 +222,23 @@ async function onOpenDrive(d: DiskDrive) {
 
 async function onDblClick(f: DiskFile) {
   if (f.type === 'D') await disk.enter(f)
+}
+
+async function onOpenShare(s: PanShareItem) {
+  if (s.resourceType === 'D') await disk.enterShare(s)
+  else if (s.permissions?.downloadable !== false) await disk.downloadShare(s)
+}
+
+async function onDownloadShare(s: PanShareItem) {
+  await disk.downloadShare(s)
+}
+
+async function onPreviewShare(s: PanShareItem) {
+  await disk.previewShare(s)
+}
+
+async function onPreview(f: DiskFile) {
+  await disk.preview(f)
 }
 
 async function onSearch() {
@@ -276,6 +336,22 @@ function canOnlineEdit(f: DiskFile): boolean {
   return f.type === 'F' && !!f.ext && OFFICE_EXT.has(f.ext.toLowerCase())
 }
 
+/** 预览只对文档类有效：图片/压缩包等 `/v1/files/{id}/preview` 会返回 430601 */
+const PREVIEW_EXT = new Set([...OFFICE_EXT, 'pdf'])
+
+function canPreview(f: DiskFile): boolean {
+  return f.type === 'F' && !!f.ext && PREVIEW_EXT.has(f.ext.toLowerCase())
+}
+
+function extOf(name: string): string | undefined {
+  return name.includes('.') ? name.split('.').pop()!.toLowerCase() : undefined
+}
+
+function canPreviewName(name: string): boolean {
+  const ext = extOf(name)
+  return !!ext && PREVIEW_EXT.has(ext)
+}
+
 function iconFor(ext?: string): string {
   if (!ext) return '📄'
   const e = ext.toLowerCase()
@@ -301,6 +377,11 @@ function fmtSize(n: number): string {
 function fmtTime(t?: number): string {
   if (!t) return '-'
   return new Date(t).toLocaleString('zh-CN', { hour12: false })
+}
+
+function fmtExpire(t?: number | null): string {
+  if (!t) return '永久'
+  return new Date(t).toLocaleDateString('zh-CN')
 }
 </script>
 
@@ -342,6 +423,11 @@ function fmtTime(t?: number): string {
 }
 .search-bar { display: flex; gap: 8px; }
 .search-bar input { flex: 1; }
+.share-hint { flex: 1; color: var(--text-muted); font-size: 12px; }
+.invalid-tag {
+  margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+  background: var(--bg-subtle); color: var(--text-muted);
+}
 .small { padding: 5px 12px; font-size: 12px; }
 .danger-btn { color: var(--danger); }
 
