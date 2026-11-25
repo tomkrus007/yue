@@ -73,7 +73,8 @@ sudo launchctl bootout system/com.legendsec.trustdservice
 - 列目录 / 进入 / 返回 / 刷新（`panServerUri /v1/directories/{dirId}/items`）
 - 创建目录 / 删除 / 重命名 / 移动（`/v1/directories|files/*`，与「任务与文档 → 团队文档」同一套接口）
 - 上传文件（选择或拖拽；浮动窗口显示进度，失败可点击重试）
-- 搜索（`/openapi/file/search`）
+- 目录内即时筛选（按名称/扩展名过滤文档与子目录，不区分大小写），并显示条目总数及目录/文件数量
+- 全盘搜索（`/openapi/file/search`，结果可继续筛选，可一键退出回到当前目录）
 - 文件下载（`/openapi/stream/download`，302 到 S3 签名地址）
 - 在线编辑（优先 `panDocUri /v1/doc/open`；仅旧 openapi 的历史文件退回 `driveWpsUri /v1/api/file/wps3rd`）
 - 团队盘入口按 `taskUri /v1/group/formal/page` 列出全部正式团队群（分页拉全），进入后按 groupId 浏览；旧实现走 `/openapi/team/list?filter={"onlyMember":true}`，只返回单独创建的云盘团队，团队数量远少于原版

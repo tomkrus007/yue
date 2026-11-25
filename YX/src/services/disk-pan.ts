@@ -94,41 +94,63 @@ export async function listDir(dirId: string): Promise<PanDiskItem[]> {
 }
 
 /**
- * 团队文档空间（原版首页「文档 → 团队文档」的数据源）。
- * 原版 5.2.97 已启用新文档模块，团队文档列的是全部正式团队群：
- *   GET {taskUri}/v1/group/formal/page?scope=1&isCount=true&offset=&limit=
- * 旧的 /openapi/team/list 只返回单独创建的云盘团队，数量远少于群空间。
+ * 分页拉 formal/page。
+ * offset 是绝对偏移，用 total 收敛；不能用 `list.length < limit` 判断结束，
+ * 服务端可能把单页截得比 limit 更小。
  */
-export async function listTeamSpaces(): Promise<PanDiskItem[]> {
-  const base = String(getServerPaths().taskUri || '').replace(/\/+$/, '')
-  if (!base) throw new Error('缺少 taskUri，无法加载团队文档')
-  // 与官方文档模块一致：limit=200 + pinToPan=true。
+async function listFormalPages(url: string, pinToPan: boolean): Promise<any[]> {
   const limit = 200
-  const out: PanDiskItem[] = []
-  const seen = new Set<string>()
+  const out: any[] = []
   for (let offset = 0; ; ) {
     const q = new URLSearchParams({
       scope: '1',
       isCount: 'true',
       offset: String(offset),
       limit: String(limit),
-      pinToPan: 'true',
     })
-    const r = await tokenGet<any>(base + '/v1/group/formal/page?' + q.toString())
+    if (pinToPan) q.set('pinToPan', 'true')
+    const r = await tokenGet<any>(url + '?' + q.toString())
     const list = Array.isArray(r && r.data) ? r.data : []
-    let added = 0
+    out.push(...list)
+    const total = Number(r && r.total) || 0
+    if (!list.length || (total > 0 && out.length >= total)) break
+    offset += list.length
+  }
+  return out
+}
+
+/**
+ * 团队文档空间（原版首页「文档 → 团队文档」的数据源）。
+ * 原版 5.2.97 已启用新文档模块，团队文档列的是正式团队群 + 云盘团队空间：
+ *   GET {taskUri}/v1/group/formal/page?scope=1&isCount=true&pinToPan=true
+ *   GET {uamApiUri}/v3/groups/formal/page?scope=1&isCount=true&pinToPan=true
+ * taskapi 忽略 pinToPan，只返回「我加入的正式群」，云盘里创建/被授权的团队
+ * 空间（typeName=团队空间）会漏掉；uam 侧才返回完整可见列表，两者取并集。
+ * 旧的 /openapi/team/list 只返回单独创建的云盘团队，数量同样偏少。
+ */
+export async function listTeamSpaces(): Promise<PanDiskItem[]> {
+  const paths = getServerPaths()
+  const base = String(paths.taskUri || '').replace(/\/+$/, '')
+  if (!base) throw new Error('缺少 taskUri，无法加载团队文档')
+  const out: PanDiskItem[] = []
+  const seen = new Set<string>()
+  const append = (list: any[]) => {
     for (const g of list) {
       const id = String(g.groupId || g.id || '')
       if (!id || seen.has(id)) continue
       seen.add(id)
       out.push({ id, name: String(g.name || id), type: 'D' })
-      added += 1
     }
-    const total = Number(r && r.total) || 0
-    // 不能用 `list.length < limit` 判断结束：服务端可能把单页截得比 limit 更小。
-    if (!list.length || added === 0 || (total > 0 && out.length >= total))
-      break
-    offset += list.length
+  }
+  append(await listFormalPages(base + '/v1/group/formal/page', true))
+  // 云盘团队空间 / 被授权团队只在 uam 的 pinToPan=true 结果里；失败不影响主列表。
+  const uam = String(paths.uamApiUri || '').replace(/\/+$/, '')
+  if (uam) {
+    try {
+      append(await listFormalPages(uam + '/v3/groups/formal/page', true))
+    } catch (e) {
+      console.warn('[团队文档] 加载云盘团队空间失败', e)
+    }
   }
   return out
 }

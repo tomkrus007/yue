@@ -9,10 +9,20 @@
         <button class="secondary small" @click="close">关闭</button>
       </header>
 
+      <div v-if="apps.length" class="apps-search">
+        <input
+          v-model="keyword"
+          type="search"
+          placeholder="搜索应用名称或分类"
+          aria-label="搜索应用"
+        />
+      </div>
+
       <div class="apps-body">
         <div v-if="loading" class="hint">加载中…</div>
         <div v-else-if="error" class="hint err">{{ error }}</div>
         <div v-else-if="!apps.length" class="hint">没有可用应用</div>
+        <div v-else-if="!categories.length" class="hint">没有匹配的应用</div>
 
         <template v-for="cat in categories" :key="cat.category">
           <div class="app-cat">{{ cat.category }}（{{ cat.apps.length }}）</div>
@@ -50,15 +60,29 @@ const apps = ref<AppEntry[]>([])
 const loading = ref(false)
 const error = ref('')
 const icons = reactive<Record<string, string>>({})
+const keyword = ref('')
 
-const categories = computed(() => groupByCategory(apps.value))
+const filteredApps = computed(() => {
+  const q = keyword.value.trim().toLowerCase()
+  if (!q) return apps.value
+  return apps.value.filter(
+    (a) =>
+      a.name.toLowerCase().includes(q) ||
+      a.category.toLowerCase().includes(q) ||
+      (a.code || '').toLowerCase().includes(q),
+  )
+})
+
+const categories = computed(() => groupByCategory(filteredApps.value))
 
 const stateText = computed(() =>
   loading.value
     ? '加载中…'
     : error.value
       ? '加载失败'
-      : apps.value.length + ' 个应用',
+      : keyword.value.trim()
+        ? filteredApps.value.length + ' / ' + apps.value.length + ' 个应用'
+        : apps.value.length + ' 个应用',
 )
 
 function close() {
@@ -147,6 +171,13 @@ watch(
 .apps-head h3 { font-size: 15px; }
 .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .small { padding: 4px 10px; font-size: 12px; }
+.apps-search {
+  padding: 10px 18px 0;
+}
+.apps-search input {
+  box-sizing: border-box;
+  font-size: 13px;
+}
 .apps-body { flex: 1; overflow-y: auto; padding: 14px 18px; }
 .app-cat {
   font-size: 12px;

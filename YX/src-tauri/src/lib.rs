@@ -2,6 +2,7 @@
 mod store_upload;
 mod store_download;
 mod media_stream;
+mod window_state;
 mod zt_sdk;
 mod wemeet;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
@@ -103,11 +104,17 @@ pub fn run() {
     tauri::Builder::default()
         .on_window_event(|window, event| {
             if window.label() == "main" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    // 保留 WebView 和连接；只有成功隐藏后才阻止系统关闭。
-                    if window.hide().is_ok() {
-                        api.prevent_close();
+                match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        // 保留 WebView 和连接；只有成功隐藏后才阻止系统关闭。
+                        if window.hide().is_ok() {
+                            window_state::save(window.app_handle(), true);
+                            api.prevent_close();
+                        }
                     }
+                    // 只记尺寸，拖拽过程中按间隔节流，最终值由关闭/退出兜底。
+                    tauri::WindowEvent::Resized(_) => window_state::save(window.app_handle(), false),
+                    _ => {}
                 }
             }
         })
@@ -141,6 +148,8 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+            // 上次的窗口大小（窗口已创建后再应用；过小会被限制到最小尺寸）
+            window_state::restore(app.handle());
             Ok(())
         })
         .plugin(tauri_plugin_notification::init())
@@ -194,6 +203,7 @@ pub fn run() {
             }
             // 退出时结束 SDK（会中会被强制离会），避免 TMSDKHelper 残留。
             if let tauri::RunEvent::Exit = event {
+                window_state::save(app, true);
                 wemeet::release_blocking();
             }
             #[cfg(not(target_os = "macos"))]

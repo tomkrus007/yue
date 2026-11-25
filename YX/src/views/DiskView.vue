@@ -38,14 +38,15 @@
           </div>
           <span v-if="activeUploads" class="upload-note">{{ activeUploads }} 个上传中</span>
         </div>
-        <div v-if="disk.currentDrive?.kind !== 'shared'" class="search-bar">
-          <input v-model="keyword" placeholder="搜索文件" @keydown.enter="onSearch" />
-          <button class="small" @click="onSearch">搜索</button>
-          <button class="secondary small" @click="disk.openDrive(disk.currentDrive!)">回到盘根</button>
-        </div>
-        <div v-else class="search-bar">
-          <span class="share-hint">别人分享给我的文件与目录；目录可直接进入浏览。</span>
-          <button class="secondary small" @click="disk.openDrive(disk.currentDrive!)">回到盘根</button>
+        <div v-if="isShareRoot" class="share-hint">别人分享给我的文件与目录；目录可直接进入浏览。</div>
+        <div class="search-bar">
+          <input
+            v-model="keyword"
+            :placeholder="filterPlaceholder"
+            @keydown.esc="keyword = ''"
+          />
+          <button v-if="disk.currentDrive?.kind !== 'shared'" class="small" :disabled="!keyword.trim()" @click="onGlobalSearch">全盘搜索</button>
+          <button class="secondary small" @click="onOpenDrive(disk.currentDrive!)">回到盘根</button>
         </div>
       </header>
 
@@ -56,6 +57,12 @@
 
       <div v-if="disk.error" class="error">{{ disk.error }}</div>
 
+      <div v-if="!disk.loading" class="list-meta">
+        <span class="count-text">{{ countText }}</span>
+        <button v-if="hasFilter" class="link-btn" @click="keyword = ''">清除筛选</button>
+        <button v-if="disk.searchKeyword" class="link-btn" @click="disk.exitSearch()">退出全盘搜索</button>
+      </div>
+
       <div class="file-list">
         <div v-if="disk.loading" class="loading">加载中…</div>
 
@@ -63,12 +70,15 @@
         <table v-else-if="disk.subEntries.length > 0">
           <thead><tr><th>{{ subEntryLabel() }}</th><th>类型</th><th>操作</th></tr></thead>
           <tbody>
-            <tr v-for="t in disk.subEntries" :key="t.id" @dblclick="disk.enterTeam(t)">
+            <tr v-for="t in visibleSubEntries" :key="t.id" @dblclick="disk.enterTeam(t)">
               <td class="name">
                 <span class="f-icon">👥</span>{{ t.name }}
               </td>
               <td>{{ subEntryLabel() }}</td>
               <td class="ops"><button class="small" @click.stop="disk.enterTeam(t)">进入</button></td>
+            </tr>
+            <tr v-if="visibleSubEntries.length === 0">
+              <td colspan="3" class="empty">{{ emptyHint }}</td>
             </tr>
           </tbody>
         </table>
@@ -79,7 +89,7 @@
             <tr><th>名称</th><th>分享人</th><th>类型</th><th>有效期</th><th>操作</th></tr>
           </thead>
           <tbody>
-            <tr v-for="s in disk.shares" :key="s.id" @dblclick="onOpenShare(s)">
+            <tr v-for="s in visibleShares" :key="s.id" @dblclick="onOpenShare(s)">
               <td class="name">
                 <span class="f-icon">{{ s.resourceType === 'D' ? '📁' : iconFor(extOf(s.title)) }}</span>
                 {{ s.title }}
@@ -98,8 +108,8 @@
                 </template>
               </td>
             </tr>
-            <tr v-if="disk.shares.length === 0">
-              <td colspan="5" class="empty">暂无共享给我的内容</td>
+            <tr v-if="visibleShares.length === 0">
+              <td colspan="5" class="empty">{{ hasFilter ? emptyHint : '暂无共享给我的内容' }}</td>
             </tr>
           </tbody>
         </table>
@@ -112,7 +122,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="f in disk.files" :key="f.id" @dblclick="onDblClick(f)">
+            <tr v-for="f in visibleFiles" :key="f.id" @dblclick="onDblClick(f)">
               <td class="name">
                 <span class="f-icon">{{ f.type === 'D' ? '📁' : iconFor(f.ext) }}</span>
                 {{ f.name }}
@@ -127,8 +137,8 @@
                 <button v-if="!disk.currentShareId" class="secondary small danger-btn" @click.stop="onDelete(f)">删除</button>
               </td>
             </tr>
-            <tr v-if="disk.files.length === 0 && !disk.loading">
-              <td colspan="5" class="empty">空目录</td>
+            <tr v-if="visibleFiles.length === 0 && !disk.loading">
+              <td colspan="5" class="empty">{{ emptyHint }}</td>
             </tr>
           </tbody>
         </table>
@@ -191,6 +201,64 @@ const activeUploads = computed(
   () => uploads.tasks.filter((t) => ['queued', 'uploading', 'saving'].includes(t.status)).length,
 )
 
+/** 当前目录的即时筛选（不区分大小写，匹配名称或扩展名） */
+const hasFilter = computed(() => keyword.value.trim().length > 0)
+const filterPlaceholder = computed(() => {
+  if (isShareRoot.value) return '筛选共享给我的文档或目录'
+  if (disk.searchKeyword) return '在搜索结果中筛选'
+  return '筛选当前目录的文档或目录'
+})
+
+function matchKeyword(name: string, ext?: string): boolean {
+  const q = keyword.value.trim().toLowerCase()
+  if (!q) return true
+  return (
+    name.toLowerCase().includes(q) ||
+    (!!ext && ext.toLowerCase().includes(q))
+  )
+}
+
+const visibleFiles = computed(() => disk.files.filter((f) => matchKeyword(f.name, f.ext)))
+const visibleShares = computed(() => disk.shares.filter((s) => matchKeyword(s.title)))
+const visibleSubEntries = computed(() => disk.subEntries.filter((t) => matchKeyword(t.name)))
+
+/** 列表项数量：目录 / 共享给我 / 团队入口三种形态 */
+const listTotal = computed(() => {
+  if (disk.subEntries.length) return disk.subEntries.length
+  if (isShareRoot.value) return disk.shares.length
+  return disk.files.length
+})
+const listShown = computed(() => {
+  if (disk.subEntries.length) return visibleSubEntries.value.length
+  if (isShareRoot.value) return visibleShares.value.length
+  return visibleFiles.value.length
+})
+
+const countText = computed(() => {
+  const parts: string[] = []
+  if (disk.searchKeyword) parts.push(`全盘搜索「${disk.searchKeyword}」`)
+  if (hasFilter.value) parts.push(`筛选「${keyword.value.trim()}」`)
+  const prefix = parts.length ? parts.join(' · ') + '：' : ''
+  const size = hasFilter.value ? `${listShown.value} / ${listTotal.value}` : `${listTotal.value}`
+
+  if (disk.subEntries.length) return `${prefix}共 ${size} 个${subEntryLabel()}`
+
+  if (isShareRoot.value) {
+    const dirs = visibleShares.value.filter((s) => s.resourceType === 'D').length
+    return `${prefix}共 ${size} 项（目录 ${dirs} · 文件 ${visibleShares.value.length - dirs}）`
+  }
+
+  const dirs = visibleFiles.value.filter((f) => f.type === 'D').length
+  return `${prefix}共 ${size} 项（目录 ${dirs} · 文件 ${visibleFiles.value.length - dirs}）`
+})
+
+const emptyHint = computed(() => {
+  if (hasFilter.value) return `没有匹配「${keyword.value.trim()}」的条目`
+  if (disk.searchKeyword) return `全盘搜索「${disk.searchKeyword}」没有结果`
+  if (disk.subEntries.length) return `暂无${subEntryLabel()}`
+  return '空目录'
+})
+
 onMounted(async () => {
   if (!auth.isLoggedIn) {
     router.replace('/login')
@@ -241,9 +309,11 @@ async function onPreview(f: DiskFile) {
   await disk.preview(f)
 }
 
-async function onSearch() {
-  if (keyword.value.trim()) await disk.search(keyword.value.trim())
-  else await disk.refresh()
+async function onGlobalSearch() {
+  const kw = keyword.value.trim()
+  if (!kw) return
+  keyword.value = ''
+  await disk.search(kw)
 }
 
 async function onMkdir() {
@@ -423,7 +493,7 @@ function fmtExpire(t?: number | null): string {
 }
 .search-bar { display: flex; gap: 8px; }
 .search-bar input { flex: 1; }
-.share-hint { flex: 1; color: var(--text-muted); font-size: 12px; }
+.share-hint { color: var(--text-muted); font-size: 12px; }
 .invalid-tag {
   margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 11px;
   background: var(--bg-subtle); color: var(--text-muted);
@@ -437,6 +507,18 @@ function fmtExpire(t?: number | null): string {
 }
 
 .error { margin: 12px 20px; padding: 8px 12px; background: var(--danger-soft); color: var(--danger); border-radius: 6px; }
+
+.list-meta {
+  padding: 6px 20px; background: var(--bg-subtle); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+  font-size: 12px; color: var(--text-muted);
+}
+.count-text { flex: 1; }
+.link-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--primary); font-size: 12px;
+}
+.link-btn:hover { text-decoration: underline; }
 
 .file-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
 .loading, .empty { text-align: center; color: var(--text-muted); padding: 20px; }

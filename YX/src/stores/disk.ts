@@ -46,6 +46,8 @@ export const useDiskStore = defineStore('disk', () => {
   const shares = ref<PanShareItem[]>([])
   /** 当前正在浏览的分享 id；为空表示浏览自己的盘 */
   const currentShareId = ref('')
+  /** 全盘搜索关键词；非空表示列的是搜索结果而不是目录内容 */
+  const searchKeyword = ref('')
 
   const currentPath = computed(
     () => trail.value.slice(1).map((x) => x.name).join(' / ') || '/',
@@ -131,6 +133,7 @@ export const useDiskStore = defineStore('disk', () => {
     subEntries.value = []
     shares.value = []
     currentShareId.value = ''
+    searchKeyword.value = ''
     error.value = ''
     if (drive.kind === 'shared') {
       trail.value = [{ id: '', name: drive.name }]
@@ -159,6 +162,7 @@ export const useDiskStore = defineStore('disk', () => {
   async function loadSub(path: string) {
     loading.value = true
     error.value = ''
+    searchKeyword.value = ''
     try {
       if (path === '/Org') {
         subEntries.value = (await listDepartmentSpaces()).map(toDiskFile)
@@ -178,6 +182,7 @@ export const useDiskStore = defineStore('disk', () => {
   async function list(dirId: string) {
     loading.value = true
     error.value = ''
+    searchKeyword.value = ''
     try {
       const items = (await listDir(dirId)).map(toDiskFile)
       // 列表与写操作统一使用文档服务，旧 openapi 会返回已删除的历史条目。
@@ -196,6 +201,7 @@ export const useDiskStore = defineStore('disk', () => {
     loading.value = true
     error.value = ''
     currentShareId.value = ''
+    searchKeyword.value = ''
     try {
       shares.value = await listReceivedShares()
       files.value = []
@@ -212,6 +218,7 @@ export const useDiskStore = defineStore('disk', () => {
   async function listShared(dirId: string) {
     loading.value = true
     error.value = ''
+    searchKeyword.value = ''
     try {
       const items = (await listSharedDir(dirId, currentShareId.value)).map(toDiskFile)
       files.value = sortFiles(items)
@@ -266,6 +273,10 @@ export const useDiskStore = defineStore('disk', () => {
   }
 
   async function refresh() {
+    if (searchKeyword.value) {
+      await search(searchKeyword.value)
+      return
+    }
     if (currentShareId.value) {
       if (trail.value.length > 1) await listShared(currentDirId.value)
       else await loadShares()
@@ -298,13 +309,24 @@ export const useDiskStore = defineStore('disk', () => {
 
   async function search(keyword: string) {
     loading.value = true
+    error.value = ''
+    searchKeyword.value = keyword
     try {
-      files.value = await diskClient.search(keyword)
+      files.value = sortFiles(await diskClient.search(keyword))
+      subEntries.value = []
+      shares.value = []
     } catch (e: any) {
       error.value = e.message
+      files.value = []
     } finally {
       loading.value = false
     }
+  }
+
+  /** 退出全盘搜索，回到当前目录 */
+  async function exitSearch() {
+    searchKeyword.value = ''
+    await refresh()
   }
 
   /** 打开在线编辑（WPS），失败时退回预览 */
@@ -396,6 +418,7 @@ export const useDiskStore = defineStore('disk', () => {
     currentPath,
     currentDirId,
     currentShareId,
+    searchKeyword,
     files,
     shares,
     loading,
@@ -416,6 +439,7 @@ export const useDiskStore = defineStore('disk', () => {
     mkdir,
     remove,
     search,
+    exitSearch,
     onlineEdit,
     download,
     downloadShare,
