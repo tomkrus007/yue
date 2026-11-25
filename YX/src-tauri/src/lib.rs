@@ -6,6 +6,7 @@ mod window_state;
 mod zt_sdk;
 mod wemeet;
 mod db;
+mod component;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 
 #[tauri::command]
@@ -130,6 +131,10 @@ pub fn run() {
             let download_dir = store_download::download_dir(app.handle(), &db);
             store_download::cleanup_stale(&download_dir);
             app.manage(db);
+            app.manage(component::InstallState::default());
+            // 覆盖安装 app 会丢组件；缓存里还有包就在后台静默装回去。
+            let handle = app.handle().clone();
+            std::thread::spawn(move || component::restore_from_cache(&handle));
             app.manage(store_upload::UploadSpool::default());
             app.manage(store_download::Downloads::default());
             app.manage(media_stream::MediaStreams::default());
@@ -163,6 +168,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             greet,
             set_tray_unread,
@@ -191,7 +197,12 @@ pub fn run() {
             media_stream::media_response_chunk,
             media_stream::media_response_end,
             wemeet::wemeet_init,
-            wemeet::wemeet_component_status,
+            component::component_status,
+            component::component_install_local,
+            component::component_install_url,
+            component::component_cancel,
+            component::component_clear_cache,
+            component::component_reload,
             wemeet::wemeet_status,
             wemeet::wemeet_is_logged_in,
             wemeet::wemeet_refresh_token,

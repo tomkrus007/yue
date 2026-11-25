@@ -1,0 +1,10 @@
+{
+  "tmsdk": {
+    "version": "3.21.303",
+    "platforms": {
+      "macos-arm64": {
+        "url": "https://github.com/tomkrus007/yue/releases/download/tmsdk-v3.21.303/TMSDK-3.21.303-macos-arm64.tar.zst"
+      }
+    }
+  }
+}

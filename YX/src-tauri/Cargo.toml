@@ -1,6 +1,6 @@
 [package]
 name = "YX"
-version = "0.1.26"
+version = "0.1.27"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"
@@ -22,12 +22,14 @@ cc = "1"
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
+# 组件安装：选本地 tar.zst（HTML file input 拿不到真实路径）
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-http = "2"
 tauri-plugin-notification = "2"
 # 附件上传：Rust 侧流式读临时文件（见 src/store_upload.rs）
-reqwest = { version = "0.12", features = ["stream", "multipart"] }
+reqwest = { version = "0.12", features = ["stream", "multipart", "blocking"] }
 tokio = { version = "1", features = ["fs", "io-util", "net", "time", "macros", "process"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"

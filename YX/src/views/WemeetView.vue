@@ -30,19 +30,14 @@
       <div v-if="wemeet.component?.state === 'unsupported'" class="banner">
         当前平台没有可用的会议组件，腾讯会议相关功能不可用。
       </div>
-      <div v-else-if="wemeet.component?.state === 'absent'" class="banner">
-        会议组件（TMSDK）未安装，无法发起或加入会议。
-        <template v-if="wemeet.component.error">原因：{{ wemeet.component.error }}</template>
-        <template v-else>开发态可用 scripts/install-wemeet.sh 把 vendor 里的框架装入 YX.app。</template>
-      </div>
 
       <section class="card">
         <div class="card-title">发起会议</div>
         <div class="row wrap">
-          <button :disabled="busy" @click="act(wemeet.openHome)">
+          <button :disabled="busy || componentBlocked" @click="act(wemeet.openHome)">
             {{ wemeet.state === 'ready' ? '打开会前界面' : '连接并打开会前界面' }}
           </button>
-          <button class="secondary" :disabled="busy" @click="act(wemeet.quickMeeting)">
+          <button class="secondary" :disabled="busy || componentBlocked" @click="act(wemeet.quickMeeting)">
             快速会议
           </button>
           <span v-if="busy" class="hint">正在连接会议服务…</span>
@@ -63,12 +58,73 @@
             spellcheck="false"
             @keyup.enter="join"
           />
-          <button :disabled="busy || !meetingCode.trim()" @click="join">
+          <button :disabled="busy || componentBlocked || !meetingCode.trim()" @click="join">
             加入会议
           </button>
           <span class="hint">入会显示名：{{ displayName }}</span>
         </div>
         <div class="hint">默认关闭麦克风和摄像头，可在会前/会中自行打开。</div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">会议组件</div>
+        <div class="grid">
+          <div class="field">
+            <span>状态</span>
+            <b>{{ componentStateLabel }}</b>
+          </div>
+          <div class="field">
+            <span>版本</span>
+            <b>{{ wemeet.component?.version || '—' }}</b>
+          </div>
+          <div class="field">
+            <span>占用</span>
+            <b>{{ formatBytes(wemeet.component?.installed_bytes || 0) }}</b>
+          </div>
+        </div>
+
+        <p v-if="wemeet.component?.error" class="hint err-text">{{ wemeet.component.error }}</p>
+
+        <template v-if="wemeet.component?.state === 'absent'">
+          <div class="hint">
+            组件包是 <code>TMSDK-&lt;版本&gt;-macos-arm64.tar.zst</code>，本地文件与网络下载走同一套校验（腾讯签名）。
+          </div>
+          <div class="row wrap">
+            <button class="small" :disabled="wemeet.installing" @click="pickLocalComponent">
+              选择本地组件包
+            </button>
+            <input
+              v-model="componentUrl"
+              class="code-input url"
+              placeholder="组件包下载地址（https://…）"
+              spellcheck="false"
+            />
+            <button class="small secondary" :disabled="wemeet.installing || !componentUrl.trim()" @click="downloadComponent">
+              从地址下载
+            </button>
+            <button class="small secondary" :disabled="!urlDirty" @click="saveComponentUrl">
+              保存地址
+            </button>
+            <button v-if="urlDirty" class="small secondary" :disabled="wemeet.installing" @click="resetComponentUrl">
+              恢复默认
+            </button>
+          </div>
+          <div v-if="wemeet.component?.cached_archive" class="row wrap">
+            <button class="small secondary" :disabled="wemeet.installing" @click="restoreFromCache">
+              从本地缓存恢复（{{ formatBytes(wemeet.component.cached_bytes) }}）
+            </button>
+          </div>
+        </template>
+
+        <p v-if="progressText" class="hint" role="status">{{ progressText }}</p>
+        <div class="row wrap component-actions">
+          <button v-if="wemeet.installing" class="small secondary" @click="wemeet.cancelInstall()">
+            取消安装
+          </button>
+          <button v-if="wemeet.component?.cached_bytes" class="small secondary" :disabled="wemeet.installing" @click="clearComponentCache">
+            清理组件包缓存（{{ formatBytes(wemeet.component.cached_bytes) }}）
+          </button>
+        </div>
       </section>
 
       <section class="card">
@@ -123,13 +179,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { open } from '@tauri-apps/plugin-dialog'
 import SideNav from '../components/SideNav.vue'
 import AppPanel from '../components/AppPanel.vue'
 import MemberPicker from '../components/MemberPicker.vue'
 import type { PickedMember } from '../components/MemberPicker.vue'
 import { useWeMeetStore } from '../stores/wemeet'
 import { authService } from '../services/auth'
+import { settingsGetAll, settingsSet } from '../services/settings'
 
 const wemeet = useWeMeetStore()
 const appOpen = ref(false)
@@ -138,6 +196,27 @@ const meetingCode = ref('')
 const pickerOpen = ref(false)
 const inviting = ref(false)
 const note = ref('')
+/** 组件包下载地址：库里存的是用户改过的值，`effective` 才是实际生效的 */
+const componentUrl = ref('')
+const savedComponentUrl = ref('')
+
+onMounted(async () => {
+  try {
+    const all = await settingsGetAll()
+    const entry = all.find((item) => item.key === 'component.url')
+    componentUrl.value = entry?.effective || ''
+    savedComponentUrl.value = componentUrl.value
+  } catch {
+    // 库不可用时不影响页面其它功能
+  }
+})
+
+const urlDirty = computed(() => componentUrl.value.trim() !== savedComponentUrl.value.trim())
+
+/** 组件没装好时会议室入口先禁用，免得点了才报错。 */
+const componentBlocked = computed(
+  () => wemeet.component !== null && wemeet.component.state !== 'ready',
+)
 
 async function confirmInvitees(items: PickedMember[]) {
   pickerOpen.value = false
@@ -189,6 +268,89 @@ const componentLabel = computed(() => {
   if (wemeet.state === 'connecting') return '正在启动'
   return '未启动'
 })
+
+const componentStateLabel = computed(() => {
+  const c = wemeet.component
+  if (!c) return '查询中'
+  if (c.state === 'installing' || wemeet.installing) return '正在安装'
+  if (c.state === 'unsupported') return '本平台不支持'
+  if (c.state === 'ready') return '已安装并可用'
+  return '未安装'
+})
+
+const progressText = computed(() => {
+  const p = wemeet.progress
+  if (!wemeet.installing || !p) return ''
+  if (p.phase === 'download') {
+    if (p.total) {
+      const pct = Math.min(100, Math.round(((p.received || 0) / p.total) * 100))
+      return `正在下载组件包 ${pct}%（${formatBytes(p.received || 0)} / ${formatBytes(p.total)}）`
+    }
+    return `正在下载组件包 ${formatBytes(p.received || 0)}`
+  }
+  return p.message || ''
+})
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`
+}
+
+async function pickLocalComponent() {
+  const picked = await open({
+    multiple: false,
+    filters: [{ name: 'TMSDK 组件包', extensions: ['zst'] }],
+  })
+  if (typeof picked !== 'string') return
+  await wemeet.installComponentFromFile(picked).catch(() => {})
+}
+
+async function downloadComponent() {
+  const url = componentUrl.value.trim()
+  if (!url) return
+  await wemeet.installComponentFromUrl(url).catch(() => {})
+}
+
+async function restoreFromCache() {
+  const path = wemeet.component?.cached_archive
+  if (!path) return
+  await wemeet.installComponentFromFile(path).catch(() => {})
+}
+
+async function saveComponentUrl() {
+  note.value = ''
+  try {
+    const value = componentUrl.value.trim()
+    await settingsSet('component.url', value || null)
+    savedComponentUrl.value = value
+    note.value = '组件下载地址已保存'
+  } catch (error) {
+    note.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+async function resetComponentUrl() {
+  componentUrl.value = savedComponentUrl.value
+  await saveComponentUrl()
+}
+
+async function clearComponentCache() {
+  note.value = ''
+  try {
+    const freed = await wemeet.clearComponentCache()
+    note.value = `已清理组件包缓存（${formatBytes(freed)}）`
+    await wemeet.refreshComponent()
+  } catch (error) {
+    note.value = error instanceof Error ? error.message : String(error)
+  }
+}
 
 async function act(fn: () => Promise<void>) {
   busy.value = true
@@ -312,6 +474,9 @@ function join() {
   width: 220px;
   letter-spacing: 1px;
 }
+.url { width: min(420px, 100%); letter-spacing: 0; }
+.component-actions { margin-top: 8px; }
+.err-text { color: var(--danger); }
 .events { margin-top: 8px; }
 .events summary {
   cursor: pointer;

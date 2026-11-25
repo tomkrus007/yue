@@ -190,7 +190,7 @@ TMSDK-3.21.303-macos-arm64.tar.zst        # 唯一分发形态，本地/网络�
 
 | 校验 | 本地文件 | 网络下载 | 说明 |
 |---|---|---|---|
-| 压缩包 sha256 | 可选（manifest 命中则强制） | **强制** | 只防损坏/半截包，不能当来源可信依据 |
+| 压缩包 sha256 | 不校验 | 不校验 | 只防「半截包」，而截断的包解压后 `codesign --deep --strict` 必然失败；`shasum` 计算只用于记录到库，不作为门槛 |
 | `component.json` 结构 | 强制 | 强制 | 拒绝未知 schema / platform / arch |
 | `min_app` ≤ 当前版本 | 强制 | 强制 | 防 ABI 错配 |
 | **Tencent 代码签名** | **强制** | **强制** | `codesign --verify --deep --strict` + `TeamIdentifier == 5PMRFKHZTP` |
@@ -448,27 +448,29 @@ steps:
 
 ---
 
-## 6. 命令与事件契约（给前端的接口）
+## 6. 命令与事件契约（已实现）
 
 ```rust
-settings_get_all() -> { key: { value, default, effective } , … }
-settings_set(key, value: Option<String>) -> ()
-capabilities() -> { meeting, zero_trust, message_sound }
-
+settings_get_all() -> [{ key, value, default, effective }, …]
+settings_set(key, value: Option<String>) -> ()          // 空值 = 删除覆盖
 component_status() -> {
-  state: "ready" | "absent" | "unsupported" | "installing" | "failed",
-  version?, path?, source?, cached_archive?, error?
+  state: "ready" | "absent" | "unsupported" | "installing",
+  version?, path?, error?, installed_bytes, cached_archive?, cached_bytes
 }
-component_install_local(path) -> ()      // 选本地 tar.zst
-component_install_url(url: Option<String>) -> ()  // None = 用 settings 里的
+component_install_local(path) -> ComponentStatus        // 选本地 tar.zst
+component_install_url(url: Option<String>) -> ComponentStatus  // None = 用库里的地址
 component_cancel() -> ()
+component_clear_cache() -> u64                          // 返回释放字节数
+component_reload() -> ComponentStatus                   // 手工替换后重新 dlopen
 
-// 事件
-"component-progress" { phase: "download"|"extract"|"verify"|"install"|"sign"|"load",
+// 事件（所有安装入口共用）
+"component-progress" { phase: "download"|"extract"|"verify"|"install"|"sign"|"cache"|"load"|"done",
                        received?, total?, message? }
 ```
 
-前端落点：`src/views/WemeetView.vue` 的"连接状态 → 组件"一栏（已有 `componentLabel`），加"未安装"分支与两个按钮；`src/services/wemeet.ts` 加上述 invoke 封装。
+前端落点：`src/views/WemeetView.vue` 的「会议组件」卡片（状态/版本/占用、选择本地包、URL 下载、
+保存地址、从缓存恢复、清理缓存、取消安装）；`src/services/component.ts` 是 invoke 与事件封装。
+组件没装好时「发起/加入会议」按钮直接禁用，避免点了才报错。
 
 ---
 
@@ -509,7 +511,27 @@ pnpm tauri build --debug
 open src-tauri/target/debug/bundle/macos/YX.app
 ```
 
-> 待 PR3/PR4 接入应用内安装器后，`install-wemeet.sh` 只保留给开发者。
+> 应用内安装器已接入（见下），`install-wemeet.sh` 现在只保留给开发者。
+
+**PR3 + PR4 已完成：组件安装器与界面**
+
+| 改动 | 文件 |
+|---|---|
+| 组件路径 / `dlopen` / 状态查询 / 安装 / 取消 / 清理缓存 / 重新加载 | `src/component.rs` |
+| 解压（`/usr/bin/tar`，自动识别 zstd）→ 结构校验 → 腾讯签名校验 → `ditto` 落位（同级 incoming + 备份换入）→ `codesign --force --sign -` + `--verify --deep --strict` → `dlopen` | 同上 |
+| 组件包留档到 `app_cache_dir/components/`，只保留 1 份；覆盖安装 app 后启动时**后台静默回装**（已实测） | 同上 |
+| `components.json` 提供默认下载地址，启动时种子进 `settings`（`schema_meta` 记住种子值：用户没改过就跟随新版本，改过就永久保留） | `components.json`、`db.rs` |
+| 前端「会议组件」卡片：状态/版本/占用、选本地包、URL 下载、保存/恢复默认、从缓存恢复、清理缓存、进度 | `services/component.ts`、`stores/wemeet.ts`、`views/WemeetView.vue` |
+| 选文件用 `tauri-plugin-dialog`（HTML file input 拿不到真实路径） | `Cargo.toml`、`capabilities/default.json` |
+| 打包脚本：`ditto` → `component.json` → `tar --no-xattrs` → `zstd -19`，产物 118 MiB + `.sha256` | `scripts/pack-tmsdk.sh` |
+
+实测（debug 包）：把 118 MiB 包放进 `~/Library/Caches/com.tom.YX/components/` 后启动 app，
+自动完成解压/校验/落位/重签/加载，日志 `组件回装完成：Some("3.21.303.110")`，
+`codesign --verify --deep --strict` 通过，`components` 表写入 `source=cache`。
+`schema_meta` 里记录了种子地址；`user_version` 从 1 迁到 2。
+
+未做：断点续传（`Range`）。弱网重下的代价是 118 MiB，等有人反馈再加。
+
 
 **PR2 已完成：本地配置库**
 

@@ -5,7 +5,7 @@
 //! `component_*` 命令，避免 WebView 拿到任意 SQL 执行能力。
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -41,8 +41,11 @@ fn database_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("yx.db"))
 }
 
+/// 连接是单条 + 互斥（命令都很快，不需要连接池）；`Arc` 让命令能把它移进
+/// `spawn_blocking`（安装组件这类耗时操作）。
+#[derive(Clone)]
 pub struct Db {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
 }
 
 /// 已安装组件的记录（同一时刻只应有一条 `id = "tmsdk"`）。
@@ -67,9 +70,11 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| format!("初始化配置库失败：{e}"))?;
         migrate(&conn)?;
-        Ok(Self {
-            conn: Mutex::new(conn),
-        })
+        let db = Self {
+            conn: Arc::new(Mutex::new(conn)),
+        };
+        db.seed_component_url()?;
+        Ok(db)
     }
 
     fn get(&self, key: &str) -> Option<String> {
@@ -105,6 +110,54 @@ impl Db {
                 .map(|_| ())
                 .map_err(|e| format!("重置配置失败：{e}")),
         }
+    }
+
+    fn meta_get(&self, key: &str) -> Option<String> {
+        let conn = self.conn.lock().ok()?;
+        conn.query_row(
+            "SELECT value FROM schema_meta WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    }
+
+    fn meta_set(&self, key: &str, value: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|_| "配置库不可用")?;
+        conn.execute(
+            "INSERT INTO schema_meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )
+        .map(|_| ())
+        .map_err(|e| format!("写入配置元数据失败：{e}"))
+    }
+
+    /// 把随包分发的默认组件地址落到 `settings`（用户要求「默认地址入库」）。
+    ///
+    /// 只覆盖「用户没改过」的情况：如果库里的值和上次种子值相同，说明用户没动它，
+    /// 新版本换了默认地址就直接更新；用户自己填过就永远保留。
+    fn seed_component_url(&self) -> Result<(), String> {
+        const SEED_KEY: &str = "component.url.default";
+        let Some(default) = default_component_url() else {
+            return Ok(());
+        };
+        let previous = self.meta_get(SEED_KEY);
+        let current = self.get(COMPONENT_URL);
+        let untouched = match (&previous, &current) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some(previous), Some(current)) => previous == current,
+        };
+        if untouched && current.as_deref() != Some(default.as_str()) {
+            self.set(COMPONENT_URL, Some(&default))?;
+        }
+        if previous.as_deref() != Some(default.as_str()) {
+            self.meta_set(SEED_KEY, &default)?;
+        }
+        Ok(())
     }
 
     /// 生效值 = 用户覆盖值 ?? 平台默认值。
@@ -186,13 +239,11 @@ fn now() -> i64 {
 
 /// 按 `user_version` 顺序迁移；每一步在自己的事务里完成并写版本号。
 fn migrate(conn: &Connection) -> Result<(), String> {
-    let version: i64 = conn
+    let mut version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|e| format!("读取配置库版本失败：{e}"))?;
-    if version >= 1 {
-        return Ok(());
-    }
-    conn.execute_batch(
+    if version < 1 {
+        conn.execute_batch(
         "BEGIN;
          CREATE TABLE IF NOT EXISTS settings (
            key        TEXT PRIMARY KEY,
@@ -212,8 +263,58 @@ fn migrate(conn: &Connection) -> Result<(), String> {
          );
          PRAGMA user_version = 1;
          COMMIT;",
-    )
-    .map_err(|e| format!("迁移配置库失败：{e}"))
+        )
+        .map_err(|e| format!("迁移配置库失败：{e}"))?;
+        version = 1;
+    }
+    if version < 2 {
+        // v2：记录随版本变化的默认值（见 seed_component_url）
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS schema_meta (
+               key   TEXT PRIMARY KEY,
+               value TEXT NOT NULL
+             );
+             PRAGMA user_version = 2;
+             COMMIT;",
+        )
+        .map_err(|e| format!("迁移配置库失败：{e}"))?;
+    }
+    Ok(())
+}
+
+pub fn current_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "linux"
+    }
+}
+
+pub fn current_arch() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x64"
+    } else {
+        "unknown"
+    }
+}
+
+/// 随包分发的组件默认地址（`src-tauri/components.json`）。
+///
+/// 这是默认值的唯一出处：换地址改这里 + 发版，不用改代码逻辑。
+fn default_component_url() -> Option<String> {
+    let file: serde_json::Value = serde_json::from_str(include_str!("../components.json")).ok()?;
+    let key = format!("{}-{}", current_platform(), current_arch());
+    file.get("tmsdk")?
+        .get("platforms")?
+        .get(&key)?
+        .get("url")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// 平台默认值。Windows/Linux 走各自的目录 API，不写死路径。
@@ -230,8 +331,7 @@ fn platform_default(app: &AppHandle, key: &str) -> Option<String> {
             .to_string_lossy()
             .into_owned(),
         MESSAGE_SOUND => "1".to_string(),
-        // 组件地址由 components.json 提供默认值（见 component.rs）；这里不给兜底，
-        // 免得两处默认值打架。
+        COMPONENT_URL => default_component_url()?,
         _ => return None,
     })
 }

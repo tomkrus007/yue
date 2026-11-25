@@ -17,10 +17,19 @@ import { videoChatCardContent, videoChatInviteContent } from '../services/im/wem
 import { MsgType } from '../services/im/types'
 import { useImStore } from './im'
 import {
+  componentCancel,
+  componentClearCache,
+  componentInstallLocal,
+  componentInstallUrl,
+  componentStatus,
+  listenComponentProgress,
+  type ComponentProgress,
+  type ComponentStatus,
+} from '../services/component'
+import {
   fetchWeMeetAccount,
   listenWeMeetEvent,
   wemeetBringTop,
-  wemeetComponentStatus,
   wemeetEnableRing,
   wemeetInit,
   wemeetIsLoggedIn,
@@ -32,7 +41,6 @@ import {
   wemeetRelease,
   wemeetShowHome,
   wemeetStatus,
-  type WeMeetComponentStatus,
   type WeMeetEvent,
 } from '../services/wemeet'
 
@@ -60,9 +68,13 @@ export const useWeMeetStore = defineStore('wemeet', () => {
   const error = ref('')
   const events = ref<WeMeetEvent[]>([])
   /** 组件安装情况；null 表示还没查过 */
-  const component = ref<WeMeetComponentStatus | null>(null)
+  const component = ref<ComponentStatus | null>(null)
+  /** 安装进度（事件驱动）；null 表示当前没有安装任务 */
+  const progress = ref<ComponentProgress | null>(null)
+  const installing = ref(false)
 
   let unlisten: UnlistenFn | null = null
+  let progressUnlisten: UnlistenFn | null = null
   let connecting: Promise<void> | null = null
   let refreshingToken = false
   let waiters: Waiter[] = []
@@ -161,21 +173,61 @@ export const useWeMeetStore = defineStore('wemeet', () => {
   async function start() {
     if (unlisten) return
     unlisten = await listenWeMeetEvent(onEvent)
+    progressUnlisten =
+      progressUnlisten ??
+      (await listenComponentProgress((event) => {
+        progress.value = event
+        if (event.phase === 'done') void refreshComponent()
+      }))
     void refreshComponent()
   }
 
   /** 刷新组件状态；失败不写入 wemeet.error（只影响状态展示）。 */
   async function refreshComponent() {
     try {
-      component.value = await wemeetComponentStatus()
+      component.value = await componentStatus()
     } catch (e) {
       component.value = {
         state: 'absent',
         version: null,
         path: null,
         error: (e as any)?.message || String(e),
+        installed_bytes: 0,
+        cached_archive: null,
+        cached_bytes: 0,
       }
     }
+  }
+
+  /** 安装组件（本地包 / 网络地址），成功后立即可用，无需重启。 */
+  async function installComponent(task: () => Promise<ComponentStatus>) {
+    installing.value = true
+    progress.value = null
+    error.value = ''
+    try {
+      component.value = await task()
+    } catch (e) {
+      throw fail(e)
+    } finally {
+      installing.value = false
+      void refreshComponent()
+    }
+  }
+
+  function installComponentFromFile(path: string) {
+    return installComponent(() => componentInstallLocal(path))
+  }
+
+  function installComponentFromUrl(url?: string) {
+    return installComponent(() => componentInstallUrl(url))
+  }
+
+  async function cancelInstall() {
+    await componentCancel().catch(() => {})
+  }
+
+  function clearComponentCache() {
+    return componentClearCache()
   }
 
   /** 退出登录 / 关闭会议时调用：停止监听并释放 SDK 进程。 */
@@ -187,6 +239,10 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     waiters = []
     unlisten?.()
     unlisten = null
+    progressUnlisten?.()
+    progressUnlisten = null
+    progress.value = null
+    installing.value = false
     const wasReady = state.value !== 'idle'
     const uid = sessionUserId
     sessionUserId = ''
@@ -376,9 +432,15 @@ export const useWeMeetStore = defineStore('wemeet', () => {
     error,
     events,
     component,
+    progress,
+    installing,
     start,
     stop,
     refreshComponent,
+    installComponentFromFile,
+    installComponentFromUrl,
+    cancelInstall,
+    clearComponentCache,
     ensureReady,
     openHome,
     quickMeeting,
