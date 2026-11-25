@@ -48,14 +48,14 @@
       </svg>
     </button>
 
-    <router-link to="/wemeet" :class="['nav-item', { active: active === 'wemeet' }]" title="会议">
+    <router-link v-if="caps?.meeting !== false" to="/wemeet" :class="['nav-item', { active: active === 'wemeet' }]" title="会议">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="2.5" y="6.5" width="12.5" height="11" rx="2.5" />
         <path d="m15 12 6-3.6v7.2L15 12Z" />
       </svg>
     </router-link>
 
-    <router-link to="/zt" :class="['nav-item', { active: active === 'zt' }]" title="零信任分流">
+    <router-link v-if="caps?.zero_trust !== false" to="/zt" :class="['nav-item', { active: active === 'zt' }]" title="零信任分流">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 3 19 6v5.5c0 4.4-2.9 7.6-7 9.5-4.1-1.9-7-5.1-7-9.5V6l7-3Z" />
         <path d="m9 11.8 2.1 2.1 3.9-3.9" />
@@ -91,10 +91,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
 import { useWeMeetStore } from '../stores/wemeet'
 import ConnectionStatus from './ConnectionStatus.vue'
+import { useCapabilities } from '../services/platform'
 
 withDefaults(defineProps<{
   active: 'chat' | 'contacts' | 'disk' | 'zt' | 'wemeet'
@@ -108,6 +110,8 @@ const auth = useAuthStore()
 const im = useImStore()
 const wemeet = useWeMeetStore()
 const menuOpen = ref(false)
+const { caps, loadCapabilities } = useCapabilities()
+onMounted(() => void loadCapabilities())
 /** 全部 + 折叠两个分组的未读之和（tabs 内已排除服务号） */
 const chatUnread = computed(() => im.tabs.reduce((sum, t) => sum + t.unread, 0))
 

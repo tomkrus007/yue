@@ -1,0 +1,92 @@
+name: 打包发布
+
+# 打 macOS / Windows 安装包；推 tag（v*）时同时挂到 Release。
+# 会议组件包不在这里生产（源头是官方客户端），见 scripts/pack-tmsdk.sh 与 doc/TMSDK组件化与跨平台设计.md。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # CI 只需要 TMSDK 的头文件（约 60 KB）来编译 shim；框架本身在运行时才装。
+  TMSDK_COMPONENT_URL: https://github.com/tomkrus007/yue/releases/download/tmsdk-v3.21.303/TMSDK-3.21.303-macos-arm64.tar.zst
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            bundles: dmg
+            artifact: yx-macos
+          - os: windows-latest
+            bundles: nsis
+            artifact: yx-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 启用 pnpm
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 取 TMSDK 头文件（仅 macOS）
+        if: runner.os == 'macOS'
+        run: |
+          curl -fL --retry 3 -o "$RUNNER_TEMP/tmsdk.tar.zst" "$TMSDK_COMPONENT_URL"
+          mkdir -p "$RUNNER_TEMP/tmsdk"
+          tar -xf "$RUNNER_TEMP/tmsdk.tar.zst" -C "$RUNNER_TEMP/tmsdk" payload/TMSDK.framework/Versions/A/Headers
+          mkdir -p src-tauri/vendor/TMSDK.framework/Versions/A
+          cp -R "$RUNNER_TEMP/tmsdk/payload/TMSDK.framework/Versions/A/Headers" src-tauri/vendor/TMSDK.framework/Versions/A/
+          ls src-tauri/vendor/TMSDK.framework/Versions/A/Headers | head
+
+      - name: 打包
+        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+
+      - name: 校验 macOS 包不含 TMSDK（仅 macOS）
+        if: runner.os == 'macOS'
+        run: |
+          APP="src-tauri/target/release/bundle/macos/YX.app"
+          if [ -d "$APP/Contents/Frameworks/TMSDK.framework" ]; then
+            echo "::error::包里又出现了 TMSDK.framework，组件化被回退了"
+            exit 1
+          fi
+          if otool -L "$APP/Contents/MacOS/YX" | grep -q tmsdk; then
+            echo "::error::主程序仍链接 tmsdk，dlopen 改造被回退了"
+            exit 1
+          fi
+          ls -lh src-tauri/target/release/bundle/dmg/*.dmg
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/nsis/*.exe
+
+      - name: 挂到 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/nsis/*.exe

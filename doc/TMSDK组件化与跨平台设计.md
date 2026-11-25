@@ -532,6 +532,41 @@ open src-tauri/target/debug/bundle/macos/YX.app
 
 未做：断点续传（`Range`）。弱网重下的代价是 118 MiB，等有人反馈再加。
 
+**PR5 已完成：跨平台 gate 与能力视图**
+
+| 改动 | 文件 |
+|---|---|
+| `capabilities()` → `{ meeting, zero_trust, message_sound }`，前端按它显隐入口 | `lib.rs`、`services/platform.ts`、`SideNav.vue` |
+| `zt_sdk` 整个模块仅 macOS 编译；其它平台同名命令返回「零信任只支持 macOS」 | `lib.rs` |
+| `wemeet_init` 的 `.app/Contents/MacOS` 前置检查只在 macOS 生效 | `wemeet.rs` |
+| `build.rs` 只在 macOS 且头文件就绪时编真 shim，其余编 stub | `build.rs` |
+| ffmpeg 的 homebrew 兜底路径仅 macOS | `store_download.rs` |
+
+> Windows 本机没有验证环境（需要 MSVC），以 CI 首次跑通为准。设计上 Windows 出包即「IM/云盘可用，
+> 会议与零信任入口隐藏」，不承诺会议功能。
+
+**PR6 已完成：CI 与发布**
+
+- `.github/workflows/release.yml`：tag `v*` 或手动触发，矩阵 `macos-14`（dmg）+ `windows-latest`（nsis）；
+  macOS 先从组件 Release 里只解出 `payload/TMSDK.framework/Versions/A/Headers` 再编译 shim；
+  构建后断言产物里**没有** `TMSDK.framework`、`otool -L` 里**没有** tmsdk；tag 时用 `softprops/action-gh-release` 挂 Release。
+- `package.json` 加 `"packageManager": "pnpm@12.23.0"`，CI 用 `corepack enable`。
+
+**首次引导（必须做一次，否则 CI 的 macOS 构建取不到头文件）**
+
+```bash
+./scripts/pack-tmsdk.sh                       # 产出 dist-components/TMSDK-3.21.303-macos-arm64.tar.zst（118 MiB）
+gh release create tmsdk-v3.21.303 \
+  --title "TMSDK 3.21.303" \
+  --notes "腾讯会议组件包（macOS arm64）" \
+  dist-components/TMSDK-3.21.303-macos-arm64.tar.zst \
+  dist-components/TMSDK-3.21.303-macos-arm64.tar.zst.sha256
+```
+
+- 这一步之后，`src-tauri/components.json` 里的默认地址才真的能下载，CI 也才能编 macOS 包。
+- 换腾讯框架版本时：重新打包 → 新建 `tmsdk-v<ver>` Release → 更新 `components.json` 的 url 与 package.json 版本。
+- 组件包**不需要**每次发版重打：地址固定即可。
+
 
 **PR2 已完成：本地配置库**
 

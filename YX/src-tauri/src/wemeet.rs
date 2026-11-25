@@ -138,13 +138,16 @@ pub async fn wemeet_init(
 
     // TMSDK 依赖 CFBundleIdentifier 与 .app 内的资源目录：裸二进制（tauri dev 的
     // target/debug/YX）调用 Initialize 会直接 SIGSEGV。这里提前挡住并给出可读提示。
-    let exe = std::env::current_exe().unwrap_or_default();
-    if !exe.to_string_lossy().contains(".app/Contents/MacOS/") {
-        return Err(
-            "TMSDK 只能在 .app 包内初始化（需要 CFBundleIdentifier）。\
-             请改用 `pnpm tauri build --debug` 生成并运行 YX.app，不要用 `pnpm tauri dev`。"
-                .into(),
-        );
+    // 只对 macOS 检查：其它平台本来就没有组件，走下面的「未安装」分支。
+    if cfg!(target_os = "macos") {
+        let exe = std::env::current_exe().unwrap_or_default();
+        if !exe.to_string_lossy().contains(".app/Contents/MacOS/") {
+            return Err(
+                "TMSDK 只能在 .app 包内初始化（需要 CFBundleIdentifier）。\
+                 请改用 `pnpm tauri build --debug` 生成并运行 YX.app，不要用 `pnpm tauri dev`。"
+                    .into(),
+            );
+        }
     }
 
     let dir = cache_dir(&app, user_id.as_deref().unwrap_or(""))?

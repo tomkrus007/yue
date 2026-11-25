@@ -3,8 +3,11 @@ mod store_upload;
 mod store_download;
 mod media_stream;
 mod window_state;
-mod zt_sdk;
 mod wemeet;
+// 零信任只有官方 macOS 客户端；其它平台保留同名命令，直接返回「不支持」，
+// 前端按 capabilities() 隐藏入口（见 platform 能力视图）。
+#[cfg(target_os = "macos")]
+mod zt_sdk;
 mod db;
 mod component;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
@@ -39,7 +42,43 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[cfg(not(target_os = "macos"))]
+mod zt_unsupported {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    pub struct SdkStatus {
+        pub port: u16,
+        pub state: String,
+    }
+
+    pub fn unavailable<T>() -> Result<T, String> {
+        Err("零信任只支持 macOS：需要官方 TrustAgentLauncher 客户端".into())
+    }
+}
+
+/// 本机能力视图：前端据此显隐入口，而不是到处判断平台。
+#[derive(serde::Serialize)]
+pub struct Capabilities {
+    /// 本平台是否有会议组件（Windows 等还没有）
+    pub meeting: bool,
+    /// 本平台是否支持零信任（只有 macOS 官方客户端）
+    pub zero_trust: bool,
+    /// 是否有系统提示音
+    pub message_sound: bool,
+}
+
+#[tauri::command]
+fn capabilities() -> Capabilities {
+    Capabilities {
+        meeting: cfg!(target_os = "macos"),
+        zero_trust: cfg!(target_os = "macos"),
+        message_sound: cfg!(target_os = "macos"),
+    }
+}
+
 /// 本机零信任 SDK 状态（不依赖云上越秀客户端）。
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn zt_sdk_status() -> Result<zt_sdk::SdkStatus, String> {
     tauri::async_runtime::spawn_blocking(|| zt_sdk::status().map_err(|e| e.to_string()))
@@ -48,6 +87,7 @@ async fn zt_sdk_status() -> Result<zt_sdk::SdkStatus, String> {
 }
 
 /// 用云上越秀 AccessToken 让本机零信任 SDK 登录（等价官方 App 登录后的动作）。
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn zt_sdk_login(user_token: String, host: Option<String>, port: Option<u16>) -> Result<String, String> {
     let h = host.filter(|s| !s.is_empty()).unwrap_or_else(|| zt_sdk::DEFAULT_HOST.to_string());
@@ -60,6 +100,7 @@ async fn zt_sdk_login(user_token: String, host: Option<String>, port: Option<u16
     .map_err(|e| e.to_string())?
 }
 
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn zt_sdk_logout() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -85,6 +126,7 @@ async fn zt_sdk_logout() -> Result<String, String> {
 }
 
 /// 网关支持的认证方式（YX_TOKEN / AD / LOCAL_UP）。
+#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn zt_sdk_auth_types(host: Option<String>, port: Option<u16>) -> Result<Vec<String>, String> {
     let h = host.filter(|s| !s.is_empty()).unwrap_or_else(|| zt_sdk::DEFAULT_HOST.to_string());
@@ -94,6 +136,30 @@ async fn zt_sdk_auth_types(host: Option<String>, port: Option<u16>) -> Result<Ve
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn zt_sdk_status() -> Result<zt_unsupported::SdkStatus, String> {
+    zt_unsupported::unavailable()
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn zt_sdk_login(_user_token: String, _host: Option<String>, _port: Option<u16>) -> Result<String, String> {
+    zt_unsupported::unavailable()
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn zt_sdk_logout() -> Result<String, String> {
+    zt_unsupported::unavailable()
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn zt_sdk_auth_types(_host: Option<String>, _port: Option<u16>) -> Result<Vec<String>, String> {
+    zt_unsupported::unavailable()
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
@@ -171,6 +237,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             greet,
+            capabilities,
             set_tray_unread,
             play_message_sound,
             db::settings_get_all,
