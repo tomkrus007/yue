@@ -189,6 +189,7 @@ pnpm tauri build  # 打包
 
 ## 已知限制
 
+- macOS 包只有 ad-hoc 签名（无 Developer ID、不公证）：首次打开需在 系统设置 → 隐私与安全性 里点「仍要打开」。v0.1.27 及更早的包没有整体签名，会提示「“YX.app”已损坏」，先执行 `xattr -cr /Applications/YX.app` 再打开
 - 网盘旧的 `/openapi/file/*` 写接口已被服务端以 `app.ex.666` 退役，目录与写操作统一走 `panServerUri /pan/v1`
 - 上传走对象存储 `store/putFile` + `v2/{id}/share/document`（与聊天附件保存到云盘一致），写入文档服务；盘根会合并 `/openapi/file/list` 展示历史文件
 - 回收站、分享、文件属性/版本/标签等入口尚未实现
