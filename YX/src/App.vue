@@ -11,6 +11,7 @@ import { useAuthStore } from './stores/auth'
 import { useImStore } from './stores/im'
 import { useWeMeetStore } from './stores/wemeet'
 import { authService } from './services/auth'
+import { initNotificationClick, showMainWindow } from './services/notifications'
 import UploadProgress from './components/UploadProgress.vue'
 import MeetingInvitePrompt from './components/MeetingInvitePrompt.vue'
 
@@ -20,6 +21,19 @@ const wemeet = useWeMeetStore()
 const router = useRouter()
 
 onMounted(() => {
+  // 点击系统通知：先唤起窗口，再跳到对应会话并定位到那条消息。
+  // 通知只负责唤起，找不到目标（通知已被回收）时就把窗口带到前台。
+  initNotificationClick((target) => {
+    void showMainWindow()
+    if (!target || !auth.isLoggedIn) return
+    const query: Record<string, string> = {
+      session: target.sessionId,
+      name: target.sessionName,
+      type: String(target.sessionType),
+    }
+    if (target.messageId) query.msg = target.messageId
+    void router.push({ path: '/chat', query }).catch(() => {})
+  })
   // 恢复登录态时接上自动续期（原版提前 60 秒刷新），
   // 否则后台休眠/长时间挂起后 token 过期只能等 99 或 401 才补救。
   authService.bindAutoRefresh()

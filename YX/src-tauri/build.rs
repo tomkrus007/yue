@@ -37,5 +37,16 @@ fn main() {
     }
     build.compile("wemeet_shim");
 
+    // 系统通知：macOS 直接对接 NSUserNotificationCenter（见 src/notifications.rs）。
+    if target_os == "macos" {
+        println!("cargo:rerun-if-changed=native/notification_mac.m");
+        cc::Build::new()
+            .file("native/notification_mac.m")
+            .flag("-fobjc-arc")
+            .warnings(false)
+            .compile("yx_notification");
+        println!("cargo:rustc-link-lib=framework=AppKit");
+    }
+
     tauri_build::build()
 }

@@ -4,6 +4,7 @@ mod store_download;
 mod media_stream;
 mod window_state;
 mod wemeet;
+mod notifications;
 // 零信任只有官方 macOS 客户端；其它平台保留同名命令，直接返回「不支持」，
 // 前端按 capabilities() 隐藏入口（见 platform 能力视图）。
 #[cfg(target_os = "macos")]
@@ -163,12 +164,33 @@ async fn zt_sdk_auth_types(_host: Option<String>, _port: Option<u16>) -> Result<
     zt_unsupported::unavailable()
 }
 
-fn show_main_window(app: &tauri::AppHandle) {
+/// 把主窗口从隐藏/最小化状态带回前台（菜单、托盘、Dock、通知点击共用）。
+fn reveal_main_window(app: &tauri::AppHandle) {
+    // ⌘H 隐藏整个应用时，只 show 窗口不会让应用回到前台。
+    #[cfg(target_os = "macos")]
+    let _ = app.show();
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+/// 前端点击系统通知时把窗口带回前台。
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    reveal_main_window(&app);
+}
+
+/// 展示一条系统通知；点击时通过 `notification-click` 事件把 key 交回前端。
+#[tauri::command]
+async fn notify_message(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+    key: Option<String>,
+) -> Result<(), String> {
+    notifications::show(&app, title, body, key)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -191,6 +213,8 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // 通知的 delegate 要在第一条通知之前挂上。
+            notifications::init(app.handle());
             // 配置库先起来：下载目录、上传 spool 等都从它取生效值。
             let db = db::Db::open(app.handle()).map_err(|e| format!("配置库初始化失败：{e}"))?;
             // v4 引入消息全文索引：老消息的 search_text 为空，后台补一次，不阻塞启动。
@@ -224,7 +248,7 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => show_main_window(app),
+                    "show" => reveal_main_window(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -232,7 +256,7 @@ pub fn run() {
                     if matches!(event, TrayIconEvent::Click {
                         button: MouseButton::Left, button_state: MouseButtonState::Up, ..
                     }) {
-                        show_main_window(tray.app_handle());
+                        reveal_main_window(tray.app_handle());
                     }
                 })
                 .build(app)?;
@@ -248,6 +272,8 @@ pub fn run() {
             greet,
             capabilities,
             set_tray_unread,
+            show_main_window,
+            notify_message,
             play_message_sound,
             db::settings_get_all,
             db::settings_set,
@@ -310,7 +336,7 @@ pub fn run() {
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
-                show_main_window(app);
+                reveal_main_window(app);
             }
             // 退出时结束 SDK（会中会被强制离会），避免 TMSDKHelper 残留。
             if let tauri::RunEvent::Exit = event {
