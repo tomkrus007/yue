@@ -10,6 +10,7 @@ mod wemeet;
 mod zt_sdk;
 mod db;
 mod component;
+mod im_store;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 
 #[tauri::command]
@@ -239,6 +240,18 @@ pub fn run() {
             play_message_sound,
             db::settings_get_all,
             db::settings_set,
+            im_store::im_messages_upsert,
+            im_store::im_messages_recent,
+            im_store::im_messages_session,
+            im_store::im_messages_around,
+            im_store::im_messages_get,
+            im_store::im_messages_delete,
+            im_store::im_account_clear,
+            im_store::im_state_upsert,
+            im_store::im_state_query,
+            im_store::im_state_delete,
+            im_store::im_state_clear,
+            im_store::im_state_trim,
             zt_sdk_status,
             zt_sdk_login,
             zt_sdk_logout,

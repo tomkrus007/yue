@@ -5,6 +5,7 @@ import { groupService } from '../services/group-client'
 import { getServerPaths } from '../services/config'
 import { httpJson } from '../services/http'
 import type { ImMessage } from '../services/im/im-client'
+import { getState, putState } from '../services/im/store'
 
 export interface ReceiptMember {
   id: string
@@ -29,7 +30,6 @@ export interface ReceiptAudience {
   reportedGroupSize?: number
 }
 
-function storageKey(accountId: string): string { return `yl.im.receipt-audiences.${accountId}` }
 function validSnapshot(value: any): value is ReceiptAudience {
   return !!value && typeof value.messageId === 'string' && value.session && typeof value.session.id === 'string' &&
     Array.isArray(value.members) && value.members.every((member: any) => member && typeof member.id === 'string' && typeof member.name === 'string')
@@ -43,6 +43,23 @@ export const useReceiptAudienceStore = defineStore('receipt-audiences', () => {
   let owner = ''
   let epoch = 0
   const pending = new Map<string, Promise<ReceiptAudience>>()
+  const pendingWrites = new Set<string>()
+  let writeTimer: ReturnType<typeof setTimeout> | null = null
+  const WRITE_DELAY = 500
+
+  async function loadSnapshots(accountId: string, version: number): Promise<void> {
+    const rows = await getState(accountId, 'receipt')
+    if (owner !== accountId || epoch !== version) return
+    for (const row of rows) {
+      if (snapshots.value[row.key]) continue
+      try {
+        const value = JSON.parse(row.value)
+        if (validSnapshot(value)) snapshots.value[row.key] = value
+      } catch {
+        /* 单条损坏不阻止查看已收到的阅读确认 */
+      }
+    }
+  }
 
   function ensureAccount(): string {
     const accountId = authService.getCurrentUserId()
@@ -50,23 +67,44 @@ export const useReceiptAudienceStore = defineStore('receipt-audiences', () => {
     owner = accountId
     epoch++
     snapshots.value = {}
+    pendingWrites.clear()
+    if (writeTimer) {
+      clearTimeout(writeTimer)
+      writeTimer = null
+    }
     if (!accountId) return accountId
-    try {
-      const saved = JSON.parse(localStorage.getItem(storageKey(accountId)) || '{}')
-      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
-        const restored: Record<string, ReceiptAudience> = {}
-        for (const [key, value] of Object.entries(saved)) if (validSnapshot(value)) restored[key] = value
-        snapshots.value = restored
-      }
-    } catch { /* 损坏的本机缓存不阻止查看已收到的阅读确认。 */ }
+    const version = epoch
+    void loadSnapshots(accountId, version).catch(() => {
+      /* 本地缓存不可用时按无快照处理，仍可从服务端采集 */
+    })
     return accountId
   }
 
-  function persist(): void {
-    if (!owner) return
-    const entries = Object.values(snapshots.value).sort((a, b) => a.capturedAt - b.capturedAt).slice(-5000)
-    try { localStorage.setItem(storageKey(owner), JSON.stringify(Object.fromEntries(entries.map(item => [item.messageId, item])))) }
-    catch { /* 写入失败不丢掉当前页面已取得的名单。 */ }
+  function scheduleWrite(): void {
+    if (writeTimer) return
+    writeTimer = setTimeout(() => {
+      writeTimer = null
+      void flushWrites()
+    }, WRITE_DELAY)
+  }
+
+  async function flushWrites(): Promise<void> {
+    const target = owner
+    if (!target) return
+    const ids = [...pendingWrites]
+    pendingWrites.clear()
+    const entries = ids
+      .filter(id => snapshots.value[id])
+      .map(id => ({ key: id, value: JSON.stringify(snapshots.value[id]) }))
+    if (entries.length) await putState(target, 'receipt', entries)
+  }
+
+  /** 只写这一条快照；不重写整块名单。 */
+  function remember(snapshot: ReceiptAudience): void {
+    if (!owner || !snapshot?.messageId) return
+    snapshots.value[snapshot.messageId] = snapshot
+    pendingWrites.add(snapshot.messageId)
+    scheduleWrite()
   }
 
   function get(messageId: string): ReceiptAudience | undefined {
@@ -160,11 +198,26 @@ export const useReceiptAudienceStore = defineStore('receipt-audiences', () => {
     } finally { stopped = true; if (timer) clearTimeout(timer) }
   }
 
-  function capture(message: ImMessage, session: ReceiptSession, options: { atSend?: boolean } = {}): Promise<ReceiptAudience> {
+  async function capture(message: ImMessage, session: ReceiptSession, options: { atSend?: boolean } = {}): Promise<ReceiptAudience> {
     const accountId = ensureAccount()
     if (!accountId || message.from_id !== accountId) return collect(message, session, !!options.atSend)
+    if (!snapshots.value[message.msg_id]) {
+      // 内存没命中时按消息 id 查一次；不等待整表恢复，避免打开回执面板卡住。
+      if (owner === accountId && !snapshots.value[message.msg_id]) {
+        const rows = await getState(accountId, 'receipt', [message.msg_id])
+        for (const row of rows) {
+          try {
+            const value = JSON.parse(row.value)
+            if (validSnapshot(value)) snapshots.value[row.key] = value
+          } catch {
+            /* 忽略损坏快照 */
+          }
+        }
+      }
+      if (owner !== accountId) return collect(message, session, !!options.atSend)
+    }
     const saved = snapshots.value[message.msg_id]
-    if (saved) return Promise.resolve(saved)
+    if (saved) return saved
     const version = epoch
     const key = `${accountId}|${version}|${message.msg_id}`
     const existing = pending.get(key)
@@ -172,11 +225,11 @@ export const useReceiptAudienceStore = defineStore('receipt-audiences', () => {
     // 单聊接收人来自消息自身，无需等待 HTTP。
     if (Number(message.to_type) === 1) {
       const snapshot: ReceiptAudience = { messageId: message.msg_id, session: { ...session }, sentAt: Number(message.send_time) || 0, capturedAt: Date.now(), timing: 'direct', members: message.to_id ? [{ id: message.to_id, name: message.to_name || message.to_id }] : [], complete: !!message.to_id, reason: message.to_id ? '' : '消息缺少接收人 ID' }
-      if (accountId && message.from_id === accountId) { snapshots.value[message.msg_id] = snapshot; persist() }
-      return Promise.resolve(snapshot)
+      if (accountId && message.from_id === accountId) remember(snapshot)
+      return snapshot
     }
     const task = boundedCollect({ ...message }, { ...session }, !!options.atSend, () => owner === accountId && epoch === version).then(snapshot => {
-      if (authService.getCurrentUserId() === accountId && owner === accountId && epoch === version && accountId) { snapshots.value[message.msg_id] = snapshot; persist() }
+      if (authService.getCurrentUserId() === accountId && owner === accountId && epoch === version && accountId) remember(snapshot)
       return snapshot
     }).finally(() => pending.delete(key))
     pending.set(key, task)
@@ -191,10 +244,21 @@ export const useReceiptAudienceStore = defineStore('receipt-audiences', () => {
 
   function clear(): void {
     ensureAccount()
-    if (owner) localStorage.removeItem(storageKey(owner))
     snapshots.value = {}
+    pendingWrites.clear()
+    if (writeTimer) {
+      clearTimeout(writeTimer)
+      writeTimer = null
+    }
     epoch++
   }
 
-  return { snapshots, get, capture, refresh, clear }
+  function flushNow(): Promise<void> {
+    if (writeTimer) {
+      clearTimeout(writeTimer)
+      writeTimer = null
+    }
+    return flushWrites()
+  }
+  return { snapshots, get, capture, refresh, clear, flush: flushNow }
 })

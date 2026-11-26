@@ -1109,16 +1109,6 @@ watch(
   { immediate: true },
 )
 
-watch(
-  () => im.needLogin,
-  (msg) => {
-    if (!msg) return
-    im.resetLocal()
-    auth.logout()
-    router.replace('/login')
-  },
-)
-
 function onSearch() {
   if (searchTimer) clearTimeout(searchTimer)
   searchActive.value = 0

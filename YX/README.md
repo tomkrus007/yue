@@ -18,6 +18,7 @@
 - 附件上传 `store/putFile`，支持多选、粘贴、拖拽；图片内联显示
 - 大文件上传走 Rust 流式链路（前端 8MB 分片写临时文件，Rust 读文件发 multipart），600MB+ 文件不再撑爆 WebView 内存
 - 离线消息拉取（Cmd.uOfflineStart=102 / dEOFoffline=97 / dEOFonline=101）
+- 消息与 IM 状态（未读、回应/撤回/已读、待发阅读确认、焚毁截止、回执名单、@提醒）落在应用数据目录的 `yx.db`（SQLite），按行 upsert，不再整块重写 `localStorage`；升级/重启保留，退出登录删除本账号数据。旧 `localStorage` 消息不迁移，历史按需从服务端重拉。
 - 历史消息（`get/history/date`）与继续往前翻页
 - REST 会话列表（`emb/sessions/latest`）、未读数、置顶（置顶/取消置顶、置顶优先排序）、折叠、免打扰
 - 富文本 / 复杂消息（type 0/1）与合并转发的文本与 HTML 白名单渲染；普通文本消息按字面显示，标签不会被解析掉；正文中的 http/https 地址会变成可点击链接，点击交给系统浏览器打开（`src/services/im/autolink.ts`）
@@ -25,7 +26,7 @@
 - 消息无直链时，先用通知消息 ID 反查列表项 `notifyLog` 精确定位，再按来源与完整标题做唯一匹配；同名歧义、缺少链接或仅移动端可办时在消息下提示原因，不执行快捷审批
 - 直接使用系统默认浏览器打开待办原始链接，不尝试 AccessToken／CAS 自动登录，也不提前访问认证页；登录由浏览器和业务系统处理
 - 会话已读回执（Cmd.uReadedSession=19）
-- Token 刷新通知（Cmd.dRefreshToken=99）
+- Token 续期：到期前 60 秒主动刷新；收到 `Cmd.dRefreshToken=99` 时先刷新再在原连接重新鉴权，网络失败延后重试、不直接登出（与原版一致）
 - 自定义二进制帧协议（非 protobuf）
 - 内容"加密"：按位取反 + Base64（伪加密，已还原）
 - 记住密码 / 自动登录（Base64 混淆，不是加密）
