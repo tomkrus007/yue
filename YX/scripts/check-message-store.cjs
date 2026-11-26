@@ -13,6 +13,10 @@ const localStorage = {
   getItem: key => saved.get(key) ?? null,
   setItem: (key, value) => saved.set(key, String(value)),
   removeItem: key => saved.delete(key),
+  key: index => [...saved.keys()][index] ?? null,
+  get length() {
+    return saved.size
+  },
 };
 const sockets = [];
 class MockWebSocket {
@@ -25,9 +29,100 @@ class MockWebSocket {
 let historyRows = [];
 const httpCalls = [];
 const nativeCalls = [];
+// 内存版 SQLite：模拟 im_store.rs 的命令，让真实的 services/im/store.ts 参与回归。
+const database = { messages: new Map(), state: new Map() };
+const dbKey = (accountId, msgId) => `${accountId}\u0000${msgId}`;
+const stateKey = (accountId, scope, key) => `${accountId}\u0000${scope}\u0000${key}`;
+const textCmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+function stateOf(accountId, scope, key) { return database.state.get(stateKey(accountId, scope, key))?.value; }
+async function settle(ms = 30) { await new Promise(resolve => setTimeout(resolve, ms)); }
+async function persist(store) {
+  // 节流队列 + 串行链：多轮 flush/settle 保证所有异步写入都落到内存库。
+  for (let i = 0; i < 3; i++) { store.flush(); await settle(40); }
+}
+function handleCommand(command, params = {}) {
+  switch (command) {
+    case 'im_messages_upsert': {
+      const updatedAt = Date.now();
+      for (const row of params.rows || []) database.messages.set(dbKey(params.accountId, row.msgId), { accountId: params.accountId, ...row, updatedAt });
+      return params.rows?.length || 0;
+    }
+    case 'im_messages_recent': {
+      const rows = [...database.messages.values()].filter(row => row.accountId === params.accountId)
+        .sort((a, b) => b.sendTime - a.sendTime || textCmp(b.msgId, a.msgId))
+        .slice(0, params.limit).reverse();
+      return rows.map(row => row.body);
+    }
+    case 'im_messages_session': {
+      const rows = [...database.messages.values()].filter(row => row.accountId === params.accountId && row.sessionId === params.sessionId)
+        .sort((a, b) => b.sendTime - a.sendTime || textCmp(b.msgId, a.msgId))
+        .slice(0, params.limit).reverse();
+      return rows.map(row => row.body);
+    }
+    case 'im_messages_around': {
+      const target = [...database.messages.values()].find(row => row.accountId === params.accountId && row.sessionId === params.sessionId && row.msgId === params.msgId);
+      if (!target) return [];
+      const rows = [...database.messages.values()].filter(row => row.accountId === params.accountId && row.sessionId === params.sessionId);
+      const older = rows.filter(row => row.sendTime < target.sendTime || (row.sendTime === target.sendTime && textCmp(row.msgId, target.msgId) <= 0))
+        .sort((a, b) => b.sendTime - a.sendTime || textCmp(b.msgId, a.msgId)).slice(0, params.before).reverse();
+      const newer = rows.filter(row => row.sendTime > target.sendTime || (row.sendTime === target.sendTime && textCmp(row.msgId, target.msgId) > 0))
+        .sort((a, b) => a.sendTime - b.sendTime || textCmp(a.msgId, b.msgId)).slice(0, params.after);
+      return [...older, ...newer].map(row => row.body);
+    }
+    case 'im_messages_get': {
+      const row = database.messages.get(dbKey(params.accountId, params.msgId));
+      return row ? row.body : null;
+    }
+    case 'im_messages_delete': {
+      let removed = 0;
+      for (const id of params.ids || []) if (database.messages.delete(dbKey(params.accountId, id))) removed++;
+      return removed;
+    }
+    case 'im_account_clear': {
+      for (const [key, row] of database.messages) if (row.accountId === params.accountId) database.messages.delete(key);
+      for (const [key, row] of database.state) if (row.accountId === params.accountId) database.state.delete(key);
+      return null;
+    }
+    case 'im_state_upsert': {
+      const updatedAt = Date.now();
+      for (const entry of params.entries || []) database.state.set(stateKey(params.accountId, params.scope, entry.key), { accountId: params.accountId, scope: params.scope, key: entry.key, value: entry.value, updatedAt });
+      return params.entries?.length || 0;
+    }
+    case 'im_state_query': {
+      const keys = params.keys ? new Set(params.keys) : null;
+      return [...database.state.values()]
+        .filter(row => row.accountId === params.accountId && row.scope === params.scope && (!keys || keys.has(row.key)))
+        .sort((a, b) => a.updatedAt - b.updatedAt)
+        .map(row => ({ key: row.key, value: row.value }));
+    }
+    case 'im_state_delete': {
+      let removed = 0;
+      for (const key of params.keys || []) if (database.state.delete(stateKey(params.accountId, params.scope, key))) removed++;
+      return removed;
+    }
+    case 'im_state_clear': {
+      let removed = 0;
+      const scopes = params.scopes ? new Set(params.scopes) : null;
+      for (const [key, row] of database.state) {
+        if (row.accountId !== params.accountId || (scopes && !scopes.has(row.scope))) continue;
+        database.state.delete(key); removed++;
+      }
+      return removed;
+    }
+    case 'im_state_trim': {
+      const rows = [...database.state.values()].filter(row => row.accountId === params.accountId && row.scope === params.scope)
+        .sort((a, b) => b.updatedAt - a.updatedAt || textCmp(b.key, a.key)).slice(params.keep);
+      for (const row of rows) database.state.delete(stateKey(row.accountId, row.scope, row.key));
+      return rows.length;
+    }
+    default:
+      return undefined;
+  }
+}
 const authService = {
   getCurrentUserId: () => 'me', getCurrentUserName: () => '我',
   getDeviceId: () => 'device', getAccessToken: () => 'offline-test-token',
+  getPlatform: () => 'macOS', refreshTokenResult: async () => true,
 };
 const moduleMocks = new Map([
   [path.join(root, 'services/auth.ts'), { authService }],
@@ -55,8 +150,20 @@ const moduleMocks = new Map([
 const external = {
   vue, pinia,
   'vue-router': { useRoute: () => ({ query: {} }), useRouter: () => ({ replace() {}, push() {} }) },
-  '@tauri-apps/api/core': { invoke: async (command, params) => { nativeCalls.push({ command, params }); } },
-  '@tauri-apps/api/window': { getCurrentWindow: () => ({}) },
+  '@tauri-apps/api/core': {
+    invoke: async (command, params) => { nativeCalls.push({ command, params }); return handleCommand(command, params); },
+    Channel: class { onmessage = null },
+  },
+  '@tauri-apps/api/window': { getCurrentWindow: () => ({ setBadgeCount: async () => {} }) },
+  '@tauri-apps/plugin-notification': {
+    isPermissionGranted: async () => true,
+    requestPermission: async () => 'granted',
+    sendNotification: () => {},
+  },
+  '@tauri-apps/plugin-http': { fetch: async () => { throw new Error('回归不应发起真实网络请求'); } },
+  '@tauri-apps/api/event': { listen: async () => () => {}, emit: async () => {}, once: async () => () => {} },
+  'json5': require('json5'),
+  'jsencrypt': class {},
 };
 function load(file) {
   if (moduleMocks.has(file)) return moduleMocks.get(file);
@@ -66,11 +173,12 @@ function load(file) {
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8').replace(/import\.meta\.glob/g, '__assetGlob'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  new Function('require', 'module', 'exports', 'localStorage', 'WebSocket', '__assetGlob', code)(id => {
+  const windowMock = { __TAURI_INTERNALS__: {}, addEventListener() {}, removeEventListener() {} };
+  new Function('require', 'module', 'exports', 'localStorage', 'WebSocket', 'window', '__assetGlob', code)(id => {
     if (external[id]) return external[id];
     assert.ok(id.startsWith('.'), '未模拟的外部依赖：' + id);
     return load(path.resolve(path.dirname(file), id + '.ts'));
-  }, module, module.exports, localStorage, MockWebSocket, () => ({}));
+  }, module, module.exports, localStorage, MockWebSocket, windowMock, () => ({}));
   return module.exports;
 }
 const { useImStore } = load(path.join(root, 'stores/im.ts'));
@@ -79,7 +187,6 @@ const { MsgType } = load(path.join(root, 'services/im/types.ts'));
 const { Cmd } = load(path.join(root, 'services/im/cmd.ts'));
 const { encodeFrame, decodeFrame, encryptContent, decryptContent } = load(path.join(root, 'services/im/protocol.ts'));
 const { normalizeImMessage, previewOf } = load(path.join(root, 'services/im/session-api.ts'));
-const { STORAGE_KEYS } = load(path.join(root, 'services/config.ts'));
 const { toPlainText } = load(path.join(root, 'services/im/content.ts'));
 const message = (overrides = {}) => ({
   msg_id: 'original', msg_type: MsgType.TEXT, content: '待确认的会议安排', from_id: 'author', from_name: '发起人',
@@ -149,9 +256,22 @@ async function checkChatSetup(store) {
 let activeStore;
 async function main() {
   pinia.setActivePinia(pinia.createPinia());
+  // 旧版 IM 数据：启动时应直接清理，不迁移、不读取。
+  saved.set('yl.im.messages', JSON.stringify([{ msg_id: 'legacy-message', content: '旧消息' }]));
+  saved.set('yl.im.unread', JSON.stringify({ group: 9 }));
+  saved.set('yl.im.interactions.me', JSON.stringify({ reactions: {} }));
+  saved.set('yl.im.interactions.other-account', JSON.stringify({ reactions: {} }));
+  saved.set('yl.im.mentions.other-account', JSON.stringify({ list: [] }));
   const store = useImStore();
   activeStore = store;
   const socket = connect(store);
+  await store.hydrate();
+  assert.equal(saved.has('yl.im.messages'), false, '旧消息缓存直接清理，不做迁移');
+  assert.equal(saved.has('yl.im.unread'), false, '旧未读缓存直接清理');
+  assert.equal(saved.has('yl.im.interactions.me'), false, '旧交互缓存直接清理');
+  assert.equal(saved.has('yl.im.interactions.other-account'), false, '其他账号的旧交互缓存也清理');
+  assert.equal(saved.has('yl.im.mentions.other-account'), false, '其他账号的旧提醒缓存也清理');
+  assert.equal(store.messages.some(item => item.msg_id === 'legacy-message'), false);
   const reaction = message({ msg_id: 'reaction', msg_type: MsgType.CTRL, send_time: 110,
     content: { cmd: 1000, params: { msgId: 'original', sourceMsgFromId: 'author', emoji: '[ok]' } } });
   incoming(socket, reaction);
@@ -260,6 +380,8 @@ async function main() {
   receipt(socket, { success: true, content: outgoing.msg_id, time: ackTime + 3 });
   assert.equal(outgoing.__sent, true);
   assert.equal(outgoing.send_time, ackTime + 3, '成功回执使用服务端时间');
+  await persist(store);
+  assert.equal(stateOf('me', 'outbox', outgoing.msg_id), undefined, '确认成功后从 outbox 删除');
   socket.readyState = 3;
   let draft = 'store断线草稿';
   assert.throws(() => { store.sendText(draft, ['author'], 'original'); draft = ''; }, /连接已断开/);
@@ -284,7 +406,8 @@ async function main() {
   assert.equal(store.localReadConfirmations['need-confirm'], undefined, '写入连接不能冒充阅读确认已送达');
   assert.equal(store.pendingReadCommands[readCommandId].__delivery.state, 'pending');
   assert.equal(store.messages.length, messageCountBeforeRead, '95命令不产生普通消息气泡');
-  assert.equal(JSON.parse(saved.get('yl.im.interactions.me')).readCommands[readCommandId].content.readMsgIds, 'need-confirm', '确认前完整95命令持久化');
+  await persist(store);
+  assert.equal(JSON.parse(stateOf('me', 'read_command', readCommandId)).content.readMsgIds, 'need-confirm', '确认前完整95命令持久化');
   const sentCount = socket.sent.length;
   store.confirmMessageRead(store.messages.find(item => item.msg_id === 'need-confirm'));
   assert.equal(socket.sent.length, sentCount, '等待确认时同一消息不重复发送阅读确认');
@@ -311,7 +434,8 @@ async function main() {
   store.confirmMessageRead(store.messages.find(item => item.msg_id === 'burn'));
   assert.equal(readFrames(socket).at(-1).data.content.cmd, 1, '阅后即焚确认使用95/cmd1');
   assert.ok(store.burnDeadlines.burn > Date.now(), '打开时记录阅后即焚截止时间');
-  assert.equal(JSON.parse(saved.get('yl.im.interactions.me')).burnDeadlines.burn, store.burnDeadlines.burn, '焚毁截止时间持久化');
+  await persist(store);
+  assert.equal(Number(stateOf('me', 'burn_deadline', 'burn')), store.burnDeadlines.burn, '焚毁截止时间持久化');
   const firstBurnDeadline = store.burnDeadlines.burn;
   const burnReadCommandId = readFrames(socket).at(-1).data.msg_id;
   receipt(socket, { success: false, msg_id: burnReadCommandId, content: '测试拒绝焚毁阅读确认' });
@@ -340,7 +464,8 @@ async function main() {
   assert.equal(store.localReadConfirmations['normal-read'], undefined, '自动阅读确认也需等待服务端确认');
   receipt(socket, { success: true, content: normalRead.data.msg_id, time: 221 });
   assert.equal(store.localReadConfirmations['normal-read'], true);
-  assert.ok(JSON.parse(saved.get('yl.im.interactions.me')).confirmations['normal-read'], '成功阅读确认状态持久化');
+  await persist(store);
+  assert.equal(stateOf('me', 'read_confirmation', 'normal-read'), '1', '成功阅读确认状态持久化');
   store.burnMessage('burn');
   assert.equal(store.currentMessages.some(item => item.msg_id === 'burn'), false, '焚毁后的消息从当前会话隐藏');
   assert.equal(store.messages.find(item => item.msg_id === 'burn').content, '');
@@ -375,12 +500,24 @@ async function main() {
   socket.onclose({ code: 1006 });
   assert.equal(store.pendingReadCommands[reconnectCommandId].__delivery.state, 'queued', '真实连接关闭事件挂起未确认的95命令');
   assert.equal(store.pendingReadCommands[burnRestartCommandId].__delivery.state, 'queued');
+  // 留一条未确认消息：即使滚出启动窗口，也要靠 outbox 恢复重发入口。
+  socket.readyState = 1;
+  imClient.authed = true;
+  store.authed = true;
+  store.selectSession('group');
+  store.sendText('重启后仍未确认的消息');
+  const pendingOut = store.messages.at(-1);
+  await persist(store);
   store.stop();
+  await persist(store);
   store.$dispose();
   pinia.setActivePinia(pinia.createPinia());
   const restored = useImStore();
+  await restored.hydrate();
   activeStore = restored;
   assert.equal(restored.messages.find(item => item.msg_id === 'late').content, '', '重启后仍保留撤回状态');
+  assert.equal(restored.unreadOf('group2'), 1, '未读数从 SQLite 恢复，不再依赖服务端重算');
+  assert.equal(restored.messages.find(item => item.msg_id === pendingOut.msg_id)?.__delivery?.state, 'queued', '未确认消息从 outbox 恢复，重启后仍可重发');
   assert.equal(restored.localReadConfirmations['normal-read'], true);
   assert.equal(restored.messages.find(item => item.msg_id === 'burn-restart').content, '', '截止前重启也不能重新展示已打开的阅后即焚正文');
   assert.equal(restored.messages.find(item => item.msg_id === 'burn-unopened').content, '尚未打开的保护正文', '尚未打开的保护消息不误销毁');
@@ -395,8 +532,9 @@ async function main() {
   incoming(resumedSocket, { ...echoCommand, offline: true, send_time: 1000 });
   assert.equal(restored.localReadConfirmations['read-echo'], true, '收到本人95离线回显即确认服务端已接受');
   assert.equal(restored.pendingReadCommands[echoCommandId], undefined);
-  assert.equal(JSON.parse(saved.get('yl.im.interactions.me')).readCommands[echoCommandId], undefined, '本人95回显后从持久化待发送队列移除');
-  assert.equal(JSON.parse(saved.get('yl.im.interactions.me')).confirmations['read-echo'], true);
+  await persist(restored);
+  assert.equal(stateOf('me', 'read_command', echoCommandId), undefined, '本人95回显后从持久化待发送队列移除');
+  assert.equal(stateOf('me', 'read_confirmation', 'read-echo'), '1');
   const offlineEnd = encodeFrame(Cmd.dEOFoffline, 0);
   resumedSocket.onmessage({ data: offlineEnd.buffer });
   const resumedReads = readFrames(resumedSocket).filter(frame => frame.command === Cmd.uSendMsg && frame.data?.msg_type === MsgType.READED);
@@ -411,7 +549,8 @@ async function main() {
   assert.equal(restored.localReadConfirmations['burn-restart'], true);
   assert.equal(restored.pendingReadCommands[burnRestartCommandId], undefined);
   console.log('真实store重启：95待确认命令恢复、焚毁正文不复活、阅读游标与回执时间回归通过');
-  assert.ok(JSON.parse(saved.get(STORAGE_KEYS.imMessages)).some(item => item.msg_id === 'history-reply'));
+  await persist(restored);
+  assert.ok([...database.messages.values()].some(row => row.accountId === 'me' && row.msgId === 'history-reply'), '消息按行写入 SQLite，不再整块写 localStorage');
   assert.ok(nativeCalls.some(call => call.command === 'set_tray_unread'));
   assert.ok(httpCalls.every(url => url.startsWith('https://')), '网络边界全部由模拟httpJson接管');
   await checkChatSetup(restored);

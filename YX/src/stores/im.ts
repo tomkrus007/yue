@@ -25,6 +25,17 @@ import { uploadForwardDetails } from '../services/im/media'
 import { MessageDelivery } from '../services/im/delivery'
 import { HistoryPager } from '../services/im/history'
 import { forwardEnvelope, hydrateForwardContent } from '../services/im/forwarding'
+import {
+  clearAccount as clearStoredAccount,
+  deleteState,
+  getState,
+  loadMessagesAround,
+  loadRecentMessages,
+  loadSessionMessages,
+  putState,
+  saveMessages,
+} from '../services/im/store'
+import type { PersistedMessage } from '../services/im/store'
 import { useMentionsStore } from './mentions'
 import { useReceiptAudienceStore } from './receipts'
 import { groupService, type GroupDetail } from '../services/group-client'
@@ -63,7 +74,14 @@ export interface ChatMessage extends ImMessage {
 export type SessionTab = 'all' | 'folded'
 
 const TO_MULTI_TYPES = new Set([2, 4, 8])
-const MAX_LOCAL_MESSAGES = 5000
+/** 启动时跨会话读取的最近消息数：覆盖最近聊天与未读会话，其余按会话懒加载 */
+const STARTUP_MESSAGE_LIMIT = 1000
+/** 打开会话时从本地缓存加载的最近消息数（与 ChatView 的 300 条窗口一致） */
+const SESSION_MESSAGE_WINDOW = 300
+const MESSAGE_WRITE_DELAY = 500
+const MESSAGE_WRITE_BATCH = 500
+const STATE_WRITE_DELAY = 500
+const MAX_UNREAD_IDS = 5000
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -92,20 +110,39 @@ export const useImStore = defineStore('im', () => {
   const receiptAudiences = useReceiptAudienceStore()
 
   const messages = ref<ChatMessage[]>([])
+  /** msg_id → 消息：避免每条消息都对最多 5000 条的数组做线性查找 */
+  const messageIndex = new Map<string, ChatMessage>()
+  function findMessage(msgId: string): ChatMessage | undefined {
+    return messageIndex.get(msgId)
+  }
   const delivery = new MessageDelivery({
     connected: () => imClient.authed,
     resend: message => imClient.retryMessage(message),
-    changed: () => { persistMessages(); persistInteractions() },
+    changed: message => {
+      if ((message as ChatMessage).sessionId) {
+        persistMessages(message as ChatMessage)
+        // 未确认的消息单独存一份，避免滚出启动窗口后丢失重发入口。
+        markOutbox(message)
+      }
+      if (pendingReadCommands.value[message.msg_id]) markReadCommand(message.msg_id)
+      persistInteractions()
+    },
     confirmed: message => {
       if (Number(message.msg_type) === MsgType.READED) {
-        for (const id of String(message.content?.readMsgIds || '').split(',').filter(Boolean)) localReadConfirmations.value[id] = true
-        delete pendingReadCommands.value[message.msg_id]
+        for (const id of String(message.content?.readMsgIds || '').split(',').filter(Boolean)) {
+          localReadConfirmations.value[id] = true
+          markConfirmation(id)
+        }
+        if (pendingReadCommands.value[message.msg_id]) {
+          delete pendingReadCommands.value[message.msg_id]
+          markReadCommandDeleted(message.msg_id)
+        }
         persistInteractions()
       } else if (message.reply_msg_id) mentions.handle(message.reply_msg_id, 'reply')
     },
   })
   function trackOutgoing(message: ImMessage) {
-    const local = messages.value.find(item => item.msg_id === message.msg_id)
+    const local = findMessage(message.msg_id)
     if (local) {
       delivery.track(local)
       const session = sessions.value.find(item => item.id === local.sessionId)
@@ -126,19 +163,33 @@ export const useImStore = defineStore('im', () => {
   const localReadConfirmations = ref<Record<string, boolean>>({})
   const pendingReadCommands = ref<Record<string, ImMessage>>({})
   const burnDeadlines = ref<Record<string, number>>({})
-  const interactionKey = () => `yl.im.interactions.${authService.getCurrentUserId()}`
-  function persistInteractions() {
-    writeJson(interactionKey(), { ...interactions.value, confirmations: localReadConfirmations.value, readCommands: pendingReadCommands.value, burnDeadlines: burnDeadlines.value })
-  }
-  function applyRecall(message: ImMessage) {
+  function applyRecall(message: ImMessage): boolean {
     const recall = interactions.value.recalls[message.msg_id]
-    if (!recall) return
+    if (!recall) return false
     message.msg_type = recall.type
     message.content = ''
     message.reply_msg_id = ''
     message.is_delete_after_read = false
     message.is_need_read_receipt = false
     delete interactions.value.reactions[message.msg_id]
+    return true
+  }
+  /** 一条交互消息会影响到的原消息 id：用于按消息粒度写 SQLite。 */
+  function interactionMessageIds(message: ImMessage): string[] {
+    const type = Number(message.msg_type)
+    if (type === MsgType.CTRL) {
+      const params = message.content?.params
+      const ids: string[] = []
+      if (params?.msgId) ids.push(String(params.msgId))
+      if (params?.msgIds) ids.push(...String(params.msgIds).split(',').filter(Boolean))
+      return ids
+    }
+    if (type === MsgType.RECALL) return typeof message.content === 'string' ? [message.content] : []
+    if (type === MsgType.ADMINRECALL) return message.content?.msgId ? [String(message.content.msgId)] : []
+    if (type === MsgType.READED && message.content?.readMsgIds) {
+      return String(message.content.readMsgIds).split(',').filter(Boolean)
+    }
+    return []
   }
   function consumeInteraction(message: ImMessage): boolean {
     if (Number(message.msg_type) === MsgType.READED && isMine(message) && pendingReadCommands.value[message.msg_id]) delivery.acknowledge(message.msg_id, true)
@@ -149,11 +200,13 @@ export const useImStore = defineStore('im', () => {
       if (ids.length) message = { ...message, content: { ...message.content, readMsgIds: ids.join(',') } }
     }
     if (!applyInteraction(interactions.value, message)) return false
+    for (const id of interactionMessageIds(message)) markInteraction(id)
     if (isMine(message)) delete interactionErrors.value[interactionTarget(message)]
     delete pendingInteractions.value[message.msg_id]
     clearTimeout(interactionTimers.get(message.msg_id))
     interactionTimers.delete(message.msg_id)
-    for (const item of messages.value) applyRecall(item)
+    const recalled: ChatMessage[] = []
+    for (const item of messages.value) if (applyRecall(item)) recalled.push(item)
     for (const id of Object.keys(interactions.value.recalls)) mentions.remove(id)
     if (isMine(message) && Number(message.msg_type) === MsgType.CTRL && Number(message.content?.cmd) === 1000 && message.content?.params?.emoji === '[ok]') mentions.handle(message.content.params.msgId, 'received')
     for (const session of sessions.value) {
@@ -161,7 +214,7 @@ export const useImStore = defineStore('im', () => {
       if (latest && latest.send_time >= session.lastTime && interactions.value.recalls[latest.msg_id]) session.preview = previewOfMessage(latest)
     }
     persistInteractions()
-    persistMessages()
+    persistMessages(...recalled)
     persistSessions()
     return true
   }
@@ -247,19 +300,39 @@ export const useImStore = defineStore('im', () => {
 
   /* ---------------- 本地缓存 ---------------- */
 
-  function loadLocal(): void {
-    const savedInteractions = readJson<MessageInteractions & { confirmations?: Record<string, boolean>; readCommands?: Record<string, ImMessage>; burnDeadlines?: Record<string, number> }>(interactionKey(), emptyInteractions())
-    interactions.value = { ...emptyInteractions(), ...savedInteractions }
-    localReadConfirmations.value = savedInteractions.confirmations || {}
-    pendingReadCommands.value = savedInteractions.readCommands || {}
-    burnDeadlines.value = savedInteractions.burnDeadlines || {}
-    // 重启不会重新展示已打开的阅后即焚正文，保留待重发的阅读确认。
-    for (const id of Object.keys(burnDeadlines.value)) interactions.value.recalls[id] = { type: MsgType.RECALL, time: Date.now(), hidden: true }
-    for (const [id, command] of Object.entries(pendingReadCommands.value)) {
-      if (!command.__sent) continue
-      for (const target of String(command.content?.readMsgIds || '').split(',').filter(Boolean)) localReadConfirmations.value[target] = true
-      delete pendingReadCommands.value[id]
+  const accountId = () => authService.getCurrentUserId()
+
+  /**
+   * 旧版 IM 数据全部整块存在 localStorage。这里不做迁移：
+   * 消息按需从服务端重拉；未读/交互/回执首启会重建一次，之后都走 SQLite。
+   */
+  function cleanupLegacyStorage(): void {
+    for (const key of [
+      STORAGE_KEYS.imMessages,
+      STORAGE_KEYS.imUnread,
+      STORAGE_KEYS.imUnreadAt,
+      STORAGE_KEYS.imUnreadIds,
+    ]) {
+      localStorage.removeItem(key)
     }
+    // 旧版交互/回执/提醒按账号分 key，同一台机器可能登录过多个账号，
+    // 这里按前缀全部清掉，避免只清当前账号留下其它账号的大块旧数据。
+    const legacyPrefixes = ['yl.im.interactions.', 'yl.im.receipt-audiences.', 'yl.im.mentions.']
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i)
+      if (key && legacyPrefixes.some(prefix => key.startsWith(prefix))) {
+        localStorage.removeItem(key)
+      }
+    }
+  }
+
+  function loadLocal(): void {
+    cleanupLegacyStorage()
+    // 消息、未读、交互由 hydratePersisted() 异步恢复；这里只同步加载可回填的偏好。
+    interactions.value = emptyInteractions()
+    localReadConfirmations.value = {}
+    pendingReadCommands.value = {}
+    burnDeadlines.value = {}
     hiddenSessions.value = readJson<Record<string, number>>(STORAGE_KEYS.imHiddenSessions, {})
     sessions.value = readJson<ChatSession[]>(STORAGE_KEYS.imSessions, []).map(
       (s) => ({
@@ -276,24 +349,6 @@ export const useImStore = defineStore('im', () => {
     sessionBoosts.value = Object.fromEntries(
       Object.entries(savedBoosts).filter(([id]) => sessions.value.some((s) => s.id === id)),
     )
-    const stored = readJson<ChatMessage[]>(STORAGE_KEYS.imMessages, [])
-    messages.value = Array.isArray(stored) ? stored : []
-    for (const message of messages.value) applyRecall(message)
-
-    const savedUnread = readJson<Record<string, number>>(
-      STORAGE_KEYS.imUnread,
-      {},
-    )
-    unread.value = Object.fromEntries(
-      Object.entries(savedUnread).filter(([, v]) => Number(v) > 0),
-    )
-    unreadAt.value = readJson<Record<string, number>>(
-      STORAGE_KEYS.imUnreadAt,
-      {},
-    )
-    unreadIds.value = new Set(
-      readJson<string[]>(STORAGE_KEYS.imUnreadIds, []),
-    )
     muted.value = new Set(readJson<string[]>(STORAGE_KEYS.imMuted, []))
     folded.value = new Set(readJson<string[]>(STORAGE_KEYS.imFolded, []))
     pinned.value = readJson<Record<string, number>>(STORAGE_KEYS.imPinned, {})
@@ -307,36 +362,431 @@ export const useImStore = defineStore('im', () => {
     } catch {
       /* 忽略 */
     }
-
-    // 服务号的未读不再统计
-    for (const s of sessions.value) {
-      if (isServiceAccount(s)) delete unread.value[s.id]
-    }
   }
 
   function persistSessions(): void {
     writeJson(STORAGE_KEYS.imSessions, sessions.value)
   }
 
-  function persistMessages(): void {
-    // 持久化上限不应删掉用户刚向前加载、正在阅读的历史。
-    const recent = messages.value.length > MAX_LOCAL_MESSAGES
-      ? [...messages.value].sort((a, b) => a.send_time - b.send_time).slice(-MAX_LOCAL_MESSAGES)
-      : messages.value
-    const retained = new Map(recent.map(message => [message.msg_id, message]))
-    for (const message of messages.value) if (message.__delivery && message.__delivery.state !== 'confirmed') retained.set(message.msg_id, message)
-    writeJson(STORAGE_KEYS.imMessages, [...retained.values()])
+  /* ---------------- SQLite 持久化队列 ---------------- */
+
+  const loadedWindows = new Set<string>()
+  let hydration: Promise<void> | null = null
+  let hydrationEpoch = 0
+
+  /*
+   * 消息：只写变化的单条消息。离线消息成批到达时，500ms 内的多次标脏合并成
+   * 一个事务；单条消息且距上次写入超过 500ms 时立即写，保证实时性。
+   */
+  const pendingMessageWrites = new Map<string, ChatMessage>()
+  let messageWriteTimer: ReturnType<typeof setTimeout> | null = null
+  let lastMessageWriteAt = 0
+  let messageWriteInFlight = false
+  let messageWriteFailures = 0
+
+  function scheduleMessageWrite(delay: number): void {
+    if (messageWriteTimer) return
+    messageWriteTimer = setTimeout(() => {
+      messageWriteTimer = null
+      void flushMessageWrites()
+    }, delay)
+  }
+
+  function persistMessages(...items: ChatMessage[]): void {
+    for (const item of items) {
+      if (item?.msg_id && item.sessionId) pendingMessageWrites.set(item.msg_id, item)
+    }
+    if (!pendingMessageWrites.size) return
+    const idle = Date.now() - lastMessageWriteAt
+    scheduleMessageWrite(idle >= MESSAGE_WRITE_DELAY ? 0 : MESSAGE_WRITE_DELAY - idle)
+  }
+
+  async function flushMessageWrites(): Promise<void> {
+    if (messageWriteInFlight) return
+    const account = accountId()
+    if (!account) {
+      pendingMessageWrites.clear()
+      return
+    }
+    messageWriteInFlight = true
+    try {
+      while (pendingMessageWrites.size) {
+        if (account !== accountId()) {
+          pendingMessageWrites.clear()
+          return
+        }
+        const batch = [...pendingMessageWrites.values()].slice(0, MESSAGE_WRITE_BATCH)
+        for (const message of batch) pendingMessageWrites.delete(message.msg_id)
+        const ok = await saveMessages(account, batch)
+        if (!ok) {
+          for (const message of batch) {
+            if (!pendingMessageWrites.has(message.msg_id)) pendingMessageWrites.set(message.msg_id, message)
+          }
+          messageWriteFailures += 1
+          if (messageWriteFailures < 5) {
+            const delay = [2, 5, 10, 30][Math.min(messageWriteFailures - 1, 3)] * 1000
+            scheduleMessageWrite(delay)
+          }
+          return
+        }
+        messageWriteFailures = 0
+        lastMessageWriteAt = Date.now()
+      }
+    } finally {
+      messageWriteInFlight = false
+    }
+  }
+
+  /* 未读：按会话标脏，flush 时只写变化的会话与新增的已读消息 id。 */
+  const pendingUnreadSessions = new Set<string>()
+  const pendingUnreadAtSessions = new Set<string>()
+  const pendingUnreadIds = new Set<string>()
+  const touchedUnread = new Set<string>()
+  const touchedUnreadAt = new Set<string>()
+  let unreadWriteTimer: ReturnType<typeof setTimeout> | null = null
+
+  function markUnread(id: string, at = false): void {
+    pendingUnreadSessions.add(id)
+    touchedUnread.add(id)
+    if (at) {
+      pendingUnreadAtSessions.add(id)
+      touchedUnreadAt.add(id)
+    }
   }
 
   function persistUnread(): void {
-    writeJson(STORAGE_KEYS.imUnread, unread.value)
-    writeJson(STORAGE_KEYS.imUnreadAt, unreadAt.value)
+    if (unreadWriteTimer) return
+    unreadWriteTimer = setTimeout(() => {
+      unreadWriteTimer = null
+      void flushUnread()
+    }, STATE_WRITE_DELAY)
+  }
+
+  async function flushUnread(): Promise<void> {
+    const account = accountId()
+    if (!account) return
+    const sessionsToWrite = [...pendingUnreadSessions]
+    pendingUnreadSessions.clear()
+    if (sessionsToWrite.length) {
+      const entries = sessionsToWrite
+        .filter(id => (unread.value[id] || 0) > 0)
+        .map(id => ({ key: id, value: String(unread.value[id]) }))
+      const removed = sessionsToWrite.filter(id => !((unread.value[id] || 0) > 0))
+      if (entries.length) await putState(account, 'unread', entries)
+      if (removed.length) await deleteState(account, 'unread', removed)
+    }
+    const atToWrite = [...pendingUnreadAtSessions]
+    pendingUnreadAtSessions.clear()
+    if (atToWrite.length) {
+      const entries = atToWrite
+        .filter(id => (unreadAt.value[id] || 0) > 0)
+        .map(id => ({ key: id, value: String(unreadAt.value[id]) }))
+      const removed = atToWrite.filter(id => !((unreadAt.value[id] || 0) > 0))
+      if (entries.length) await putState(account, 'unread_at', entries)
+      if (removed.length) await deleteState(account, 'unread_at', removed)
+    }
+    const ids = [...pendingUnreadIds]
+    pendingUnreadIds.clear()
+    if (ids.length) {
+      const now = String(Date.now())
+      await putState(account, 'unread_id', ids.map(id => ({ key: id, value: now })))
+      trimUnreadIds(account)
+    }
+  }
+
+  /* 交互：一条消息一行，只写被标脏的消息；阅读确认/待发命令/焚毁单独成 scope。 */
+  const pendingInteractionIds = new Set<string>()
+  const pendingConfirmationIds = new Set<string>()
+  const pendingReadCommandIds = new Set<string>()
+  const deletedReadCommandIds = new Set<string>()
+  const pendingBurnIds = new Set<string>()
+  const deletedBurnIds = new Set<string>()
+  const pendingOutboxIds = new Set<string>()
+  const deletedOutboxIds = new Set<string>()
+  let interactionWriteTimer: ReturnType<typeof setTimeout> | null = null
+
+  function markInteraction(id: string): void {
+    if (id) pendingInteractionIds.add(id)
+  }
+
+  function markConfirmation(id: string): void {
+    if (id) pendingConfirmationIds.add(id)
+  }
+
+  function markReadCommand(id: string): void {
+    if (id) {
+      pendingReadCommandIds.add(id)
+      deletedReadCommandIds.delete(id)
+    }
+  }
+
+  function markReadCommandDeleted(id: string): void {
+    if (id) {
+      pendingReadCommandIds.delete(id)
+      deletedReadCommandIds.add(id)
+    }
+  }
+
+  function markBurn(id: string): void {
+    if (id) {
+      pendingBurnIds.add(id)
+      deletedBurnIds.delete(id)
+    }
+  }
+
+  function markBurnDeleted(id: string): void {
+    if (id) {
+      pendingBurnIds.delete(id)
+      deletedBurnIds.add(id)
+    }
+  }
+
+  /** 待确认/失败的消息进 outbox；确认后只删这一条。 */
+  function markOutbox(message: ImMessage): void {
+    const id = message.msg_id
+    if (!id) return
+    if (message.__delivery?.state === 'confirmed') {
+      pendingOutboxIds.delete(id)
+      deletedOutboxIds.add(id)
+    } else {
+      deletedOutboxIds.delete(id)
+      pendingOutboxIds.add(id)
+    }
+    persistInteractions()
+  }
+
+  function persistInteractions(): void {
+    if (interactionWriteTimer) return
+    interactionWriteTimer = setTimeout(() => {
+      interactionWriteTimer = null
+      void flushInteractions()
+    }, STATE_WRITE_DELAY)
+  }
+
+  function interactionValue(id: string): string {
+    const value: Record<string, unknown> = {}
+    if (interactions.value.reactions[id]) value.reactions = interactions.value.reactions[id]
+    if (interactions.value.recalls[id]) value.recall = interactions.value.recalls[id]
+    if (interactions.value.readers[id]) value.readers = interactions.value.readers[id]
+    if (interactions.value.readTimes[id]) value.readTimes = interactions.value.readTimes[id]
+    return JSON.stringify(value)
+  }
+
+  async function flushInteractions(): Promise<void> {
+    const account = accountId()
+    if (!account) return
+    const interactionIds = [...pendingInteractionIds]
+    pendingInteractionIds.clear()
+    if (interactionIds.length) {
+      await putState(account, 'interaction', interactionIds.map(id => ({ key: id, value: interactionValue(id) })))
+    }
+    const confirmations = [...pendingConfirmationIds]
+    pendingConfirmationIds.clear()
+    if (confirmations.length) {
+      await putState(account, 'read_confirmation', confirmations.map(id => ({ key: id, value: '1' })))
+    }
+    const commands = [...pendingReadCommandIds].filter(id => pendingReadCommands.value[id])
+    pendingReadCommandIds.clear()
+    if (commands.length) {
+      await putState(account, 'read_command', commands.map(id => ({
+        key: id,
+        value: JSON.stringify(pendingReadCommands.value[id]),
+      })))
+    }
+    const removedCommands = [...deletedReadCommandIds]
+    deletedReadCommandIds.clear()
+    if (removedCommands.length) await deleteState(account, 'read_command', removedCommands)
+    const burns = [...pendingBurnIds].filter(id => burnDeadlines.value[id])
+    pendingBurnIds.clear()
+    if (burns.length) {
+      await putState(account, 'burn_deadline', burns.map(id => ({ key: id, value: String(burnDeadlines.value[id]) })))
+    }
+    const removedBurns = [...deletedBurnIds]
+    deletedBurnIds.clear()
+    if (removedBurns.length) await deleteState(account, 'burn_deadline', removedBurns)
+    const outbox = [...pendingOutboxIds].filter(id => findMessage(id))
+    pendingOutboxIds.clear()
+    if (outbox.length) {
+      await putState(account, 'outbox', outbox.map(id => ({
+        key: id,
+        value: JSON.stringify(findMessage(id)),
+      })))
+    }
+    const removedOutbox = [...deletedOutboxIds]
+    deletedOutboxIds.clear()
+    if (removedOutbox.length) await deleteState(account, 'outbox', removedOutbox)
+  }
+
+  /** 立即落盘（页面隐藏/关闭、退出登录时调用），避免节流窗口内丢数据 */
+  function flushPersist(): void {
+    if (messageWriteTimer) {
+      clearTimeout(messageWriteTimer)
+      messageWriteTimer = null
+    }
+    void flushMessageWrites()
+    if (unreadWriteTimer) {
+      clearTimeout(unreadWriteTimer)
+      unreadWriteTimer = null
+    }
+    void flushUnread()
+    if (interactionWriteTimer) {
+      clearTimeout(interactionWriteTimer)
+      interactionWriteTimer = null
+    }
+    void flushInteractions()
+    void mentions.flush()
+    void receiptAudiences.flush()
+  }
+
+  /** 把数据库里的消息并入内存；已存在的消息以内存为准。 */
+  function mergeLoadedMessages(list: PersistedMessage[]): number {
+    let added = 0
+    for (const message of list) {
+      if (!message?.msg_id || messageIndex.has(message.msg_id) || !message.sessionId) continue
+      messages.value.push(message)
+      messageIndex.set(message.msg_id, message)
+      added += 1
+    }
+    return added
+  }
+
+  /** 按消息 id 批量恢复交互状态；内存里已有（启动期间新收到）的不覆盖。 */
+  async function loadInteractionState(ids: string[]): Promise<void> {
+    if (!ids.length) return
+    const account = accountId()
+    if (!account) return
+    const [rows, confirmations] = await Promise.all([
+      getState(account, 'interaction', ids),
+      getState(account, 'read_confirmation', ids),
+    ])
+    if (account !== accountId()) return
+    for (const row of rows) {
+      try {
+        const value = JSON.parse(row.value) as {
+          reactions?: MessageInteractions['reactions'][string]
+          recall?: MessageInteractions['recalls'][string]
+          readers?: MessageInteractions['readers'][string]
+          readTimes?: MessageInteractions['readTimes'][string]
+        }
+        if (value.reactions && !interactions.value.reactions[row.key]) interactions.value.reactions[row.key] = value.reactions
+        if (value.recall && !interactions.value.recalls[row.key]) interactions.value.recalls[row.key] = value.recall
+        if (value.readers && !interactions.value.readers[row.key]) interactions.value.readers[row.key] = value.readers
+        if (value.readTimes && !interactions.value.readTimes[row.key]) interactions.value.readTimes[row.key] = value.readTimes
+      } catch {
+        /* 单条损坏不影响其它状态 */
+      }
+    }
+    for (const row of confirmations) localReadConfirmations.value[row.key] = true
+    // 阅后即焚的截止时间单独存，窗口外消息补载时也要按「已打开」隐藏正文。
+    for (const id of ids) {
+      if (!burnDeadlines.value[id] || interactions.value.recalls[id]) continue
+      interactions.value.recalls[id] = { type: MsgType.RECALL, time: Date.now(), hidden: true }
+    }
+  }
+
+  /** 服务端历史页在合并前先补本地交互状态，避免已撤回/已读状态因窗口外而丢失。 */
+  async function preloadPageInteractions(list: ImMessage[]): Promise<void> {
+    const ids = list.map(message => message.msg_id).filter(Boolean)
+    if (ids.length) await loadInteractionState(ids)
+  }
+
+  function trimUnreadIds(account: string): void {
     const ids = [...unreadIds.value]
-    // 只留最近 5000 个 id，防止无限增长
-    writeJson(
-      STORAGE_KEYS.imUnreadIds,
-      ids.length > 5000 ? ids.slice(ids.length - 5000) : ids,
-    )
+    if (ids.length <= MAX_UNREAD_IDS) return
+    const removed = ids.slice(0, ids.length - MAX_UNREAD_IDS)
+    unreadIds.value = new Set(ids.slice(ids.length - MAX_UNREAD_IDS))
+    void deleteState(account, 'unread_id', removed)
+  }
+
+  /** 启动恢复：待发阅读确认/焚毁状态全量，消息与交互只取最近窗口。 */
+  async function hydratePersisted(account: string, epoch: number): Promise<void> {
+    // 提醒与消息各自持久化，先拉起提醒，消息合并时 observe 就不会覆盖旧状态。
+    await mentions.hydrate()
+    if (epoch !== hydrationEpoch || account !== accountId()) return
+    const [unreadRows, unreadAtRows, unreadIdRows, commandRows, burnRows, outboxRows] = await Promise.all([
+      getState(account, 'unread'),
+      getState(account, 'unread_at'),
+      getState(account, 'unread_id'),
+      getState(account, 'read_command'),
+      getState(account, 'burn_deadline'),
+      getState(account, 'outbox'),
+    ])
+    if (epoch !== hydrationEpoch || account !== accountId()) return
+    for (const row of unreadRows) {
+      if (touchedUnread.has(row.key)) continue
+      const count = Number(row.value)
+      if (count > 0) unread.value[row.key] = count
+    }
+    for (const row of unreadAtRows) {
+      if (touchedUnreadAt.has(row.key)) continue
+      const count = Number(row.value)
+      if (count > 0) unreadAt.value[row.key] = count
+    }
+    for (const row of unreadIdRows) unreadIds.value.add(row.key)
+    for (const row of commandRows) {
+      try {
+        const command = JSON.parse(row.value) as ImMessage
+        if (command?.msg_id) pendingReadCommands.value[command.msg_id] = command
+      } catch {
+        /* 损坏的待发命令直接跳过 */
+      }
+    }
+    for (const row of burnRows) {
+      const deadline = Number(row.value)
+      if (deadline > 0) {
+        burnDeadlines.value[row.key] = deadline
+        interactions.value.recalls[row.key] = { type: MsgType.RECALL, time: Date.now(), hidden: true }
+      }
+    }
+    // 已发送过的阅读确认不再补发：旧版同样在启动时折算成“已确认”。
+    for (const [id, command] of Object.entries(pendingReadCommands.value)) {
+      if (!command.__sent) continue
+      for (const target of String(command.content?.readMsgIds || '').split(',').filter(Boolean)) {
+        localReadConfirmations.value[target] = true
+        markConfirmation(target)
+      }
+      delete pendingReadCommands.value[id]
+      markReadCommandDeleted(id)
+    }
+    persistInteractions()
+
+    const recent = await loadRecentMessages(account, STARTUP_MESSAGE_LIMIT)
+    if (epoch !== hydrationEpoch || account !== accountId()) return
+    mergeLoadedMessages(recent)
+    const outbox: PersistedMessage[] = []
+    for (const row of outboxRows) {
+      try {
+        const message = JSON.parse(row.value) as PersistedMessage
+        if (message?.msg_id && message.sessionId) outbox.push(message)
+      } catch {
+        /* 单条损坏不影响其它待确认消息 */
+      }
+    }
+    mergeLoadedMessages(outbox)
+    await loadInteractionState([...recent, ...outbox].map(message => message.msg_id))
+    if (epoch !== hydrationEpoch || account !== accountId()) return
+    for (const message of messages.value) applyRecall(message)
+    trimUnreadIds(account)
+    delivery.restore([...messages.value.filter(isMine), ...Object.values(pendingReadCommands.value)])
+    // 服务号不计未读（与会话同步后的口径一致）。
+    for (const session of sessions.value) {
+      if (!isServiceAccount(session) || !(session.id in unread.value)) continue
+      delete unread.value[session.id]
+      markUnread(session.id)
+    }
+    if (recent.length || unreadRows.length) log(`本地缓存已恢复：${recent.length} 条消息`)
+  }
+
+  function startHydration(): Promise<void> {
+    if (hydration) return hydration
+    const account = accountId()
+    if (!account) return Promise.resolve()
+    cleanupLegacyStorage()
+    const epoch = ++hydrationEpoch
+    hydration = hydratePersisted(account, epoch).catch((error) => {
+      log('本地缓存恢复失败：' + (error instanceof Error ? error.message : String(error)))
+    })
+    return hydration
   }
 
   function persistMuted(): void {
@@ -360,7 +810,15 @@ export const useImStore = defineStore('im', () => {
   }
 
   loadLocal()
-  delivery.restore([...messages.value.filter(isMine), ...Object.values(pendingReadCommands.value)])
+  // 页面隐藏/关闭前把节流中的消息与未读立即落盘
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', flushPersist)
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flushPersist()
+      })
+    }
+  }
 
   /* ---------------- 会话聚合 ---------------- */
 
@@ -379,6 +837,7 @@ export const useImStore = defineStore('im', () => {
         sessions.value = sessions.value.filter((s) => s.id !== input.id)
         delete unread.value[input.id]
         delete unreadAt.value[input.id]
+        markUnread(input.id, true)
         persistSessions()
         persistUnread()
         return found
@@ -450,7 +909,7 @@ export const useImStore = defineStore('im', () => {
     if (consumeInteraction(msg)) return
     // 已读/回执类不落库
     if ([0, 95, 97].includes(Number(msg.msg_type))) return
-    const existingMessage = messages.value.find(m => m.msg_id === msg.msg_id)
+    const existingMessage = findMessage(msg.msg_id)
     if (existingMessage) {
       if (isMine(msg)) confirmOutgoing(existingMessage)
       if (!msg.offline) log('[提醒诊断] 收到实时推送，但本地已有该消息，已跳过去重')
@@ -471,6 +930,7 @@ export const useImStore = defineStore('im', () => {
     }
     applyRecall(item)
     messages.value.push(item)
+    messageIndex.set(item.msg_id, item)
     mentions.observe(item, { id: ref.id, name: ref.name, type: ref.type })
 
     const fromThisDevice =
@@ -526,8 +986,10 @@ export const useImStore = defineStore('im', () => {
       (!sessionMuted || atMe)
     ) {
       unreadIds.value.add(msg.msg_id)
+      pendingUnreadIds.add(msg.msg_id)
       unread.value[ref.id] = (unread.value[ref.id] || 0) + 1
       if (atMe) unreadAt.value[ref.id] = (unreadAt.value[ref.id] || 0) + 1
+      markUnread(ref.id, atMe)
       persistUnread()
     }
 
@@ -566,7 +1028,7 @@ export const useImStore = defineStore('im', () => {
       s.lastTime = messageTime
     }
     s.hasLocal = true
-    persistMessages()
+    persistMessages(item)
     persistSessions()
 
     if (chatActive.value && currentSessionId.value === ref.id) {
@@ -591,6 +1053,7 @@ export const useImStore = defineStore('im', () => {
     if (!(id in unread.value) && !(id in unreadAt.value)) return
     delete unread.value[id]
     delete unreadAt.value[id]
+    markUnread(id, true)
     persistUnread()
   }
 
@@ -679,17 +1142,22 @@ export const useImStore = defineStore('im', () => {
 
   function mergeHistoryMessage(message: ImMessage, session: ChatSession): boolean {
     if (consumeInteraction(message) || [0, 95, 97].includes(Number(message.msg_type))) return false
-    const existing = messages.value.find(item => item.msg_id === message.msg_id)
+    const existing = findMessage(message.msg_id)
     if (existing) {
       if (isMine(existing)) confirmOutgoing(existing)
-      if (Number(existing.msg_type) === MsgType.COMBINE && Array.isArray(message.content?.msgs)) existing.content = message.content
+      if (Number(existing.msg_type) === MsgType.COMBINE && Array.isArray(message.content?.msgs)) {
+        existing.content = message.content
+        persistMessages(existing as ChatMessage)
+      }
       applyRecall(existing)
       return false
     }
     const item = { ...message, sessionId: session.id, sessionType: session.type }
     applyRecall(item)
     messages.value.push(item)
+    messageIndex.set(item.msg_id, item)
     mentions.observe(item, session, true)
+    persistMessages(item)
     return true
   }
 
@@ -708,6 +1176,7 @@ export const useImStore = defineStore('im', () => {
           limit: perSession,
           dateTime: Date.now(),
         })
+        await preloadPageInteractions(page.messages)
         for (const m of page.messages) {
           if (m.msg_id && mergeHistoryMessage(m, s)) added += 1
         }
@@ -721,10 +1190,7 @@ export const useImStore = defineStore('im', () => {
         /* 单个失败不影响其它 */
       }
     }
-    if (added) {
-      persistMessages()
-      persistSessions()
-    }
+    if (added) persistSessions()
     return added
   }
 
@@ -743,6 +1209,8 @@ export const useImStore = defineStore('im', () => {
         dateTime: options.dateTime ?? Date.now(),
       })
       if (generation !== historyGeneration) return 0
+      await preloadPageInteractions(page.messages)
+      if (generation !== historyGeneration) return 0
       let added = 0
       for (const m of page.messages) {
         if (m.msg_id && mergeHistoryMessage(m, s)) added += 1
@@ -756,7 +1224,6 @@ export const useImStore = defineStore('im', () => {
         const last = page.messages[0]
         if (last) s.preview = previewOfMessage(last)
       }
-      persistMessages()
       persistSessions()
       return added
     } finally {
@@ -779,9 +1246,10 @@ export const useImStore = defineStore('im', () => {
     try {
       const page = await pager.next(100)
       if (generation !== historyGeneration) return 0
+      await preloadPageInteractions(page.messages)
+      if (generation !== historyGeneration) return 0
       let added = 0
       for (const message of page.messages) if (mergeHistoryMessage(message, session)) added++
-      persistMessages()
       return added
     } finally { if (generation === historyGeneration) loadingHistory.value = --historyLoads > 0 }
   }
@@ -796,6 +1264,21 @@ export const useImStore = defineStore('im', () => {
     if (messages.value.some(message => message.sessionId === sessionId && message.msg_id === messageId)) return true
     const session = sessions.value.find(item => item.id === sessionId)
     if (!session) return false
+    // 先查本地窗口：历史消息大多已落库，命中就不用再扫服务端。
+    const account = accountId()
+    if (account) {
+      const cached = await loadMessagesAround(account, sessionId, messageId, 150, 150)
+      if (account !== accountId()) return false
+      if (cached.length) {
+        const added = mergeLoadedMessages(cached)
+        if (added) {
+          for (const message of cached) applyRecall(message)
+          await loadInteractionState(cached.map(message => message.msg_id))
+          if (account !== accountId()) return false
+        }
+        if (messages.value.some(message => message.sessionId === sessionId && message.msg_id === messageId)) return true
+      }
+    }
     cancelMessageLookup(sessionId)
     const sourceTime = mentions.notices[messageId]?.time || messages.value.find(message => message.sessionId === sessionId && message.reply_msg_id === messageId)?.send_time
     const job = { pager: new HistoryPager(session.id, session.type, sourceTime ? Number(sourceTime) + 1 : Date.now()), cancelled: false }
@@ -806,9 +1289,10 @@ export const useImStore = defineStore('im', () => {
       while (!job.pager.complete && !job.cancelled && generation === historyGeneration && currentSessionId.value === sessionId) {
         const page = await job.pager.next()
         if (job.cancelled || generation !== historyGeneration || currentSessionId.value !== sessionId) return false
+        await preloadPageInteractions(page.messages)
+        if (job.cancelled || generation !== historyGeneration || currentSessionId.value !== sessionId) return false
         for (const message of page.messages) mergeHistoryMessage(message, session)
         lookupProgress.value.scanned = job.pager.offset
-        persistMessages()
         if (messages.value.some(message => message.sessionId === sessionId && message.msg_id === messageId)) return true
       }
       return false
@@ -840,9 +1324,10 @@ export const useImStore = defineStore('im', () => {
         while (!job.pager.complete && !job.cancelled && generation === historyGeneration) {
           const page = await job.pager.next()
           if (generation !== historyGeneration) return
+          await preloadPageInteractions(page.messages)
+          if (generation !== historyGeneration) return
           for (const message of page.messages) mergeHistoryMessage(message, session)
           progress.scanned = job.pager.offset
-          persistMessages()
         }
         progress.complete = job.pager.complete
       } catch (error) {
@@ -864,7 +1349,7 @@ export const useImStore = defineStore('im', () => {
     const task = (async () => {
       const local = messages.value.find(item => item.msg_id === message.msg_id) || message
       const hydrated = hydrateForwardContent(local.content, messages.value)
-      if (hydrated?.msgs?.length) { local.content = hydrated; persistMessages(); return }
+      if (hydrated?.msgs?.length) { local.content = hydrated; persistMessages(local as ChatMessage); return }
       const session = sessions.value.find(item => item.id === (message as ChatMessage).sessionId) || currentSession.value
       if (!session) throw new Error('会话不存在')
       const page = await fetchHistory(session.id, session.type, { dateTime: Number(message.send_time) + 1, limit: 100 })
@@ -874,7 +1359,7 @@ export const useImStore = defineStore('im', () => {
       const content = hydrateForwardContent(remote?.content || local.content, messages.value)
       if (!Array.isArray(content?.msgs) || !content.msgs.length) throw new Error('服务端历史未返回聊天记录明细，可在统一联调时核对原版响应')
       local.content = content
-      persistMessages()
+      persistMessages(local as ChatMessage)
     })().finally(() => forwardLoads.delete(key))
     forwardLoads.set(key, task)
     return task
@@ -953,6 +1438,7 @@ export const useImStore = defineStore('im', () => {
     const command = imClient.sendMessageRead(message, session, isBurn ? 1 : receipt ? 2 : undefined)
     pendingReadCommands.value[command.msg_id] = command
     delivery.track(pendingReadCommands.value[command.msg_id])
+    markReadCommand(command.msg_id)
     persistInteractions()
   }
 
@@ -971,18 +1457,21 @@ export const useImStore = defineStore('im', () => {
     queueReadConfirmation(message, session)
     if (String(message.is_delete_after_read) === 'true' && !burnDeadlines.value[message.msg_id]) {
       burnDeadlines.value[message.msg_id] = Date.now() + 30000
+      markBurn(message.msg_id)
       persistInteractions()
     }
   }
 
   function burnMessage(messageId: string): void {
-    const message = messages.value.find(item => item.msg_id === messageId)
+    const message = findMessage(messageId)
     interactions.value.recalls[messageId] = { type: MsgType.RECALL, time: Date.now(), hidden: true }
     delete burnDeadlines.value[messageId]
     if (message) applyRecall(message)
     mentions.remove(messageId)
+    markInteraction(messageId)
+    markBurnDeleted(messageId)
     persistInteractions()
-    persistMessages()
+    persistMessages(message as ChatMessage)
   }
 
   /** 鉴权成功后的固定动作：每次（含重连）都拉一次会话列表；偏好只在首次拉 */
@@ -1014,6 +1503,8 @@ export const useImStore = defineStore('im', () => {
   function start(): void {
     if (unsub) return
     needLogin.value = ''
+    // 先读本地窗口再连 WebSocket：hydrate 与新消息按 msg_id 去重，不阻塞建连。
+    void startHydration()
     unsub = imClient.on((e) => {
       switch (e.type) {
         case 'open':
@@ -1039,7 +1530,7 @@ export const useImStore = defineStore('im', () => {
             const r = e.data
             // 官方成功回执的 content 是原消息 ID；失败回执才使用 msg_id。
             const id = r?.success ? String(r.content || r.msg_id || '') : String(r?.msg_id || '')
-            const m = messages.value.find((x) => x.msg_id === id)
+            const m = findMessage(id)
             const control = pendingInteractions.value[id]
             if (pendingReadCommands.value[id] && typeof r?.success === 'boolean') {
               delivery.acknowledge(id, r.success, r.success ? undefined : '阅读确认被拒绝，请重新提交')
@@ -1054,7 +1545,7 @@ export const useImStore = defineStore('im', () => {
               if (control) { interactionErrors.value[interactionTarget(control)] = detail; delete pendingInteractions.value[id] }
               log('消息提交失败：' + detail)
             }
-            persistMessages()
+            if (m) persistMessages(m)
           }
           break
         case 'offline_more':
@@ -1081,6 +1572,7 @@ export const useImStore = defineStore('im', () => {
 
   function stop(): void {
     delivery.suspend()
+    flushPersist()
     historyGeneration++
     for (const pager of olderPagers.values()) pager.cancel()
     for (const id of scans.keys()) cancelHistoryScan(id)
@@ -1115,8 +1607,42 @@ export const useImStore = defineStore('im', () => {
     stop()
     needLogin.value = ''
     imClient.clearSession()
+    // 取消待写队列，避免退出后把旧消息重新写回已清除的缓存；
+    // 真正的库清理排进写入串行链，保证在已发出的写入之后执行。
+    if (messageWriteTimer) {
+      clearTimeout(messageWriteTimer)
+      messageWriteTimer = null
+    }
+    pendingMessageWrites.clear()
+    messageWriteFailures = 0
+    if (unreadWriteTimer) {
+      clearTimeout(unreadWriteTimer)
+      unreadWriteTimer = null
+    }
+    pendingUnreadSessions.clear()
+    pendingUnreadAtSessions.clear()
+    pendingUnreadIds.clear()
+    touchedUnread.clear()
+    touchedUnreadAt.clear()
+    if (interactionWriteTimer) {
+      clearTimeout(interactionWriteTimer)
+      interactionWriteTimer = null
+    }
+    pendingInteractionIds.clear()
+    pendingConfirmationIds.clear()
+    pendingReadCommandIds.clear()
+    deletedReadCommandIds.clear()
+    pendingBurnIds.clear()
+    deletedBurnIds.clear()
+    pendingOutboxIds.clear()
+    deletedOutboxIds.clear()
+    hydrationEpoch++
+    hydration = null
+    loadedWindows.clear()
+    if (leavingAccount) void clearStoredAccount(leavingAccount)
     sessions.value = []
     messages.value = []
+    messageIndex.clear()
     interactions.value = emptyInteractions()
     delivery.dispose()
     mentions.reset()
@@ -1127,7 +1653,6 @@ export const useImStore = defineStore('im', () => {
     pendingReadCommands.value = {}
     burnDeadlines.value = {}
     receiptAudiences.clear()
-    localStorage.removeItem(interactionKey())
     currentSessionId.value = ''
     hiddenSessions.value = {}
     unread.value = {}
@@ -1160,6 +1685,13 @@ export const useImStore = defineStore('im', () => {
       STORAGE_KEYS.imMuted,
       STORAGE_KEYS.imGroupMeta,
       STORAGE_KEYS.imLeftGroups,
+    ]) {
+      localStorage.removeItem(key)
+    }
+    for (const key of [
+      `yl.im.interactions.${leavingAccount}`,
+      `yl.im.receipt-audiences.${leavingAccount}`,
+      `yl.im.mentions.${leavingAccount}`,
     ]) {
       localStorage.removeItem(key)
     }
@@ -1299,6 +1831,36 @@ export const useImStore = defineStore('im', () => {
     setTab(target ? target.id : 'all')
   }
 
+  const sessionWindowLoads = new Map<string, Promise<void>>()
+
+  /** 打开会话时先补最近窗口；本地没有缓存才回退到服务端历史。 */
+  function ensureSessionWindow(id: string): void {
+    if (loadedWindows.has(id)) return
+    const account = accountId()
+    if (!account) return
+    const running = sessionWindowLoads.get(id)
+    if (running) return
+    const task = (async () => {
+      const hadLocal = messages.value.some(message => message.sessionId === id)
+      const list = await loadSessionMessages(account, id, SESSION_MESSAGE_WINDOW)
+      if (account !== accountId()) return
+      // 用户已切走时仍可并入内存（按 id 去重），但没有必要再做交互回填。
+      const added = mergeLoadedMessages(list)
+      if (added) {
+        for (const message of list) applyRecall(message)
+        await loadInteractionState(list.map(message => message.msg_id))
+        if (account !== accountId()) return
+      }
+      loadedWindows.add(id)
+      // 只有本地一条都没有时才请求服务端；启动窗口已经覆盖的会话不重复拉。
+      const hasLocal = hadLocal || messages.value.some(message => message.sessionId === id)
+      if (!hasLocal && currentSessionId.value === id) {
+        await loadHistory(id).catch((e) => log('历史加载失败：' + e.message))
+      }
+    })().finally(() => sessionWindowLoads.delete(id))
+    sessionWindowLoads.set(id, task)
+  }
+
   function selectSession(id: string): void {
     if (id in hiddenSessions.value) {
       delete hiddenSessions.value[id]
@@ -1307,11 +1869,7 @@ export const useImStore = defineStore('im', () => {
     revealSession(id)
     currentSessionId.value = id
     if (chatActive.value) clearUnread(id)
-    const s = sessions.value.find((x) => x.id === id)
-    const hasLocal = messages.value.some((m) => m.sessionId === id)
-    if (s && !hasLocal) {
-      loadHistory(id).catch((e) => log('历史加载失败：' + e.message))
-    }
+    ensureSessionWindow(id)
   }
 
   /** 从搜索结果选中联系人后，让该会话在列表内置顶 */
@@ -1457,6 +2015,7 @@ export const useImStore = defineStore('im', () => {
       const keep = unreadAt.value[id] || 0
       if (keep > 0) unread.value[id] = keep
       else delete unread.value[id]
+      markUnread(id)
       persistUnread()
     }
   }
@@ -1570,6 +2129,7 @@ export const useImStore = defineStore('im', () => {
       sessions.value.splice(idx, 1)
       delete unread.value[id]
       delete unreadAt.value[id]
+      markUnread(id, true)
       persistSessions()
       persistUnread()
     }
@@ -1708,6 +2268,10 @@ export const useImStore = defineStore('im', () => {
     searching,
     start,
     stop,
+    /** 等待本地缓存恢复完成（重复调用复用同一个 Promise） */
+    hydrate: startHydration,
+    /** 立即把节流中的消息/未读/交互写入 SQLite */
+    flush: flushPersist,
     resetLocal,
     log,
     selectSession,

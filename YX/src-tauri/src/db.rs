@@ -62,7 +62,24 @@ pub struct ComponentRecord {
     pub installed_at: i64,
 }
 
+#[cfg(test)]
 impl Db {
+    /// 单元测试用内存库：避免测试读写真实应用数据目录。
+    pub(crate) fn in_memory() -> Result<Self, String> {
+        let conn = Connection::open_in_memory().map_err(|e| format!("打开内存库失败：{e}"))?;
+        migrate(&conn)?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+}
+
+impl Db {
+    /// IM 持久化命令与配置命令共用一条连接；调用方拿锁后自行开事务。
+    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+        self.conn.lock().map_err(|_| "本地数据库不可用".to_string())
+    }
+
     pub fn open(app: &AppHandle) -> Result<Self, String> {
         let path = database_path(app)?;
         let conn = Connection::open(&path).map_err(|e| format!("打开配置库失败：{e}"))?;
@@ -276,6 +293,44 @@ fn migrate(conn: &Connection) -> Result<(), String> {
                value TEXT NOT NULL
              );
              PRAGMA user_version = 2;
+             COMMIT;",
+        )
+        .map_err(|e| format!("迁移配置库失败：{e}"))?;
+        version = 2;
+    }
+    if version < 3 {
+        // v3：IM 本地缓存。消息正文整体存 body，查询/排序/去重字段单列；
+        // 未读、交互、回执等小状态走 im_state，按 key 单条读写，避免整块重写。
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS im_messages (
+               account_id   TEXT    NOT NULL,
+               msg_id       TEXT    NOT NULL,
+               session_id   TEXT    NOT NULL,
+               session_type INTEGER NOT NULL,
+               send_time    INTEGER NOT NULL,
+               msg_type     INTEGER NOT NULL,
+               from_id      TEXT    NOT NULL,
+               is_read      INTEGER,
+               body         TEXT    NOT NULL,
+               updated_at   INTEGER NOT NULL,
+               PRIMARY KEY (account_id, msg_id)
+             );
+             CREATE INDEX IF NOT EXISTS im_messages_session_time
+               ON im_messages(account_id, session_id, send_time DESC, msg_id DESC);
+             CREATE INDEX IF NOT EXISTS im_messages_account_time
+               ON im_messages(account_id, send_time DESC, msg_id DESC);
+             CREATE TABLE IF NOT EXISTS im_state (
+               account_id TEXT    NOT NULL,
+               scope      TEXT    NOT NULL,
+               key        TEXT    NOT NULL,
+               value      TEXT    NOT NULL,
+               updated_at INTEGER NOT NULL,
+               PRIMARY KEY (account_id, scope, key)
+             );
+             CREATE INDEX IF NOT EXISTS im_state_scope
+               ON im_state(account_id, scope);
+             PRAGMA user_version = 3;
              COMMIT;",
         )
         .map_err(|e| format!("迁移配置库失败：{e}"))?;

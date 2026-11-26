@@ -14,7 +14,7 @@ export class MessageDelivery {
   constructor(private handlers: {
     connected: () => boolean
     resend: (message: ImMessage) => void
-    changed: () => void
+    changed: (message: ImMessage) => void
     confirmed?: (message: ImMessage) => void
   }, private timeout = 15000) {}
 
@@ -27,7 +27,7 @@ export class MessageDelivery {
     message.__sent = state === 'confirmed'
     if (error) message.__error = error
     else delete message.__error
-    this.handlers.changed()
+    this.handlers.changed(message)
   }
   private arm(message: ImMessage) {
     this.clear(message.msg_id)
@@ -71,8 +71,9 @@ export class MessageDelivery {
     return true
   }
   restore(messages: ImMessage[]) {
-    this.dispose()
+    // 只合并、不清空：数据库恢复可能晚于用户刚发出的消息，不能把新队列冲掉。
     for (const message of messages) {
+      if (this.tracked.has(message.msg_id)) continue
       if (message.__delivery) this.tracked.set(message.msg_id, message)
       if (message.__sent || !['pending', 'queued'].includes(message.__delivery?.state || '')) continue
       this.pending.set(message.msg_id, message)

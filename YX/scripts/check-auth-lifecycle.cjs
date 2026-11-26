@@ -17,6 +17,8 @@ const mocks = {
   jsencrypt: class MockJSEncrypt {setPublicKey() {} encrypt() {throw new Error('本回归不得触发密码登录');}},
   '@tauri-apps/plugin-http': {fetch: async (url, options) => {calls.push({url, options}); return fetchHandler(url, options);}},
   './config': {DEFAULT_CONFIG: {clientId: 'offline-client', clientSecret: 'offline-secret'}, STORAGE_KEYS: keys, getServerPaths: () => ({ssoUri: sso}), saveServerPaths: () => {throw new Error('本回归不得拉配置中心');}},
+  // 本回归只覆盖 refresh_token 路径；静默重登用的账号口令视为未保存
+  './credentials': {loadCreds: () => null, decodeSavedPassword: () => ''},
 };
 const moduleUnderTest = {exports: {}};
 new Function('require', 'module', 'exports', 'localStorage', 'console', ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '../src/services/auth.ts'), 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true}}).outputText)(id => {

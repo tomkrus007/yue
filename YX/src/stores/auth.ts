@@ -33,6 +33,10 @@ export const useAuthStore = defineStore('auth', () => {
     )
   }
 
+  // 续期/静默重登由 AuthService 完成，这里跟随更新 token 与过期时间，
+  // 否则过了首次 expires_in 后本地仍是旧值，界面会误判成未登录。
+  authService.onSessionChange(syncSession)
+
   function log(msg: string) {
     const ts = new Date().toLocaleTimeString()
     debugLog.value.unshift(`[${ts}] ${msg}`)

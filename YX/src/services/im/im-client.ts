@@ -67,6 +67,7 @@ export interface ImMessage {
 export interface ImAuthPayload {
   UserId?: string
   PLATFORM: string
+  DeviceName: string
   DeviceToken: string
   DeviceUID: string
   AccessToken: string
@@ -145,6 +146,10 @@ export class ImClient {
   private _connected = false
   private mediaUploads = new WeakMap<File, Promise<string>>()
   private sessionGeneration = 0
+  /** 99 的刷新请求是否在处理（原版 add401Req 队列语义：同一时刻只刷新一次） */
+  private tokenRefreshPending = false
+  private tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  private tokenRefreshAttempts = 0
 
   constructor(config: AppConfig = DEFAULT_CONFIG) {
     this.config = config
@@ -212,10 +217,12 @@ export class ImClient {
       this.emit({ type: 'close', data: { code: ev.code, reason: ev.reason } })
       if (this.manualClose) return
       if (!wasReady) {
-        // 鉴权没成功就断开 = token 可能失效；连续 3 次就让用户重新登录
+        // 鉴权失败不立刻要求重新登录：先重连，连续失败时再尝试续期
+        // （原版同样只是关掉 socket 让重连循环 + 401 队列兜底）。
         this.authFailures += 1
         if (this.authFailures >= 3) {
-          this.emit({ type: 'need_login', data: '登录已失效，请重新登录' })
+          this.authFailures = 0
+          this.scheduleTokenRefresh(0)
           return
         }
       }
@@ -248,7 +255,9 @@ export class ImClient {
   /** 鉴权 */
   auth(): void {
     const payload: ImAuthPayload = {
+      UserId: authService.getCurrentUserId(),
       PLATFORM: 'pc',
+      DeviceName: authService.getPlatform(),
       DeviceToken: authService.getDeviceId(),
       DeviceUID: authService.getDeviceId(),
       AccessToken: authService.getAccessToken(),
@@ -337,29 +346,24 @@ export class ImClient {
         }
         break
 
-      case Cmd.dRefreshToken: {
-        // 通知刷新 token：换到之后重连一次
-        const generation = this.sessionGeneration
-        authService.refreshToken().then((t) => {
-          if (generation !== this.sessionGeneration) return
-          if (!t) {
-            this.emit({ type: 'need_login', data: '登录已失效，请重新登录' })
-            return
-          }
-          this.emit({ type: 'log', data: 'Token 已刷新，重连中' })
-          this.manualClose = true
-          this.close()
-          setTimeout(() => {
-            if (generation !== this.sessionGeneration) return
-            this.manualClose = false
-            this.init()
-          }, 200)
-        })
+      case Cmd.dRefreshToken:
+        // 服务端要求续期：原版延迟后入 401 队列刷新，刷新成功仍在原连接上重新鉴权
+        this.emit({ type: 'log', data: '服务端要求刷新 Token' })
+        this.scheduleTokenRefresh(1000)
         break
-      }
 
       case Cmd.dSleep:
-        this.emit({ type: 'need_login', data: '登录已失效（服务端要求重新认证）' })
+        // 原版把 100 当作鉴权失败：关掉 socket 由重连循环重新鉴权，不是登录失效
+        this.emit({ type: 'log', data: '服务端要求重新鉴权，重连中' })
+        this.authFailures += 1
+        this.manualClose = true
+        this.close()
+        this.manualClose = false
+        this.scheduleReconnect()
+        if (this.authFailures >= 2) {
+          this.authFailures = 0
+          this.scheduleTokenRefresh(0)
+        }
         break
 
       default:
@@ -367,6 +371,67 @@ export class ImClient {
           type: 'log',
           data: `未处理命令 ${frame.command} (0x${frame.command.toString(16)})`,
         })
+    }
+  }
+
+  /**
+   * 刷新 token 并在原连接上重新鉴权（对齐原版 99 → add401Req → Auth）。
+   * 刷新失败不登出：网络错误延后重试；只有服务端明确拒绝凭证才要求重新登录。
+   */
+  private scheduleTokenRefresh(delay: number): void {
+    if (this.tokenRefreshPending) return
+    this.tokenRefreshPending = true
+    const generation = this.sessionGeneration
+    this.tokenRefreshTimer = setTimeout(() => {
+      this.tokenRefreshTimer = null
+      const run = async (): Promise<'done' | 'retry'> => {
+        if (generation !== this.sessionGeneration) return 'done'
+        const result = await authService.refreshTokenResult()
+        if (generation !== this.sessionGeneration) return 'done'
+        if (result.token) {
+          this.tokenRefreshAttempts = 0
+          this.emit({ type: 'log', data: 'Token 已刷新，重新鉴权' })
+          this.cancelReconnect()
+          if (this.ws && this.ws.readyState === READY.OPEN) {
+            this.auth()
+          } else {
+            this.manualClose = false
+            this.reconnectAttempt = 0
+            this.init()
+          }
+          return 'done'
+        }
+        if (result.invalid) {
+          this.emit({ type: 'need_login', data: '登录已失效，请重新登录' })
+          return 'done'
+        }
+        this.tokenRefreshAttempts += 1
+        if (this.tokenRefreshAttempts >= 5) {
+          this.tokenRefreshAttempts = 0
+          this.emit({ type: 'log', data: 'Token 刷新失败，稍后重连重试' })
+          if (!this.ws || this.ws.readyState !== READY.OPEN) this.scheduleReconnect()
+          return 'done'
+        }
+        return 'retry'
+      }
+      void run()
+        .then((next) => {
+          this.tokenRefreshPending = false
+          if (next === 'retry') {
+            this.emit({ type: 'log', data: 'Token 刷新失败，10 秒后重试' })
+            this.scheduleTokenRefresh(10_000)
+          }
+        })
+        .catch(() => {
+          this.tokenRefreshPending = false
+        })
+    }, delay)
+  }
+
+  private cancelReconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
     }
   }
 
@@ -441,7 +506,16 @@ export class ImClient {
 
   /** 关闭连接；manual=true 表示用户主动断开（登出/换号），不触发自动重连 */
   close(manual = true): void {
-    if (manual) this.manualClose = true
+    if (manual) {
+      this.manualClose = true
+      // 主动关闭（登出/换号/死链重建）时不再保留待执行的 token 续期
+      if (this.tokenRefreshTimer) {
+        clearTimeout(this.tokenRefreshTimer)
+        this.tokenRefreshTimer = null
+      }
+      this.tokenRefreshPending = false
+      this.tokenRefreshAttempts = 0
+    }
     this.stopBeat()
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -476,6 +550,12 @@ export class ImClient {
     this.offlinePages = 0
     this.sessionGeneration++
     this.mediaUploads = new WeakMap()
+    this.tokenRefreshPending = false
+    this.tokenRefreshAttempts = 0
+    if (this.tokenRefreshTimer) {
+      clearTimeout(this.tokenRefreshTimer)
+      this.tokenRefreshTimer = null
+    }
     if (this.onlineHandler) {
       window.removeEventListener('online', this.onlineHandler)
       this.onlineHandler = null
