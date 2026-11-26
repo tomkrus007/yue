@@ -15,9 +15,23 @@ let memberLoader = async offset => offset === 0
   ? { members: [{ userId: 'me', name: '我' }, { userId: 'a', name: '甲' }, { userId: 'deleted', name: '已删除', isDeleted: 'true' }], total: 5, hasMore: true }
   : { members: [{ userId: 'b', name: '乙' }, { userId: 'robot:test', name: '机器人' }], total: 5, hasMore: false };
 let department = { code: 200, total: 4, data: [{ userId: 'me' }, { userId: 'a', name: '甲' }, { userId: 'disabled', isEnable: false }, { userId: 'robot:test' }] };
+const stateRows = new Map();
+const stateKey = (account, scope) => `${account}|${scope}`;
+const stateStore = {
+  getState: async (accountId, scope, keys) => {
+    const rows = [...(stateRows.get(stateKey(accountId, scope)) || new Map())].map(([key, value]) => ({ key, value }));
+    return keys && keys.length ? rows.filter(row => keys.includes(row.key)) : rows;
+  },
+  putState: async (accountId, scope, entries) => {
+    const map = stateRows.get(stateKey(accountId, scope)) || new Map();
+    for (const entry of entries) map.set(entry.key, entry.value);
+    stateRows.set(stateKey(accountId, scope), map);
+  },
+};
 const dependencies = {
   vue, pinia,
   '../services/auth': { authService: { getCurrentUserId: () => account } },
+  '../services/im/store': stateStore,
   '../services/group-client': { groupService: {
     getGroupDetail: async id => { calls.push(['detail', id]); return detailLoader(); },
     getMembersPage: async (id, offset, limit) => { calls.push(['members', id, offset, limit]); return memberLoader(offset); },
@@ -35,8 +49,9 @@ const session = { id: 'group1', name: '测试群', type: 2 };
 const message = (id, type = 2, to = 'group1') => ({ msg_id: id, from_id: account, from_name: '发送方', from_type: 1, msg_type: 1, content: '消息', to_id: to, to_name: to, to_type: type, send_time: 100 });
 (async () => {
   const directPromise = store.capture(message('dm', 1, 'a'), { id: 'a', name: '甲', type: 1 }, { atSend: true });
-  assert.equal(store.get('dm').members[0].id, 'a', '单聊必须同步建立来自消息本身的接收人快照');
-  assert.equal((await directPromise).timing, 'direct');
+  const direct = await directPromise;
+  assert.equal(direct.timing, 'direct');
+  assert.equal(store.get('dm').members[0].id, 'a', '单聊必须建立来自消息本身的接收人快照');
   assert.equal(calls.length, 0, '单聊不能查询群成员或通讯录');
   const sent = message('group-sent');
   const [first, duplicate] = await Promise.all([store.capture(sent, session, { atSend: true }), store.capture(sent, session)]);
@@ -93,16 +108,21 @@ const message = (id, type = 2, to = 'group1') => ({ msg_id: id, from_id: account
   assert.equal((await store.capture(message('large-dept', 4, 'org1'), { id: 'org1', name: '本部门', type: 4 })).complete, false);
   console.log('部门名单：原版已核实的首分页、成员过滤、超出800人及其他部门范围回归通过');
 
+  await store.flush();
   account = 'other';
   assert.equal(store.get('dm'), undefined);
   await store.capture(message('other-dm', 1, 'a'), { id: 'a', name: '甲', type: 1 });
-  assert.ok(storage.has('yl.im.receipt-audiences.other'));
+  await store.flush();
+  const otherState = await stateStore.getState('other', 'receipt');
+  assert.ok(otherState.some(row => row.key === 'other-dm'), '回执快照按账号写入本地状态');
   account = 'me';
-  assert.ok(store.get('dm'));
+  await store.capture(message('dm', 1, 'a'), { id: 'a', name: '甲', type: 1 });
+  assert.ok(store.get('dm'), '切回账号后从本地状态恢复历史快照');
   assert.equal(store.get('other-dm'), undefined);
   let release;
   detailLoader = () => new Promise(resolve => { release = resolve; });
   const late = store.capture(message('late'), session);
+  await new Promise(resolve => setImmediate(resolve));
   account = 'other'; store.get('other-dm');
   const memberCount = calls.filter(call => call[0] === 'members').length;
   release({ memberCount: 1 }); await late;
@@ -112,6 +132,7 @@ const message = (id, type = 2, to = 'group1') => ({ msg_id: id, from_id: account
   detailLoader = async () => ({ memberCount: 1 });
   memberLoader = async () => ({ members: [{ userId: 'a', name: '甲' }], total: 1, hasMore: false });
   const stale = store.capture(message('clear-late'), session);
+  await new Promise(resolve => setImmediate(resolve));
   store.clear(); await stale;
   assert.equal(store.get('clear-late'), undefined, '清理后的迟到响应不得恢复快照');
   console.log('回执名单：账号隔离、持久化恢复、迟到响应与清理竞态回归通过');

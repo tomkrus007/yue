@@ -334,6 +334,40 @@ fn migrate(conn: &Connection) -> Result<(), String> {
              COMMIT;",
         )
         .map_err(|e| format!("迁移配置库失败：{e}"))?;
+        version = 3;
+    }
+    if version < 4 {
+        // v4：消息全文检索。`search_text` 存抽取后的纯文本，FTS5 用 external content
+        // 模式挂在 im_messages 上，触发器保证 upsert/删除/撤回时索引同步。
+        // trigram 分词不依赖中文词典：>=3 字可直接匹配，2 字查询由查询层用 LIKE 兜底。
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE im_messages ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
+             CREATE VIRTUAL TABLE IF NOT EXISTS im_messages_fts USING fts5(
+               search_text,
+               content='im_messages',
+               content_rowid='rowid',
+               tokenize='trigram'
+             );
+             CREATE TRIGGER IF NOT EXISTS im_messages_fts_insert AFTER INSERT ON im_messages BEGIN
+               INSERT INTO im_messages_fts(rowid, search_text) VALUES (new.rowid, new.search_text);
+             END;
+             CREATE TRIGGER IF NOT EXISTS im_messages_fts_delete AFTER DELETE ON im_messages BEGIN
+               INSERT INTO im_messages_fts(im_messages_fts, rowid, search_text)
+               VALUES ('delete', old.rowid, old.search_text);
+             END;
+             CREATE TRIGGER IF NOT EXISTS im_messages_fts_update AFTER UPDATE ON im_messages BEGIN
+               INSERT INTO im_messages_fts(im_messages_fts, rowid, search_text)
+               VALUES ('delete', old.rowid, old.search_text);
+               INSERT INTO im_messages_fts(rowid, search_text) VALUES (new.rowid, new.search_text);
+             END;
+             -- 迁移时先把已有行按空 search_text 建进索引，后续 UPDATE 触发器的
+             -- 'delete' 才能对上 rowid（否则首次回填会报索引损坏）。
+             INSERT INTO im_messages_fts(im_messages_fts) VALUES('rebuild');
+             PRAGMA user_version = 4;
+             COMMIT;",
+        )
+        .map_err(|e| format!("迁移配置库失败：{e}"))?;
     }
     Ok(())
 }
@@ -421,4 +455,70 @@ pub fn settings_get_all(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Setting
 #[tauri::command]
 pub fn settings_set(db: State<'_, Db>, key: String, value: Option<String>) -> Result<(), String> {
     db.set(&key, value.as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_v3_database_to_search_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        // 只保留 v4 迁移关心的表：模拟一个已经升级到 v3 的旧库。
+        conn.execute_batch(
+            "CREATE TABLE im_messages (
+               account_id   TEXT    NOT NULL,
+               msg_id       TEXT    NOT NULL,
+               session_id   TEXT    NOT NULL,
+               session_type INTEGER NOT NULL,
+               send_time    INTEGER NOT NULL,
+               msg_type     INTEGER NOT NULL,
+               from_id      TEXT    NOT NULL,
+               is_read      INTEGER,
+               body         TEXT    NOT NULL,
+               updated_at   INTEGER NOT NULL,
+               PRIMARY KEY (account_id, msg_id)
+             );
+             PRAGMA user_version = 3;",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO im_messages VALUES ('me','m1','g1',2,100,1,'u',0,'{}',0)",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+
+        // trigram 分词在 bundled SQLite 里可用，且触发器同步写入索引。
+        conn.execute(
+            "UPDATE im_messages SET search_text = '项目评审会' WHERE msg_id = 'm1'",
+            [],
+        )
+        .unwrap();
+        let hits: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM im_messages_fts WHERE im_messages_fts MATCH '项目评审'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1);
+
+        // 删除消息时索引跟着删，不会留下可被搜索的幽灵记录。
+        conn.execute("DELETE FROM im_messages WHERE msg_id = 'm1'", [])
+            .unwrap();
+        let hits: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM im_messages_fts WHERE im_messages_fts MATCH '项目评审'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 0);
+    }
 }

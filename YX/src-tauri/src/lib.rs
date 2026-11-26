@@ -193,6 +193,17 @@ pub fn run() {
         .setup(|app| {
             // 配置库先起来：下载目录、上传 spool 等都从它取生效值。
             let db = db::Db::open(app.handle()).map_err(|e| format!("配置库初始化失败：{e}"))?;
+            // v4 引入消息全文索引：老消息的 search_text 为空，后台补一次，不阻塞启动。
+            let search_db = db.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                match im_store::search_backfill(&search_db) {
+                    Ok(count) if count > 0 => {
+                        eprintln!("[im] 已为 {count} 条历史消息补建搜索索引")
+                    }
+                    Err(error) => eprintln!("[im] 补建搜索索引失败：{error}"),
+                    _ => {}
+                }
+            });
             // 上次异常退出留下的上传分片直接清掉
             store_upload::cleanup_stale(app.handle(), &db);
             let download_dir = store_download::download_dir(app.handle(), &db);
@@ -246,6 +257,7 @@ pub fn run() {
             im_store::im_messages_around,
             im_store::im_messages_get,
             im_store::im_messages_delete,
+            im_store::im_messages_search,
             im_store::im_account_clear,
             im_store::im_state_upsert,
             im_store::im_state_query,

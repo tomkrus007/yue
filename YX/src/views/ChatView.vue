@@ -1,5 +1,12 @@
 <template>
-  <div class="chat-layout" :class="{ 'with-drawer': drawerOpen && drawerAllowed }">
+  <div class="chat-layout" :style="layoutStyle">
+    <GlobalSearch
+      v-model:open="globalSearchOpen"
+      @locate="locateSearchMessage"
+      @open-session="openSearchSession"
+      @open-contact="startChat"
+    />
+
     <!-- 左侧导航 -->
     <SideNav
       active="chat"
@@ -21,6 +28,17 @@
           @keydown.down="onSearchArrow($event, 1)"
           @keydown.up="onSearchArrow($event, -1)"
         />
+        <button
+          class="panel-search-global"
+          title="搜索全部聊天记录（⌘K）"
+          aria-label="搜索全部聊天记录"
+          @click="globalSearchOpen = true"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="m16 16 4.2 4.2" />
+          </svg>
+        </button>
       </div>
 
       <div class="tabs">
@@ -179,6 +197,9 @@
         </div>
       </Teleport>
     </aside>
+
+    <!-- 拖动调整会话/联系人分栏宽度 -->
+    <PaneResizer v-model="sessionWidth" storage-key="chat_session_panel_width" :min="240" :max="640" :reserve="420" />
 
     <!-- 聊天主区 -->
     <main class="chat-main">
@@ -393,7 +414,7 @@
     <HistoryModal v-model:open="historyOpen" @preview="openPreview" @locate="locateMessage" @reply="beginReply" />
     <ReplyThread v-if="replyThreadId" :key="im.currentSessionId + replyThreadId" :message-id="replyThreadId" @close="replyThreadId = ''" @reply="beginReply" @locate="locateMessage" @preview="openPreview" />
     <FavoritesModal v-if="favoritesOpen" :messages="favoriteLocations" @close="favoritesOpen = false" @preview="openPreview" @locate="locateFavorite" />
-    <ReceiptModal v-if="receiptMessage" :message="receiptMessage" :readers="im.interactions.readers[receiptMessage.msg_id] || {}" :read-times="im.interactions.readTimes[receiptMessage.msg_id] || {}" @close="receiptMessage = null" />
+    <ReceiptModal v-if="receiptMessage" :message="receiptMessage" :readers="im.readersOf(receiptMessage.msg_id)" :read-times="im.readTimesOf(receiptMessage.msg_id)" @close="receiptMessage = null" />
     <MentionCenter v-if="mentionsOpen" @close="mentionsOpen = false" @locate="locateMention" @reply="locateMention($event, true)" />
 
     <ForwardModal v-if="forwardOpen" :messages="forwardMessages" :combine="forwardCombine" @close="forwardOpen = false" @sent="finishForward" />
@@ -479,6 +500,7 @@ import type { ContactEntry } from '../services/contact-client'
 import { fmtMsgTime, fmtSessionTime, messageText, segmentsOf, combineDetails, type ImageMeta } from '../services/im/content'
 import { dedupeMeetingCards } from '../services/im/wemeet-invite'
 import {
+  IMAGE_MSG_EXTS,
   normalizeClipboardImage,
 } from '../services/im/media'
 import { supportsMute } from '../services/im/prefs'
@@ -487,9 +509,12 @@ import type { ImMessage } from '../services/im/im-client'
 import HistoryModal from '../components/HistoryModal.vue'
 import AppPanel from '../components/AppPanel.vue'
 import SideNav from '../components/SideNav.vue'
+import PaneResizer from '../components/PaneResizer.vue'
 import ChatDrawer from '../components/ChatDrawer.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import ContactAvatar from '../components/ContactAvatar.vue'
+import GlobalSearch from '../components/GlobalSearch.vue'
+import type { PersistedMessage } from '../services/im/store'
 import ImageGallery from '../components/ImageGallery.vue'
 import { OFFICIAL_FACES } from '../services/im/official-face'
 import { appLog, clearLogs } from '../services/app-log'
@@ -517,6 +542,7 @@ const router = useRouter()
 
 const selecting = ref(false)
 const selectedIds = ref<string[]>([])
+const globalSearchOpen = ref(false)
 const forwardOpen = ref(false)
 const forwardCombine = ref(false)
 const forwardMessages = ref<ImMessage[]>([])
@@ -610,6 +636,23 @@ function protectedMessage(message: ImMessage): boolean {
   return String(message.is_need_read_receipt) === 'true' || String(message.is_delete_after_read) === 'true'
 }
 function forwardable(message: ImMessage): boolean { return canForward(message.msg_type) && !protectedMessage(message) }
+async function locateSearchMessage(message: PersistedMessage) {
+  globalSearchOpen.value = false
+  const session = im.sessions.find(item => item.id === message.sessionId)
+  const name = session?.name || message.to_name || message.from_name || '会话'
+  im.openChat(message.sessionId, name, message.sessionType)
+  await locateMessage(message.msg_id)
+}
+function openSearchSession(session: ChatSession) {
+  globalSearchOpen.value = false
+  im.selectSession(session.id)
+}
+function onGlobalSearchKey(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return
+  event.preventDefault()
+  globalSearchOpen.value = true
+}
 async function locateFavorite(location: { messageId: string; sessionId: string; sessionType: number; sessionName: string }) {
   favoritesOpen.value = false
   im.openChat(location.sessionId, location.sessionName, location.sessionType)
@@ -848,6 +891,12 @@ function stopComposerResize(event: PointerEvent) {
   if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId)
 }
 
+/** 与 sendMedia 的判定一致：只有这 5 种后缀才算图片，其余按文件发送。 */
+function isImageFile(file: File): boolean {
+  const dot = file.name.lastIndexOf('.')
+  return dot >= 0 && IMAGE_MSG_EXTS.has(file.name.slice(dot + 1).toLowerCase())
+}
+
 function addAttachments(files: File[]) {
   if (submitting.value || !im.currentSession || composerBlocked.value) return
   const items = files.map(file => ({
@@ -885,6 +934,11 @@ function logScopeCount(scope: string) {
 }
 const drawerOpen = ref(false)
 const drawerAllowed = ref(false)
+/** 会话/联系人分栏宽度（可拖动 PaneResizer 调整） */
+const sessionWidth = ref(300)
+const layoutStyle = computed(() => ({
+  gridTemplateColumns: `56px ${sessionWidth.value}px 6px 1fr${drawerOpen.value && drawerAllowed.value ? ' 320px' : ''}`,
+}))
 const groupSettingsOpen = ref(false)
 /** 单聊里拉群弹窗 */
 const groupChatOpen = ref(false)
@@ -1035,6 +1089,7 @@ onMounted(() => {
   }
   mentions.ensureAccount()
   void favorites.sync().catch(() => {})
+  window.addEventListener('keydown', onGlobalSearchKey)
   const sid = String(route.query.session || '')
   if (sid) {
     const nm = String(route.query.name || '')
@@ -1057,6 +1112,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   disposed = true
+  window.removeEventListener('keydown', onGlobalSearchKey)
   unlistenFocus?.()
   im.setChatActive(false)
   closeSessionMenu()
@@ -1254,15 +1310,32 @@ async function onSend() {
   submitting.value = true
   actionError.value = ''
   try {
-    if (text) {
-      im.sendText(text, (draftMentions.value[key] || []).map(item => item.id), replyId, { receipt: receiptMode.value, deleteAfterRead: burnMode.value })
+    const atUserIds = (draftMentions.value[key] || []).map(item => item.id)
+    const images = items.filter(item => isImageFile(item.file))
+    const others = items.filter(item => !isImageFile(item.file))
+    if (text && images.length) {
+      // 与官方一致：文字和内嵌图片合成一条富文本，其余附件仍逐条发送。
+      await im.sendTextWithImages(images.map(item => item.file), text, atUserIds, replyId)
       drafts.value[key] = ''
       delete replyDrafts.value[key]
+      for (const item of images) removeAttachment(key, item.id)
+      if (others.length) {
+        await im.sendFiles(others.map(item => item.file), (_, index) => {
+          removeAttachment(key, others[index].id)
+          delete replyDrafts.value[key]
+        }, undefined)
+      }
+    } else {
+      if (text) {
+        im.sendText(text, atUserIds, replyId, { receipt: receiptMode.value, deleteAfterRead: burnMode.value })
+        drafts.value[key] = ''
+        delete replyDrafts.value[key]
+      }
+      await im.sendFiles(items.map(item => item.file), (_, index) => {
+        removeAttachment(key, items[index].id)
+        delete replyDrafts.value[key]
+      }, text ? undefined : replyId)
     }
-    await im.sendFiles(items.map(item => item.file), (_, index) => {
-      removeAttachment(key, items[index].id)
-      delete replyDrafts.value[key]
-    }, text ? undefined : replyId)
     if (composerKey.value === key) scrollToLatest()
   } catch (error) {
     actionError.value = (error instanceof Error ? error.message : '发送失败，草稿已保留').replace(/https?:\/\/[^\s)]+/g, '[请求地址]')
@@ -1330,17 +1403,13 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 <style scoped>
 .chat-layout {
   display: grid;
-  grid-template-columns: 56px 300px 1fr;
+  grid-template-columns: 56px 300px 6px 1fr;
   grid-template-rows: 100%;
   height: 100%;
-}
-.chat-layout.with-drawer {
-  grid-template-columns: 56px 300px 1fr 320px;
 }
 
 .session-panel {
   background: var(--panel);
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1364,6 +1433,20 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
   border-radius: 6px;
   background: var(--surface);
 }
+.panel-search-global {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+}
+.panel-search-global:hover { background: var(--hover); color: var(--text); }
+.panel-search-global svg { width: 15px; height: 15px; }
 .head-actions { display: flex; gap: 6px; }
 .log-panel .panel-header { justify-content: space-between; padding: 0 10px 0 16px; }
 .small { padding: 4px 10px; font-size: 12px; }

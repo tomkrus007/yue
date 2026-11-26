@@ -33,8 +33,12 @@ export function mentionsUser(message: ImMessage, userId: string): boolean {
   return !!userId && (ids.includes(userId) || ids.includes('ALL'))
 }
 
-/** 回应与撤回可能先于原消息抵达；保留目标状态，历史加载时同样应用。 */
-export function applyInteraction(state: MessageInteractions, message: ImMessage): boolean {
+/**
+ * 回应与撤回可能先于原消息抵达；保留目标状态，历史加载时同样应用。
+ * `selfId` 用于排除自己的阅读确认：多端同步会把自己的已读回执发回来，
+ * 但「谁读过我的消息」只应该记录对方。
+ */
+export function applyInteraction(state: MessageInteractions, message: ImMessage, selfId?: string): boolean {
   const type = Number(message.msg_type)
   const content = message.content
   const time = Number(message.send_time) || 0
@@ -68,11 +72,18 @@ export function applyInteraction(state: MessageInteractions, message: ImMessage)
     }
   }
   if (type === MsgType.READED && content?.readMsgIds) {
-    for (const id of String(content.readMsgIds).split(',').filter(Boolean)) {
-      ;(state.readers[id] ||= {})[message.from_id] = message.from_name || message.from_id
+    const ids = String(content.readMsgIds).split(',').filter(Boolean)
+    if (Number(content.cmd) === 1) {
+      for (const id of ids) state.recalls[id] = { type: MsgType.RECALL, time, hidden: true }
+    }
+    // 多端同步会把自己的已读回执发回来，但不能算作「谁读过我的消息」。
+    const readerId = message.from_id
+    if (!readerId || readerId === selfId) return true
+    const readerName = message.from_name || readerId
+    for (const id of ids) {
+      ;(state.readers[id] ||= {})[readerId] = readerName
       const times = state.readTimes[id] ||= {}
-      times[message.from_id] = Math.max(times[message.from_id] || 0, time)
-      if (Number(content.cmd) === 1) state.recalls[id] = { type: MsgType.RECALL, time, hidden: true }
+      times[readerId] = Math.max(times[readerId] || 0, time)
     }
     return true
   }

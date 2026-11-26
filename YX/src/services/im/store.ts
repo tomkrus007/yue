@@ -149,6 +149,38 @@ export async function getMessage(accountId: string, msgId: string): Promise<Pers
   return typeof result === 'string' ? parseMessage(result) : null
 }
 
+export interface SearchPage {
+  messages: PersistedMessage[]
+  hasMore: boolean
+}
+
+/**
+ * 本地消息全文检索。
+ *
+ * 关键词按空白拆词：>=3 个字走 FTS5 trigram，更短的词由后端用 LIKE 兜底。
+ * 搜索失败与“没有结果”一样返回空页，调用方不需要区分。
+ */
+export async function searchMessages(
+  accountId: string,
+  keyword: string,
+  options: { sessionId?: string; limit?: number; offset?: number } = {},
+): Promise<SearchPage> {
+  if (!accountId || !keyword.trim()) return { messages: [], hasMore: false }
+  const result = await call<{ bodies: string[]; hasMore: boolean }>(
+    '搜索消息',
+    'im_messages_search',
+    {
+      accountId,
+      keyword,
+      sessionId: options.sessionId,
+      limit: options.limit,
+      offset: options.offset,
+    },
+  )
+  if (!result || !Array.isArray(result.bodies)) return { messages: [], hasMore: false }
+  return { messages: parseMessages(result.bodies), hasMore: !!result.hasMore }
+}
+
 export function deleteMessages(accountId: string, ids: string[]): Promise<void> {
   if (!accountId || !ids.length) return Promise.resolve()
   return enqueue(async () => {

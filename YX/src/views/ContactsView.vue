@@ -18,7 +18,7 @@
         </div>
       </header>
 
-      <div class="contacts-body">
+      <div class="contacts-body" :style="bodyStyle">
         <!-- 左栏：列表 -->
         <section class="list-col">
           <!-- 搜索结果 -->
@@ -116,6 +116,9 @@
           </template>
         </section>
 
+        <!-- 拖动调整联系人分栏宽度 -->
+        <PaneResizer v-model="listWidth" storage-key="contacts_list_width" :min="260" :max="640" :reserve="360" />
+
         <!-- 右栏：详情 -->
         <section class="detail-col">
           <ContactDetailPanel
@@ -148,6 +151,7 @@ import SideNav from '../components/SideNav.vue'
 import CreateGroupModal from '../components/CreateGroupModal.vue'
 import ContactDetailPanel from '../components/ContactDetailPanel.vue'
 import ContactAvatar from '../components/ContactAvatar.vue'
+import PaneResizer from '../components/PaneResizer.vue'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
 import { FromType } from '../services/im/types'
@@ -160,6 +164,11 @@ const createOpen = ref(false)
 const router = useRouter()
 const keyword = ref('')
 let timer: ReturnType<typeof setTimeout> | null = null
+/** 联系人分栏宽度（可拖动 PaneResizer 调整） */
+const listWidth = ref(340)
+const bodyStyle = computed(() => ({
+  gridTemplateColumns: `${listWidth.value}px 6px 1fr`,
+}))
 
 const friendsOnly = computed(() => im.contacts.filter((c) => c.kind === 'user'))
 const groupsOnly = computed(() => im.contacts.filter((c) => c.kind === 'group'))
@@ -237,9 +246,9 @@ function onGroupCreated(group: { id: string; name: string }) {
 .search-box input { max-width: 520px; }
 .spinner { margin-left: 10px; font-size: 12px; color: var(--text-muted); }
 
-.contacts-body { flex: 1; display: grid; grid-template-columns: minmax(260px, 340px) 1fr; overflow: hidden; }
-.list-col { overflow-y: auto; padding: 16px 12px 24px 20px; border-right: 1px solid var(--border); }
-.detail-col { overflow: hidden; }
+.contacts-body { flex: 1; display: grid; grid-template-columns: 340px 6px 1fr; overflow: hidden; }
+.list-col { overflow-y: auto; padding: 16px 12px 24px 20px; }
+.detail-col { overflow: hidden; min-width: 0; }
 
 .section-title {
   display: flex; align-items: center; gap: 12px; cursor: pointer;

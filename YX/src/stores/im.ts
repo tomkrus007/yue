@@ -21,7 +21,7 @@ import {
 import { messageText } from '../services/im/content'
 import { logEvent } from '../services/app-log'
 import { applyInteraction, emptyInteractions, mentionsUser, type MessageInteractions } from '../services/im/interactions'
-import { uploadForwardDetails } from '../services/im/media'
+import { uploadForwardDetails, type MediaContent } from '../services/im/media'
 import { MessageDelivery } from '../services/im/delivery'
 import { HistoryPager } from '../services/im/history'
 import { forwardEnvelope, hydrateForwardContent } from '../services/im/forwarding'
@@ -34,6 +34,7 @@ import {
   loadSessionMessages,
   putState,
   saveMessages,
+  searchMessages as searchStoredMessages,
 } from '../services/im/store'
 import type { PersistedMessage } from '../services/im/store'
 import { useMentionsStore } from './mentions'
@@ -194,12 +195,14 @@ export const useImStore = defineStore('im', () => {
   function consumeInteraction(message: ImMessage): boolean {
     if (Number(message.msg_type) === MsgType.READED && isMine(message) && pendingReadCommands.value[message.msg_id]) delivery.acknowledge(message.msg_id, true)
     if (Number(message.msg_type) === MsgType.READED && message.content?.lastSendTime && !message.content?.readMsgIds) {
+      // 自己的会话已读游标（多端同步）与「别人是否读了这条消息」无关，不能把本端标成读者。
+      if (isMine(message)) return true
       const multi = [2, 4, 8].includes(Number(message.content.toType))
-      const sessionId = multi || isMine(message) ? message.content.toId : message.from_id
+      const sessionId = multi ? message.content.toId : message.from_id
       const ids = messages.value.filter(item => item.sessionId === sessionId && isMine(item) && Number(item.send_time) <= Number(message.content.lastSendTime)).map(item => item.msg_id)
       if (ids.length) message = { ...message, content: { ...message.content, readMsgIds: ids.join(',') } }
     }
-    if (!applyInteraction(interactions.value, message)) return false
+    if (!applyInteraction(interactions.value, message, authService.getCurrentUserId())) return false
     for (const id of interactionMessageIds(message)) markInteraction(id)
     if (isMine(message)) delete interactionErrors.value[interactionTarget(message)]
     delete pendingInteractions.value[message.msg_id]
@@ -903,6 +906,25 @@ export const useImStore = defineStore('im', () => {
     return m.from_id === authService.getCurrentUserId()
   }
 
+  /** 展示用读者名单：历史版本可能把本端误写成读者，统一在这里剔除。 */
+  function readersOf(id: string): Record<string, string> {
+    const all = interactions.value.readers[id]
+    if (!all) return {}
+    const me = authService.getCurrentUserId()
+    const result: Record<string, string> = {}
+    for (const [userId, name] of Object.entries(all)) if (userId !== me) result[userId] = name
+    return result
+  }
+
+  function readTimesOf(id: string): Record<string, number> {
+    const all = interactions.value.readTimes[id]
+    if (!all) return {}
+    const me = authService.getCurrentUserId()
+    const result: Record<string, number> = {}
+    for (const [userId, time] of Object.entries(all)) if (userId !== me) result[userId] = time
+    return result
+  }
+
   /** 单条消息进入本地：会话归属、未读、预览 */
   function addMessage(msg: ImMessage): void {
     if (!msg || !msg.msg_id) return
@@ -1341,6 +1363,58 @@ export const useImStore = defineStore('im', () => {
     return job.promise
   }
 
+  /** 全局历史拉取进度：会话级 done/total，细粒度进度复用 historyProgress。 */
+  const historyBackfill = ref({ running: false, done: 0, total: 0, failed: 0, cancelled: false, current: '' })
+  let historyBackfillTask: Promise<void> | null = null
+
+  /**
+   * 为全文搜索拉取全部会话历史。
+   *
+   * 复用 `completeReplyHistory`：按会话从最新往前翻页，消息照常落库/建索引；
+   * 已补全过的会话直接跳过。用户确认后才调用，可随时取消，已拉取部分保留。
+   */
+  async function backfillAllHistory(): Promise<void> {
+    if (historyBackfillTask) return historyBackfillTask
+    const account = accountId()
+    if (!account) return
+    const targets = [...sessions.value].sort((a, b) => (b.lastTime || 0) - (a.lastTime || 0))
+    const progress = historyBackfill.value
+    progress.running = true
+    progress.cancelled = false
+    progress.done = 0
+    progress.failed = 0
+    progress.total = targets.length
+    historyBackfillTask = (async () => {
+      try {
+        for (const session of targets) {
+          if (!progress.running || progress.cancelled || account !== accountId()) break
+          progress.current = session.id
+          try {
+            await completeReplyHistory(session.id)
+            if (historyProgress.value[session.id]?.error) progress.failed += 1
+          } catch (error) {
+            progress.failed += 1
+            log(`拉取历史失败（${session.name}）：` + (error instanceof Error ? error.message : String(error)))
+          }
+          progress.current = ''
+          progress.done += 1
+        }
+      } finally {
+        progress.current = ''
+        progress.running = false
+        historyBackfillTask = null
+      }
+    })()
+    return historyBackfillTask
+  }
+
+  function cancelBackfillAllHistory(): void {
+    if (!historyBackfill.value.running) return
+    historyBackfill.value.cancelled = true
+    // 只停掉当前会话：别的扫描可能是楼层回复面板自己开的。
+    if (historyBackfill.value.current) cancelHistoryScan(historyBackfill.value.current)
+  }
+
   async function loadForwardDetails(message: ImMessage): Promise<void> {
     const key = String(message.content?.forwardMsgDetailId || message.msg_id)
     const pending = forwardLoads.get(key)
@@ -1524,6 +1598,31 @@ export const useImStore = defineStore('im', () => {
           break
         case 'message':
           addMessage(e.data as ImMessage)
+          break
+        case 'session':
+          {
+            // 下行 14：有人把会话读到了 lastSendTime。只按对方已读处理，
+            // 不回显自己的游标（否则会把自己写进已读名单）。
+            const data = (e.data || {}) as Record<string, any>
+            const readerId = String(data.from_id || data.fromId || data.userId || '')
+            const lastSendTime = Number(data.lastSendTime || 0)
+            if (data.kind !== 'readed' || !readerId || !lastSendTime || readerId === authService.getCurrentUserId()) break
+            consumeInteraction({
+              msg_id: `readed-session-${String(data.toId || data.to_id || readerId)}-${lastSendTime}`,
+              msg_type: MsgType.READED,
+              from_id: readerId,
+              from_name: String(data.from_name || data.fromName || readerId),
+              from_type: Number(data.from_type || 1),
+              to_id: String(data.to_id || data.toId || ''),
+              to_type: Number(data.to_type || data.toType || 1),
+              send_time: Number(data.send_time || data.readTime || Date.now()),
+              content: {
+                toId: data.toId ?? data.to_id,
+                toType: data.toType ?? data.to_type,
+                lastSendTime,
+              },
+            } as ImMessage)
+          }
           break
         case 'receipt':
           {
@@ -1961,6 +2060,53 @@ export const useImStore = defineStore('im', () => {
     return uploads.value[uploadKey(s)]?.text || ''
   }
 
+  /**
+   * 文字 + 图片合并成一条富文本消息：先上传全部图片，再发一条 msg_type 96。
+   * 与官方一致：块数组首块是文字，后续每块是一张图片的 content JSON。
+   */
+  async function sendTextWithImages(
+    files: File[] | FileList,
+    text: string,
+    atUserIds: string[] = [],
+    replyMsgId?: string,
+  ): Promise<void> {
+    const generation = historyGeneration
+    const s = currentSession.value
+    const list = Array.from(files)
+    if (!s || !text.trim() || !list.length) return
+    if (!imClient.authed) {
+      throw new Error('长连接未就绪，附件未上传')
+    }
+    sending.value = true
+    try {
+      const images: MediaContent[] = []
+      for (let i = 0; i < list.length; i += 1) {
+        const f = list[i]
+        const label = `${i + 1}/${list.length} ${f.name}`
+        setUpload(s, i, `上传中 ${label} · 0%`)
+        try {
+          const { content } = await imClient.uploadMedia(f, (pct) => {
+            if (generation === historyGeneration) setUpload(s, i, `上传中 ${label} · ${pct}%`)
+          })
+          images.push(content)
+        } catch (e: any) {
+          if (generation !== historyGeneration) return
+          setUpload(s, i, `上传失败：${f.name} · ${e?.message || e}`)
+          log(`附件上传失败：${f.name} · ${e?.message || e}`)
+          setTimeout(() => clearUpload(s), 4000)
+          throw e
+        }
+      }
+      if (generation !== historyGeneration) return
+      const msg = imClient.sendRichText(s.id, s.name, s.type, text, images, replyMsgId, atUserIds)
+      addMessage(msg)
+      trackOutgoing(msg)
+      if (generation === historyGeneration) clearUpload(s)
+    } finally {
+      if (generation === historyGeneration) sending.value = false
+    }
+  }
+
   /** 发送图片 / 文件（可多选，逐个上传后按 msg_type 2/3 发送） */
   async function sendFiles(files: File[] | FileList, onSent?: (file: File, index: number) => void, replyMsgId?: string): Promise<void> {
     const generation = historyGeneration
@@ -2211,6 +2357,27 @@ export const useImStore = defineStore('im', () => {
     return FROM_TYPE_LABEL[type] || '未知'
   }
 
+  /** 本地消息全文检索（SQLite FTS）；失败返回空数组，不影响界面。 */
+  async function searchMessages(keyword: string): Promise<PersistedMessage[]> {
+    const account = accountId()
+    if (!account || !keyword.trim()) return []
+    const page = await searchStoredMessages(account, keyword, { limit: 40 })
+    return page.messages
+  }
+
+  /** 联系人/群组搜索，不改动左侧面板的搜索状态（供全局搜索复用）。 */
+  async function searchContacts(keyword: string): Promise<ContactEntry[]> {
+    const kw = keyword.trim()
+    if (!kw) return []
+    try {
+      const results = await contactService.searchEntries(kw, friends.value, groups.value)
+      return results.sort((a, b) => Number(b.kind === 'user') - Number(a.kind === 'user'))
+    } catch (e: any) {
+      log('搜索联系人失败：' + e.message)
+      return []
+    }
+  }
+
   function unreadOf(id: string): number {
     const s = sessions.value.find((x) => x.id === id)
     if (isServiceAccount(s)) return 0
@@ -2234,6 +2401,9 @@ export const useImStore = defineStore('im', () => {
     sending,
     loadingHistory,
     historyProgress,
+    historyBackfill,
+    backfillAllHistory,
+    cancelBackfillAllHistory,
     lookupProgress,
     completeReplyHistory,
     cancelHistoryScan,
@@ -2281,6 +2451,7 @@ export const useImStore = defineStore('im', () => {
     setTab,
     clearUnread,
     sendText,
+    sendTextWithImages,
     sendFiles,
     sendStructured,
     forwardMessage,
@@ -2312,7 +2483,11 @@ export const useImStore = defineStore('im', () => {
     sessionTypeLabel,
     loadContacts,
     searchAll,
+    searchMessages,
+    searchContacts,
     isMine,
+    readersOf,
+    readTimesOf,
     unreadOf,
     currentUploadText,
   }
