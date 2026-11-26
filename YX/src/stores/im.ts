@@ -1030,7 +1030,13 @@ export const useImStore = defineStore('im', () => {
       const isGroup = TO_MULTI_TYPES.has(ref.type)
       const title = isGroup ? ref.name || '群消息' : msg.from_name || ref.name || '新消息'
       const body = isGroup ? `${msg.from_name || '未知'}：${preview}` : preview
-      void notifyMessage(title, body)
+      // 带上会话和消息 id：点击通知时据此跳转并定位到这条消息。
+      void notifyMessage(title, body, {
+        sessionId: ref.id,
+        sessionType: ref.type,
+        sessionName: ref.name || title,
+        messageId: msg.msg_id,
+      })
     }
 
     const s = upsertSession({

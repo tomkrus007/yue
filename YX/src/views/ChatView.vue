@@ -742,6 +742,26 @@ async function locateMessage(id: string) {
   } catch { if (request === locateGeneration) actionError.value = '定位消息失败，请检查连接后重试' }
   finally { if (request === locateGeneration) locating.value = false }
 }
+/** 通知/外部唤起带来的深链：query.msg 是要定位的消息。 */
+function locateFromQuery(): void {
+  const mid = String(route.query.msg || '')
+  const sid = String(route.query.session || '')
+  if (!mid || !sid) return
+  // 已经在聊天页时不会有新的挂载，这里自己切会话。
+  if (im.currentSessionId !== sid) {
+    const nm = String(route.query.name || '')
+    const tp = Number(route.query.type || 1)
+    im.openChat(sid, nm || sid, tp)
+  }
+  // 去掉 msg 参数，避免离开再回来时重复定位；其余参数保留，维持原有深链行为。
+  const query: Record<string, string> = { session: sid }
+  if (route.query.name) query.name = String(route.query.name)
+  if (route.query.type) query.type = String(route.query.type)
+  void router.replace({ path: '/chat', query }).catch(() => {})
+  void nextTick().then(() => locateMessage(mid))
+}
+watch(() => route.query.msg, () => { locateFromQuery() })
+
 function onMessageScroll() {
   const element = msgList.value
   if (!element) return
@@ -1096,6 +1116,7 @@ onMounted(() => {
     const tp = Number(route.query.type || 1)
     im.openChat(sid, nm || sid, tp)
   }
+  locateFromQuery()
   trackWindowFocus().catch((e) => im.log('窗口焦点监听失败：' + String(e)))
   im.start()
   // 恢复登录会话时也刷新姓名，修复旧版本把用户 ID 缓存成姓名的情况。
