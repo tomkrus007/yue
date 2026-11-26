@@ -23,9 +23,11 @@
     <div class="message-state">
       <button v-if="replyCount" @click="emit('thread', message.msg_id)">{{ replyCount }} 条回复{{ im.historyProgress[im.currentSessionId]?.complete ? '' : '（可补全）' }}</button>
       <span v-if="favorite">☆ 已收藏</span>
-      <details v-if="im.isMine(message) && !recalled && Object.keys(readers).length"><summary>{{ Object.keys(readers).length }} 人已读</summary>{{ Object.values(readers).join('、') }}</details>
-      <span v-else-if="im.isMine(message) && !recalled">{{ deliveryLabel }}</span>
-      <button v-if="im.isMine(message) && !recalled && (message.is_need_read_receipt || message.is_delete_after_read || message.is_need_send_read || Object.keys(readers).length)" @click="emit('receipt', message)">回执详情</button>
+      <template v-if="im.isMine(message) && !recalled">
+        <button v-if="showsReadState && multi" @click="emit('receipt', message)">{{ readerCount }} 人已读</button>
+        <span v-else-if="showsReadState">{{ readerCount ? '已读' : '未读' }}</span>
+        <span v-if="sendFailure" class="send-failed">{{ sendFailure }}</span>
+      </template>
       <button v-if="message.__error && im.isMine(message) && !recalled && (!message.__delivery || message.__delivery.state === 'failed')" :disabled="!im.authed" @click="retry">重试</button>
     </div>
     <p v-if="error || im.interactionErrors[message.msg_id]" class="message-error" role="alert">{{ error || im.interactionErrors[message.msg_id] }}</p>
@@ -56,13 +58,27 @@ const myReaction = computed(() => reactions.value.find(item => item.userId === m
 const received = computed(() => reactions.value.some(item => item.userId === myId && item.emoji === '[ok]'))
 const pending = computed(() => im.interactionPending(props.message.msg_id))
 const replyCount = computed(() => im.repliesFor(props.message.msg_id).length)
-const readers = computed(() => im.interactions.readers[props.message.msg_id] || {})
-const deliveryLabel = computed(() => {
+const readers = computed(() => im.readersOf(props.message.msg_id))
+const readerCount = computed(() => Object.keys(readers.value).length)
+/** 群聊（群/部门/工作群）显示已读人数，单聊只显示对方已读或未读。 */
+const multi = computed(() => [2, 4, 8].includes(Number(props.message.to_type || im.currentSession?.type || 0)))
+const showsReadState = computed(() => {
+  if (!im.isMine(props.message) || recalled.value) return false
+  const receiptable = [1, 2, 3, 4, 7, 19, 28, 96].includes(Number(props.message.msg_type))
+  if (!receiptable && !readerCount.value) return false
+  if (multi.value) return true
+  return readerCount.value > 0 ||
+    Number(props.message.is_need_send_read) === 1 ||
+    String(props.message.is_need_read_receipt) === 'true' ||
+    String(props.message.is_delete_after_read) === 'true'
+})
+const sendFailure = computed(() => {
   const message = props.message
-  if (message.__sent) return '已发送'
-  if (message.__delivery?.state === 'queued') return '等待连接恢复'
-  if (message.__delivery?.state === 'pending') return message.__delivery.attempts > 1 ? `正在重试（${message.__delivery.attempts}/3）` : '等待服务端确认'
-  return message.__error ? '发送失败：' + message.__error : '已提交'
+  const delivery = message.__delivery
+  // 投递中的 queued/pending 不展示任何服务端状态；只有明确失败才提示。
+  if (delivery && delivery.state !== 'failed') return ''
+  if (message.__error) return '发送失败：' + message.__error
+  return delivery?.state === 'failed' ? '发送失败' : ''
 })
 const quoteBrief = computed(() => {
   const source = im.replySource(props.message)
@@ -103,6 +119,7 @@ async function reloadDetails() {
 .quick-reply .chosen, .message-reactions .mine { background: var(--info-soft); color: var(--info-text); }
 .message-reactions button:disabled { opacity: 1; cursor: default; }
 .message-state { color: var(--text-muted); }
+.send-failed { color: var(--danger); }
 .message-error { color: var(--danger); font-size: 12px; }
 .reload-details { padding: 6px; background: transparent; color: var(--link); font-size: 12px; }
 .recalled .bubble { color: var(--text-muted); background: transparent; }

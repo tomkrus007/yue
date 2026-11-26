@@ -23,7 +23,7 @@ import {
 } from './protocol'
 import { authService } from '../auth'
 import { getServerPaths, DEFAULT_CONFIG, type AppConfig } from '../config'
-import { buildMediaContent, uploadToStore } from './media'
+import { buildMediaContent, uploadToStore, type MediaContent } from './media'
 import type { DeliveryState } from './delivery'
 
 export interface ImMessage {
@@ -684,17 +684,13 @@ export class ImClient {
   }
 
   /**
-   * 发送图片 / 文件：先上传到 store/putFile，再按 msg_type 2/3 发送。
+   * 只上传不发送：图文合并成一条富文本时，要先拿到所有图片的 content。
    * 后缀决定类型（只有 jpg/jpeg/png/gif/bmp 算图片）。
    */
-  async sendMedia(
+  async uploadMedia(
     file: File,
-    toId: string,
-    toName: string,
-    toType: number,
     onProgress?: (pct: number) => void,
-    replyMsgId?: string,
-  ): Promise<ImMessage> {
+  ): Promise<{ msgType: 2 | 3; content: MediaContent }> {
     const generation = this.sessionGeneration
     const accountId = authService.getCurrentUserId()
     let upload = this.mediaUploads.get(file)
@@ -705,9 +701,48 @@ export class ImClient {
     const fileId = await upload
     if (generation !== this.sessionGeneration || accountId !== authService.getCurrentUserId()) throw new Error('账号会话已变化，附件未发送')
     onProgress?.(100)
-    const { msgType, content } = buildMediaContent(file.name, file.size, fileId)
+    return buildMediaContent(file.name, file.size, fileId)
+  }
+
+  /**
+   * 发送图片 / 文件：先上传到 store/putFile，再按 msg_type 2/3 发送。
+   */
+  async sendMedia(
+    file: File,
+    toId: string,
+    toName: string,
+    toType: number,
+    onProgress?: (pct: number) => void,
+    replyMsgId?: string,
+  ): Promise<ImMessage> {
+    const { msgType, content } = await this.uploadMedia(file, onProgress)
     const msg = this.baseMessage(msgType, content, toId, toName, toType, replyMsgId)
     if (!this.authed || !this.send(Cmd.uSendMsg, 1, msg)) throw new Error('连接已断开，附件消息未发送')
+    return msg
+  }
+
+  /**
+   * 文字与图片合并成一条富文本（96）。
+   * 与官方 home.js 一致：编辑器里含内嵌图片时 msg_type=96，
+   * content 是块数组 [{msg_type:1,content:文字},{msg_type:2,content:'{...图片JSON}'}]。
+   */
+  sendRichText(
+    toId: string,
+    toName: string,
+    toType: number,
+    text: string,
+    images: MediaContent[],
+    replyMsgId?: string,
+    atUserIds: string[] = [],
+  ): ImMessage {
+    const blocks = [
+      { msg_type: 1, content: text },
+      ...images.map(content => ({ msg_type: 2, content: JSON.stringify(content) })),
+    ]
+    const msg = this.baseMessage(MsgType.RICHTEXT, JSON.stringify(blocks), toId, toName, toType, replyMsgId)
+    msg.at_user_ids = [...new Set(atUserIds)].join(',')
+    msg.is_need_send_read = toType === FromType.USER && toId !== authService.getCurrentUserId() && !toId.includes('@') ? 1 : 0
+    if (!this.authed || !this.send(Cmd.uSendMsg, 1, msg)) throw new Error('连接已断开，消息未发送')
     return msg
   }
 

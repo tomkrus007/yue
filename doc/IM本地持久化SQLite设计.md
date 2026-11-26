@@ -522,3 +522,86 @@ hydrate 不阻塞 WebSocket 建连：连接可以在 hydrate 完成前建立，�
 | 旧数据未迁移 | 首启未读/回执短暂丢失 | 设计已知取舍；消息可从服务端重拉，回执可重新采集 |
 
 回滚方式：保留 `localStorage` 的会话/偏好数据；若需退回旧版，旧版会重新从服务端拉取消息，只是丢失 SQLite 中的新状态。数据库表可保留，不影响旧版运行。
+
+## 16. 全文检索（v4）
+
+### 16.1 目标与范围
+
+消息落库后支持本地全局搜索：聊天正文、附件文件名、卡片标题、合并转发明细、发送人/会话名，以及会话与联系人。搜索完全在本地进行，不把关键词发给服务端。
+
+不索引：附件内容本身、已撤回/焚毁消息（前端会把 `content` 置空后重新 upsert）、受保护消息。
+
+### 16.2 表结构
+
+迁移 v4 给 `im_messages` 增加 `search_text`（抽取后的纯文本），并建立 external content 模式的 FTS5 表：
+
+```sql
+ALTER TABLE im_messages ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
+CREATE VIRTUAL TABLE im_messages_fts USING fts5(
+  search_text,
+  content='im_messages',
+  content_rowid='rowid',
+  tokenize='trigram'
+);
+```
+
+`im_messages_fts_insert/delete/update` 三个触发器负责同步；`ON CONFLICT DO UPDATE` 的 upsert 会走 update 触发器（先 `delete` 旧行再插入新文本）。迁移结束时执行一次 `INSERT INTO im_messages_fts(im_messages_fts) VALUES('rebuild')`，让已有 rowid 先进入索引，避免首次回填时 `delete` 找不到行。
+
+中文不依赖词典：trigram 把连续文本按 3 字符切片，任意 ≥3 字的子串都能命中；2 字及以下的查询走 `search_text LIKE '%词%'` 兜底。
+
+### 16.3 抽取规则
+
+`im_store::build_search_text()` 与前端 `services/im/content.ts` 的 `messageText()` 对齐：
+
+| 消息 | 索引内容 |
+| --- | --- |
+| 1 文本 | 原文 |
+| 96 富文本 | 文本块（去 HTML 标签）+ 图片/文件块的 `file_name`/`show_name` |
+| 99 复合 | `brief` + `contents[].content`（type 0/1 去标签；其它尝试按文件卡片取文件名） |
+| 24 合并转发 | `brief` + 内层每条消息的文本/文件名 + `from_name` |
+| 2/3/4/5/6/14/23/25/30 | `file_name`/`show_name`/`name`/`title` |
+| 8/12/15/21/31 | 标题/摘要 |
+| 10/11/19/27/28/29 | 分享内容、摘要、名片名、表情说明 |
+| 所有消息 | `from_name`、`to_name`（支持按人/按群检索） |
+
+撤回/焚毁后 `content` 为空串，`search_text` 被重算为空，update 触发器同时清掉旧索引。
+
+### 16.4 查询
+
+`im_messages_search(accountId, keyword, sessionId?, limit?, offset?)`：
+
+1. 关键词按空白拆词，逐词分流：字符数 ≥3 走 FTS `MATCH`，更短的走 `LIKE`；多词之间是 AND。
+2. FTS 词用双引号包裹并转义内部 `"`，避免用户输入被当成 FTS 查询语法。
+3. `account_id` 必带，可选 `session_id`；按 `send_time DESC, msg_id DESC` 排序，`limit + 1` 判断是否还有下一页。
+4. 返回 `body` 列表，由前端复用 `messageText()` 生成摘要并高亮，避免后端再维护一套渲染规则。
+
+### 16.5 升级与回填
+
+v4 迁移只改结构；`Db::open` 后在后台线程执行 `im_store::search_backfill()`，按 `rowid > 上次游标` 分批 500 行补 `search_text`，不阻塞启动。补写会触发现有 update 触发器建索引。无文本可抽取的消息（语音、抖动等）跳过，但游标继续推进，不会重复扫描。
+
+### 16.6 前端入口
+
+`GlobalSearch.vue`（ChatView 内挂载）：
+
+- `⌘K` / `Ctrl+K` 或左侧搜索框旁的放大镜按钮打开。
+- 三组结果：会话（名称匹配）、聊天记录（SQLite 搜索）、联系人（复用 `contactService.searchEntries`）；↑↓ 选择，Enter 打开，Esc 关闭。
+- 点击消息结果：`im.openChat()` 切到会话后调用现有的 `locateMessage()` → `loadUntilMessage()`（先查本地 `messages_around`，未命中再翻服务端历史）→ `scrollIntoView` + 高亮。
+
+### 16.7 已知取舍
+
+- 2 字以内的查询无法用 trigram，退化为 `LIKE` 全表扫描；在 10 万条量级仍可用，但明显大于 FTS 查询。
+- HTML 去标签是轻量实现（状态机 + 常见实体解码），不追求与 `DOMParser` 逐字一致，索引足够用。
+- 索引会额外占用约一份正文的存储（`search_text` + FTS 索引），需要时可后续加“按会话保留最近 N 条”的裁剪任务。
+- `backfill` 每次启动都会扫一遍 `search_text = ''` 的行；这些行大多是无文本消息，数量少，成本可忽略。
+
+### 16.8 拉取全部历史
+
+本地索引只覆盖已落库的消息。搜索面板在“聊天记录”无结果时提供「拉取全部历史后重试」：
+
+1. 先展开代价说明（逐会话翻页、耗时/请求量、磁盘与内存占用），用户确认后才开始。
+2. 复用 `completeReplyHistory()` 按会话拉取：从最新往前的 `HistoryPager`（每页 100 条），消息照常经过 `mergeHistoryMessage()` 落库并触发 FTS 索引；`historyProgress[sessionId].complete` 为真的会话直接跳过，取消过的会话可从上次 offset 继续。
+3. 会话按 `lastTime` 倒序处理，先补最近活跃的会话；`historyBackfill` 暴露会话级 `done/total/failed/cancelled`，`historyProgress` 提供当前会话已扫描条数。
+4. 任务在 Pinia store 中运行，关闭搜索面板不会中断；再次打开面板可取消（`cancelBackfillAllHistory()`）。取消只停掉当前正在拉取的会话，避免误停楼层回复面板自己发起的补全。
+5. 完成或取消后自动用当前关键词重跑搜索，已拉取的部分立即可用。
+
+注意：这一步会把历史消息加载进 `im.messages` 内存，历史很多时内存会明显增长；这是一次性、用户主动触发的操作。服务端没有“按关键词搜索历史”的接口，要覆盖全部历史只能翻页。

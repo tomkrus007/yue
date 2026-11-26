@@ -23,11 +23,21 @@ class MockWebSocket {
   close() { this.readyState = 3; }
 }
 const localStorage = { getItem: key => key === 'CurrentECode' ? '测试企业' : null };
+const windowListeners = new Map();
+const window = {
+  addEventListener(type, handler) { windowListeners.set(type, handler); },
+  removeEventListener(type, handler) { if (windowListeners.get(type) === handler) windowListeners.delete(type); },
+};
 const authService = {
   getCurrentUserId: () => currentUser,
   refreshToken: async () => refreshHandler(),
+  refreshTokenResult: async () => {
+    const token = await refreshHandler();
+    return token ? { token } : {};
+  },
   getCurrentUserName: () => '我',
   getDeviceId: () => 'test-device',
+  getPlatform: () => 'mac',
   getAccessToken: () => 'offline-test-token',
 };
 const dependencies = {
@@ -48,11 +58,11 @@ function load(file) {
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  new Function('require', 'module', 'exports', 'localStorage', 'WebSocket', code)(id => {
+  new Function('require', 'module', 'exports', 'localStorage', 'WebSocket', 'window', code)(id => {
     if (dependencies[id]) return dependencies[id];
     assert.ok(id.startsWith('.'), '不允许加载未模拟的外部依赖：' + id);
     return load(path.resolve(path.dirname(file), id + '.ts'));
-  }, module, module.exports, localStorage, MockWebSocket);
+  }, module, module.exports, localStorage, MockWebSocket, window);
   return module.exports;
 }
 const { MsgType } = load(path.join(sourceRoot, 'types.ts'));
@@ -139,6 +149,11 @@ assert.equal(replyRoot('missing', chain), 'missing');
 assert.equal(replyRoot('child', [chain[1]]), 'root', '原消息尚未加载时保留引用目标编号');
 assert.ok(['a', 'b'].includes(replyRoot('a', [message({ msg_id: 'a', reply_msg_id: 'b' }), message({ msg_id: 'b', reply_msg_id: 'a' })])), '循环引用应有限结束');
 assert.equal(replyRoot('self', [message({ msg_id: 'self', reply_msg_id: 'self' })]), 'self');
+const ownReadState = emptyInteractions();
+applyInteraction(ownReadState, message({ msg_type: MsgType.READED, from_id: 'me', from_name: '我', content: { readMsgIds: 'original' } }), 'me');
+assert.deepEqual(ownReadState.readers, {}, '自己的已读回执不能算作他人已读');
+applyInteraction(ownReadState, message({ msg_type: MsgType.READED, from_id: 'reader', from_name: '阅读者', content: { readMsgIds: 'original' } }), 'me');
+assert.deepEqual(ownReadState.readers, { original: { reader: '阅读者' } }, '只记录对方的阅读确认');
 console.log('@目标精确匹配、95回执去重、引用链和循环防护回归通过');
 
 function lastSent(socket) {
@@ -300,17 +315,20 @@ async function checkRefreshLifecycle() {
   const refreshed = deferred(); refreshHandler = () => refreshed.promise;
   socket.onmessage({ data: request.buffer });
   refreshed.resolve('offline-refreshed-token');
+  // dRefreshToken 按原版延迟 1s 入队刷新；刷新成功后在同一连接上重新鉴权。
+  await new Promise(resolve => setTimeout(resolve, 1100));
   await flushMicrotasks();
-  assert.equal(socket.readyState, 3, '当前会话刷新成功进入计划重连窗口');
+  assert.equal(socket.readyState, 1, '刷新成功后不关闭当前连接');
+  assert.equal(decodeFrame(socket.sent.at(-1)).command, Cmd.uAuth, '刷新成功后发送鉴权帧');
   client.clearSession();
   await client.init();
   const newSocket = sockets.at(-1); newSocket.readyState = 1; newSocket.onopen(); client.authed = true;
   const newCount = sockets.length;
   await new Promise(resolve => setTimeout(resolve, 230));
-  assert.equal(sockets.length, newCount, '旧99指令的200ms定时重连不得另建连接');
-  assert.equal(newSocket.readyState, 1, '旧99定时器不得关闭新会话socket');
+  assert.equal(sockets.length, newCount, '刷新后重新鉴权不得另建连接');
+  assert.equal(newSocket.readyState, 1, '旧刷新定时器不得关闭新会话socket');
   client.close(); refreshHandler = async () => null;
-  console.log('99刷新生命周期：迟到失败不踢新会话，成功后延迟重连也按会话代次隔离回归通过');
+  console.log('99刷新生命周期：迟到失败不踢新会话，成功后原连接重新鉴权且不误建/误关连接回归通过');
 }
 
 checkClient().catch(error => { console.error(error); process.exitCode = 1; });
