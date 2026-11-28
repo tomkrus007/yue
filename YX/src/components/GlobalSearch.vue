@@ -13,10 +13,9 @@
             type="search"
             placeholder="搜索消息、文件名、会话、联系人"
             aria-label="搜索"
-            @keydown="onKeydown"
           />
           <span v-if="loading" class="gs-loading">搜索中…</span>
-          <kbd>Esc</kbd>
+          <button type="button" class="gs-esc" aria-label="关闭搜索" @click="close">Esc</button>
         </div>
 
         <div class="gs-body">
@@ -82,52 +81,56 @@
                 </span>
               </button>
             </section>
-
-            <div v-if="!loading && !messageHits.length" class="gs-history">
-              <template v-if="im.historyBackfill.running">
-                <p class="gs-history-title">正在拉取全部历史：{{ im.historyBackfill.done }}/{{ im.historyBackfill.total }} 个会话</p>
-                <p v-if="scanned" class="gs-history-note">当前会话已扫描 {{ scanned }} 条，边拉取边建立索引。</p>
-                <div class="gs-history-actions">
-                  <button class="secondary gs-small" @click="im.cancelBackfillAllHistory()">取消拉取</button>
-                </div>
-              </template>
-              <template v-else-if="confirmOpen">
-                <p class="gs-history-title">拉取全部历史后重新搜索</p>
-                <ul class="gs-history-cost">
-                  <li>逐会话向服务端翻页，一次拉取几百到上千个请求，可能要几分钟。</li>
-                  <li>历史消息会写入本地数据库并建立索引，占用额外的磁盘和内存。</li>
-                  <li>过程中可以随时取消，已拉取的部分会保留并参与搜索。</li>
-                </ul>
-                <div class="gs-history-actions">
-                  <button class="secondary gs-small" @click="confirmOpen = false">取消</button>
-                  <button class="gs-small" @click="startBackfill">开始拉取</button>
-                </div>
-              </template>
-              <template v-else-if="backfilled">
-                <p class="gs-history-title">
-                  {{ im.historyBackfill.cancelled ? '已取消拉取，已拉到的部分已参与搜索' : '已拉取全部历史，仍未找到匹配' }}
-                </p>
-                <p v-if="im.historyBackfill.failed || !im.historyBackfill.cancelled" class="gs-history-note">
-                  <template v-if="im.historyBackfill.failed">
-                    有 {{ im.historyBackfill.failed }} 个会话拉取失败，可以再试一次。
-                  </template>
-                  <template v-else>
-                    这条消息可能不在服务端历史里，例如已被撤回或超出服务端保留范围。
-                  </template>
-                </p>
-                <div class="gs-history-actions">
-                  <button class="secondary gs-small" @click="startBackfill">再拉一次</button>
-                </div>
-              </template>
-              <template v-else>
-                <p class="gs-history-title">本地已加载的记录里没有匹配</p>
-                <p class="gs-history-note">可以拉取服务端全部历史后重试。只补未完成的会话，已拉取的部分不会重复。</p>
-                <div class="gs-history-actions">
-                  <button class="secondary gs-small" @click="confirmOpen = true">拉取全部历史后重试</button>
-                </div>
-              </template>
-            </div>
           </template>
+
+          <div class="gs-history">
+            <template v-if="im.historyBackfill.running">
+              <p class="gs-history-title">正在拉取全部历史：{{ im.historyBackfill.done }}/{{ im.historyBackfill.total }} 个会话</p>
+              <p v-if="scanned" class="gs-history-note">当前会话已扫描 {{ scanned }} 条，边拉取边建立索引。</p>
+              <div class="gs-history-actions">
+                <button class="secondary gs-small" @click="im.cancelBackfillAllHistory()">取消拉取</button>
+              </div>
+            </template>
+            <template v-else-if="confirmOpen">
+              <p class="gs-history-title">拉取全部历史后重新搜索</p>
+              <ul class="gs-history-cost">
+                <li>逐会话向服务端翻页，一次拉取几百到上千个请求，可能要几分钟。</li>
+                <li>历史消息会写入本地数据库并建立索引，占用额外的磁盘和内存。</li>
+                <li>过程中可以随时取消，已拉取的部分会保留并参与搜索。</li>
+              </ul>
+              <div class="gs-history-actions">
+                <button class="secondary gs-small" @click="confirmOpen = false">取消</button>
+                <button class="gs-small" @click="startBackfill">开始拉取</button>
+              </div>
+            </template>
+            <template v-else-if="backfilled">
+              <p class="gs-history-title">
+                {{ im.historyBackfill.cancelled
+                  ? '已取消拉取，已拉到的部分已参与搜索'
+                  : (kw && messageHits.length ? '已拉取全部历史' : '已拉取全部历史，仍未找到匹配') }}
+              </p>
+              <p v-if="im.historyBackfill.failed || (!im.historyBackfill.cancelled && !(kw && messageHits.length))" class="gs-history-note">
+                <template v-if="im.historyBackfill.failed">
+                  有 {{ im.historyBackfill.failed }} 个会话拉取失败，可以再试一次。
+                </template>
+                <template v-else>
+                  这条消息可能不在服务端历史里，例如已被撤回或超出服务端保留范围。
+                </template>
+              </p>
+              <div class="gs-history-actions">
+                <button class="secondary gs-small" @click="startBackfill">再拉一次</button>
+              </div>
+            </template>
+            <template v-else>
+              <p class="gs-history-title">
+                {{ kw && !messageHits.length ? '本地已加载的记录里没有匹配' : '拉取全部历史' }}
+              </p>
+              <p class="gs-history-note">可以拉取服务端全部历史后再搜索。只补未完成的会话，已拉取的部分不会重复。</p>
+              <div class="gs-history-actions">
+                <button class="secondary gs-small" @click="confirmOpen = true">拉取全部历史</button>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
     </div>
@@ -135,7 +138,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useImStore, type ChatSession } from '../stores/im'
 import type { ContactEntry } from '../services/contact-client'
 import type { PersistedMessage } from '../services/im/store'
@@ -253,9 +256,11 @@ watch(
   () => props.open,
   async (open) => {
     if (!open) {
+      window.removeEventListener('keydown', onKeydown)
       if (timer) clearTimeout(timer)
       return
     }
+    window.addEventListener('keydown', onKeydown)
     keyword.value = ''
     messageHits.value = []
     contactHits.value = []
@@ -265,7 +270,10 @@ watch(
     await nextTick()
     inputEl.value?.focus()
   },
+  { immediate: true },
 )
+
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 watch(keyword, () => {
   if (timer) clearTimeout(timer)
@@ -319,6 +327,8 @@ function onKeydown(event: KeyboardEvent): void {
     close()
     return
   }
+  // 焦点在按钮上时，Enter/方向键留给按钮自身处理
+  if (event.target instanceof HTMLElement && event.target.tagName === 'BUTTON') return
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault()
     move(event.key === 'ArrowDown' ? 1 : -1)
@@ -434,7 +444,8 @@ function kindLabel(kind: ContactEntry['kind']): string {
   color: var(--text);
   font-size: 14px;
 }
-.gs-search kbd {
+.gs-search kbd,
+.gs-esc {
   padding: 1px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -442,6 +453,11 @@ function kindLabel(kind: ContactEntry['kind']): string {
   font-size: 11px;
   font-family: inherit;
 }
+.gs-esc {
+  background: transparent;
+  line-height: 1.5;
+}
+.gs-esc:hover { background: var(--hover); color: var(--text); }
 .gs-loading { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
 .gs-body { overflow-y: auto; padding: 6px; }
 .gs-group h4 {

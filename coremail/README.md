@@ -1,8 +1,8 @@
 # Coremail 邮箱客户端 V4.0（macOS）技术分析
 
 > 对象：`/Applications/Coremail邮箱客户端软件V4.0.app`（v4.2.3，arm64）
-> 方法：静态证据分析（Mach-O、符号表、字符串、bundle 资源、随包 TypeScript/JS 源码）。
-> **未进行函数体反编译**，所有涉及内部逻辑的结论均标注为"推断"。
+> 方法：静态证据分析（Mach-O、符号表、字符串、bundle 资源、随包 TypeScript/JS 源码）＋ **Ghidra 12.1.4 函数体反编译**。
+> 第一版（`01`~`14`）只有符号/字符串级证据，涉及内部逻辑的结论标注为"推断"；第二版用反编译**确认或推翻了其中一批结论**，集中记录在 [`15-反编译发现-Ghidra.md`](./15-反编译发现-Ghidra.md)，各章已就地标注"第二版更正"。
 > 全部文档为中文，证据与局限见 [`14-证据与局限.md`](./14-证据与局限.md)。
 
 ---
@@ -42,17 +42,17 @@
 
 4. **四套协议并存**，私有协议优先（符号量是 IMAP 的 3.3 倍）：`ProtocolContext_Coremail` / `Imap` / `Pop3` / `EWS`（含 Autodiscover 与 EWS Push），另有 **Socket.IO** 实时通道（`socketio_client.cpp` 调试路径出现 272 次，全工程最高）。
 
-5. **本地存储三层**：sqlite3mc（多密码算法 + 自研 codec，`.dat/.edat/.sdat` 三态）+ 邮件文件级 SM4/AES 加密（`MailStorageEncode`）+ Xapian Glass 全文索引（cppjieba 中文分词）。
+5. **本地存储三层**：sqlite3mc（`.edb` 用 **ChaCha20**，其余走 `sqlite3mc_register_cipher` 注册表）+ 邮件文件 `cmms` 容器（EncodeType 0 明文 / 1 异或 / 2 AES-128/192/256 / 3 SM4 / **4 FastXor（默认档位）** / 5..15 插件；keyId = 密钥串的 32 位哈希；Zlib/ZStd 可选压缩）+ Xapian Glass 全文索引（cppjieba 中文分词）。
 
 6. **国密与合规是主线**：GmSSL 3.1、SM2 设备证书登录、CM-SM"应用证书"自签体系、`signAsRed` 红头签名、"严禁处理国家秘密"提示、UOS/麒麟定制 CSS。
 
 7. **AI 有 10 个 provider 子类**（OpenAI/Azure/DeepSeek/Moonshot/SiliconFlow/Qwen/Spark/Ollama/openailike/麒麟 Kart）+ 2 个官方托管（Coremail Assistant / Lunkr Assistant），并**按账号授权**、**按 token 计费埋点**。
 
-8. **内置 MCP 服务器**（`MCPSvr`，SSE 传输），暴露 3 个工具 `mail_search` / `get_mail` / `compose_mail`，设置项为"启用 / 端口 / skills 目录"，并弹出明确的 AI 授权警告。
+8. **内置 MCP 服务器**（`MCPSvr`，SSE 传输），暴露 3 个工具 `mail_search` / `get_mail` / `compose_mail`。反编译确认：服务名 `CoremailAir`，端点 `GET /sse` + `POST /mcp`，**与本地 HTTP SDK 共用同一个 HTTP server、同一端口、同一鉴权**。
 
-9. **本地 HTTP SDK 有 15 个接口**（`http://127.0.0.1:11328/sdk?func=`），随包附带一个**完整可运行的 TypeScript 工程** `app/skills/`（含 `CLAUDE.md`），定位就是"给 AI 用的 skill"。
+9. **本地 HTTP SDK 有 15 个接口**（`http://127.0.0.1:11328/?func=`），随包附带一个**完整可运行的 TypeScript 工程** `app/skills/`（含 `CLAUDE.md`）。反编译确认 15 个接口全部注册进 `JSApiCallManager`——**与网页 `window.CM()` 桥共用同一张函数表**；默认端口 11328 (`0x2c40`) 来自 `SysSettingManage.AIMCPPort`。
 
-10. **若干安全面值得注意**：`NSAllowsArbitraryLoads=true`；内置含明文 `imap://`/`smtp://` 预设；本地服务未见鉴权 token；Xapian（GPL-2.0+）静态链接进闭源商业软件。
+10. **若干安全面值得注意**：`NSAllowsArbitraryLoads=true`；内置含明文 `imap://`/`smtp://` 预设；本地服务有 `Authorization` 鉴权框架但 **`loadAuthSetting()` 是空函数、key 表默认为空，等价于不鉴权**（仅绑 `127.0.0.1`）；Xapian（GPL-2.0+）静态链接进闭源商业软件。
 
 ---
 
@@ -74,18 +74,20 @@
 | [`12-配置更新与遥测.md`](./12-配置更新与遥测.md) | 四层配置、升级链、崩溃上报、LA 埋点协议 |
 | [`13-依赖与许可.md`](./13-依赖与许可.md) | 链接模型、OSS 清单、版本矩阵、合规风险 |
 | [`14-证据与局限.md`](./14-证据与局限.md) | 证据 ID、方法论边界、推断分级、后续建议 |
+| [`15-反编译发现-Ghidra.md`](./15-反编译发现-Ghidra.md) | **Ghidra 函数体反编译**：SDK/MCP 同源、鉴权空转、邮件文件头、162 项设置默认值、协议 Content-Type |
+| [`16-系统设置默认值全表.md`](./16-系统设置默认值全表.md) | `SysSettingManage::onBindFields` 的 **162 项**键名/类型/默认值 |
 
 ---
 
 ## 阅读建议
 
 - **想了解架构**：`01` → `02` → `03`
-- **想做安全评估**：`05` → `06` → `09` → `10` → `12`
-- **想接 AI / 做自动化**：`08` → `09` → `10`
-- **想做复刻**：`02`（桥协议）→ `04`（存储）→ `10`（数据结构）是本项目最有复用价值的三章
+- **想做安全评估**：`05` → `06` → `09` → `10` → `12` → `15`
+- **想接 AI / 做自动化**：`08` → `09` → `10` → `15`
+- **想做复刻**：`02`（桥协议）→ `04`（存储）→ `10`（数据结构）→ `15`（实现细节）是本项目最有复用价值的四章
 
 ---
 
 ## 重要提醒
 
-本报告基于**静态证据**。凡标注为"推断"的结论（如私有协议帧格式、SQLite codec 算法、本地服务是否鉴权、MCP 默认端口）都**未经运行时验证**，引用时请保留该限定。详见 [`14`](./14-证据与局限.md) 第 4 节的分级清单。
+本报告**第一版**基于静态证据，凡标注为"推断"的结论（如私有协议帧格式、SQLite codec 算法）**未经运行时验证**。**第二版**已用 Ghidra 反编译确认了其中一批（本地服务鉴权、MCP 端口、路由、邮件文件头与 AES 编码链、keyId 哈希规则、协议 Content-Type、162 项设置默认值、AIHub 复用 Cookie、登录字段），证据与函数地址见 [`15`](./15-反编译发现-Ghidra.md)。仍属推断或未知的项目，`15` 第 9 节与 [`14`](./14-证据与局限.md) 第 3.3 节有明确清单。

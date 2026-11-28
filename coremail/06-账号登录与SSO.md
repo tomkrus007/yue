@@ -59,6 +59,31 @@ temporaryVerify → SSLSocket::async_connect → async_switch_ssl
 3. `user:login` 提交 `{user, encryptedPassword, ...}`；
 4. 成功返回 `sid`（会话 ID），后续所有接口带 `sid`。
 
+#### 2.2.1 反编译确认（第二版）
+
+`CoremailClient::_loginImp`（`0x1010f6824`）本身只做**入参校验**：用户名或口令为空时直接回调 `Login rejected: password is empty for user %v`，不发起任何请求。真正的登录在它派生的异步链里（`0x101112d9c`，109 KB 伪代码，证据 `ev_33ad542eecf817bb8e99a191eb44138b109936816f801fb0acde3be82de49a4b`）。
+
+从 `user:login` 请求的组装代码可读出**提交字段**：
+
+| 字段 | 含义 |
+|---|---|
+| `dynPwd` | 动态口令（2FA） |
+| `cell` | 短信验证码 |
+| `img` | 图形验证码 |
+| `logincontextmcid` | 登录上下文 ID（多端/多会话） |
+| `dev` | 设备标识 |
+| `fn` | 登录方式/函数名 |
+| `os` | 操作系统标识 |
+| `time` | 时间戳 |
+| `token` / `nonce` / `sign` | **设备证书登录的 SM2 签名三元组** |
+
+同时确认了两条分支：
+
+1. **会话模式**：日志 `User %v login via session mode`——已有有效 session 时不再走口令登录。
+2. **设备证书（SM2）**：日志 `DeviceCert: supportAuthDeviceCert=false, skip SM2 keypair` 说明这是**可被服务端关闭的能力**；`generateDeviceCertToken` 取 token 后本地生成 SM2 密钥对并签名（`token/nonce/sign`），即**登录阶段就能用证书替代口令**。
+
+另有 `Login globalVerify failed for user %v, ec:%v(%v)`，说明登录前后还有一次 `global:verify` 校验（与 `03` 里 `global:verify` 接口对应）。
+
 ### 2.3 IMAP / POP3 登录
 
 ```
@@ -223,3 +248,5 @@ ShowNetworkProxySetting: true     // conf/syssetting.js
 - `cmsso://` 在生产环境的主机名（包里只有 `fasoncm.rd.mt` 这个研发域名）。
 - SSO 回调时 `onSSOAuthCallback` 的三个 `string` 参数分别是什么。
 - 是否有 OAuth2/OIDC 标准支持（未发现 `openid` / `authorize` 端点字符串）。
+- `user:login` 里 `token`/`nonce`/`sign` 的具体签名原文（拼接顺序与哈希算法未读到，只确认存在 SM2 三元组）。
+- `logincontextmcid` 的生成规则（哪台机器/哪个上下文算同一个 ID）。

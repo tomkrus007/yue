@@ -5,6 +5,7 @@ import type { ImMessage } from '../services/im/im-client'
 import { mentionsUser } from '../services/im/interactions'
 import { messageText } from '../services/im/content'
 import { deleteState, getState, putState } from '../services/im/store'
+import { usePreferencesStore } from './preferences'
 
 export interface MentionNotice {
   id: string
@@ -21,6 +22,7 @@ export interface MentionNotice {
 
 /** 提醒处理状态独立于会话未读；打开群聊不会消除待回复事项。 */
 export const useMentionsStore = defineStore('mentions', () => {
+  const prefs = usePreferencesStore()
   const notices = ref<Record<string, MentionNotice>>({})
   const removed = ref<Record<string, number>>({})
   let account = ''
@@ -132,6 +134,8 @@ export const useMentionsStore = defineStore('mentions', () => {
   }
 
   function observe(message: ImMessage, session: { id: string; name: string; type: number }, historical = false) {
+    // 关闭 @ 提醒中心后不记录、不计数；历史提醒留在库里，重新开启即可恢复。
+    if (!prefs.mentionCenter) return
     ensureAccount()
     if (removed.value[message.msg_id]) return
     if (message.from_id === account || !mentionsUser(message, account) || [0, 66, 67, 95, 97].includes(Number(message.msg_type))) return
@@ -194,7 +198,9 @@ export const useMentionsStore = defineStore('mentions', () => {
   }
   ensureAccount()
   const all = computed(() => Object.values(notices.value).sort((a, b) => b.time - a.time || a.id.localeCompare(b.id)))
-  const pending = computed(() => all.value.filter(notice => notice.status === 'pending'))
+  const pending = computed(() =>
+    prefs.mentionCenter ? all.value.filter(notice => notice.status === 'pending') : [],
+  )
   /** 页面隐藏/退出前立即落盘（无待写项时是空操作）。 */
   function flushNow(): Promise<void> {
     if (writeTimer) {

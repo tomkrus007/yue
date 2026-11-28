@@ -10,8 +10,7 @@
     <!-- 左侧导航 -->
     <SideNav
       active="chat"
-      :mention-count="mentions.pending.length"
-      @apps="appOpen = true"
+      :mention-count="prefs.mentionCenter ? mentions.pending.length : null"
       @mentions="mentionsOpen = true"
       @logs="showLogs = !showLogs"
     />
@@ -227,7 +226,7 @@
             >
               {{ meetingBusy ? '会议启动中…' : '视频会议' }}
             </button>
-            <button v-if="[2, 4, 8].includes(im.currentSession.type)" class="small secondary" :disabled="locating" @click="mentionsOpen = true">待处理@（{{ currentPendingMentions.length }}）</button>
+            <button v-if="prefs.mentionCenter && [2, 4, 8].includes(im.currentSession.type)" class="small secondary" :disabled="locating" @click="mentionsOpen = true">待处理@（{{ currentPendingMentions.length }}）</button>
             <button
               v-if="drawerAllowed"
               class="small secondary"
@@ -238,7 +237,7 @@
           </div>
         </header>
 
-        <div v-if="activeMention" class="active-mention-bar">
+        <div v-if="prefs.mentionCenter && activeMention" class="active-mention-bar">
           <span>{{ activeMention.sessionName }} · {{ activeMention.status === 'pending' ? '待处理提醒' : '已处理提醒' }}</span>
           <button class="secondary small" :disabled="locating || !mentions.pending.length" @click="nextMention(-1)">上一条</button><button class="secondary small" :disabled="locating || !mentions.pending.length" @click="nextMention(1)">下一条</button>
           <button class="secondary small" :disabled="locating" @click="locateMention(activeMention, true)">回复</button>
@@ -354,6 +353,11 @@
             <div v-if="composerBlocked" class="composer-blocked" role="status">
               {{ composerBlockText }}
             </div>
+            <div v-if="activeSpecialMode" class="composer-mode-bar" role="status">
+              <span class="mode-tag">[{{ activeSpecialMode }}]</span>
+              <span class="mode-note">{{ specialModeNote }}</span>
+              <button class="secondary small" @click="clearSpecialMode">取消</button>
+            </div>
             <textarea
               ref="composerInput"
               v-model="draft"
@@ -386,8 +390,33 @@
               <button class="composer-tool" title="添加图片 / 文件" aria-label="添加图片或文件" :disabled="submitting || im.sending || !im.authed || composerBlocked" @click="fileInput?.click()">＋</button>
             </div>
             <span class="composer-hint">Enter 发送 · Shift+Enter 换行</span>
-            <label><input v-model="receiptMode" type="checkbox" :disabled="submitting || burnMode" />要求回执</label>
-            <label><input v-model="burnMode" type="checkbox" :disabled="submitting || receiptMode" />阅后即焚</label>
+            <button
+              v-if="canUseReceipt"
+              class="composer-mode"
+              :class="{ active: receiptMode }"
+              :aria-pressed="receiptMode"
+              title="群聊/部门消息：成员看到就自动回执，仅支持文字"
+              :disabled="submitting || composerBlocked"
+              @click="toggleReceiptMode"
+            >回执消息</button>
+            <button
+              v-if="canUseReceipt"
+              class="composer-mode"
+              :class="{ active: cardMode }"
+              :aria-pressed="cardMode"
+              title="群聊/部门消息：成员点开后才回执，仅支持文字"
+              :disabled="submitting || composerBlocked"
+              @click="toggleCardMode"
+            >回执卡片</button>
+            <button
+              v-if="canUseBurn"
+              class="composer-mode"
+              :class="{ active: burnMode }"
+              :aria-pressed="burnMode"
+              title="单聊消息：对方打开后 30 秒销毁，仅支持文字"
+              :disabled="submitting || composerBlocked"
+              @click="toggleBurnMode"
+            >无痕消息</button>
             <button
               @click="onSend"
               :disabled="submitting || im.sending || !im.authed || composerBlocked || (!draft.trim() && !pendingAttachments.length)"
@@ -418,9 +447,6 @@
     <MentionCenter v-if="mentionsOpen" @close="mentionsOpen = false" @locate="locateMention" @reply="locateMention($event, true)" />
 
     <ForwardModal v-if="forwardOpen" :messages="forwardMessages" :combine="forwardCombine" @close="forwardOpen = false" @sent="finishForward" />
-
-    <!-- 应用面板 -->
-    <AppPanel v-model:open="appOpen" />
 
     <!-- 群设置（仅群会话） -->
     <GroupSettingsModal
@@ -507,7 +533,6 @@ import { supportsMute } from '../services/im/prefs'
 import ForwardModal from '../components/ForwardModal.vue'
 import type { ImMessage } from '../services/im/im-client'
 import HistoryModal from '../components/HistoryModal.vue'
-import AppPanel from '../components/AppPanel.vue'
 import SideNav from '../components/SideNav.vue'
 import PaneResizer from '../components/PaneResizer.vue'
 import ChatDrawer from '../components/ChatDrawer.vue'
@@ -523,6 +548,7 @@ import FavoritesModal from '../components/FavoritesModal.vue'
 import type { FavoriteMessageLocation } from '../services/im/favorites'
 import { useFavoritesStore } from '../stores/favorites'
 import { useMentionsStore, type MentionNotice } from '../stores/mentions'
+import { usePreferencesStore } from '../stores/preferences'
 import MentionCenter from '../components/MentionCenter.vue'
 import ReceiptModal from '../components/ReceiptModal.vue'
 import GroupSettingsModal from '../components/GroupSettingsModal.vue'
@@ -537,6 +563,7 @@ const auth = useAuthStore()
 const im = useImStore()
 const favorites = useFavoritesStore()
 const mentions = useMentionsStore()
+const prefs = usePreferencesStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -624,6 +651,11 @@ const mentionsOpen = ref(false)
 const activeMentionId = ref('')
 const activeMention = computed(() => mentions.notices[activeMentionId.value])
 const currentPendingMentions = computed(() => mentions.pending.filter(notice => notice.sessionId === im.currentSessionId))
+watch(() => prefs.mentionCenter, (enabled) => {
+  if (enabled) return
+  mentionsOpen.value = false
+  activeMentionId.value = ''
+})
 const locating = ref(false)
 const highlightedMessageId = ref('')
 const nearBottom = ref(true)
@@ -792,9 +824,59 @@ const drafts = ref<Record<string, string>>({})
 const replyDrafts = ref<Record<string, ImMessage | undefined>>({})
 const replyDraft = computed(() => replyDrafts.value[composerKey.value])
 const receiptModes = ref<Record<string, boolean>>({})
+const cardModes = ref<Record<string, boolean>>({})
 const burnModes = ref<Record<string, boolean>>({})
 const receiptMode = computed({ get: () => receiptModes.value[composerKey.value] || false, set: value => { receiptModes.value[composerKey.value] = value } })
+const cardMode = computed({ get: () => cardModes.value[composerKey.value] || false, set: value => { cardModes.value[composerKey.value] = value } })
 const burnMode = computed({ get: () => burnModes.value[composerKey.value] || false, set: value => { burnModes.value[composerKey.value] = value } })
+// 官方把这三个模式放在输入框上方的浮动条里，且按会话类型限制：单聊本身已有逐条
+// 已读，所以「回执消息/回执卡片」只给群聊/部门；「无痕消息」只给单聊。
+// 回执消息会在正文前加 U+200C，接收端进入可视区就自动回执；回执卡片要等点开。
+const sessionType = computed(() => Number(im.currentSession?.type || 0))
+const canUseReceipt = computed(() => sessionType.value === 2 || sessionType.value === 4)
+const canUseBurn = computed(() => sessionType.value === 1)
+const activeSpecialMode = computed(() =>
+  receiptMode.value ? '回执消息' : cardMode.value ? '回执卡片' : burnMode.value ? '无痕消息' : '',
+)
+const specialModeNote = computed(() => {
+  switch (activeSpecialMode.value) {
+    case '回执消息': return '接收人看到消息就回执，仅支持文字'
+    case '回执卡片': return '接收人点开后回执，仅支持文字'
+    case '无痕消息': return '接收人打开后 30 秒销毁，仅支持文字'
+    default: return ''
+  }
+})
+function specialModeGuard(name: string): boolean {
+  if (pendingAttachments.value.length) {
+    actionError.value = `请先发送或移除附件后再使用${name}`
+    return false
+  }
+  return true
+}
+function toggleReceiptMode() {
+  if (!receiptMode.value && !specialModeGuard('回执消息')) return
+  receiptMode.value = !receiptMode.value
+  if (receiptMode.value) { cardMode.value = false; burnMode.value = false }
+  actionError.value = ''
+}
+function toggleCardMode() {
+  if (!cardMode.value && !specialModeGuard('回执卡片')) return
+  cardMode.value = !cardMode.value
+  if (cardMode.value) { receiptMode.value = false; burnMode.value = false }
+  actionError.value = ''
+}
+function toggleBurnMode() {
+  if (!burnMode.value && !specialModeGuard('无痕消息')) return
+  burnMode.value = !burnMode.value
+  if (burnMode.value) { receiptMode.value = false; cardMode.value = false }
+  actionError.value = ''
+}
+function clearSpecialMode() {
+  receiptModes.value[composerKey.value] = false
+  cardModes.value[composerKey.value] = false
+  burnModes.value[composerKey.value] = false
+  actionError.value = ''
+}
 const attachments = ref<Record<string, PendingAttachment[]>>({})
 const draft = computed({
   get: () => drafts.value[composerKey.value] || '',
@@ -919,6 +1001,10 @@ function isImageFile(file: File): boolean {
 
 function addAttachments(files: File[]) {
   if (submitting.value || !im.currentSession || composerBlocked.value) return
+  if (receiptMode.value || cardMode.value || burnMode.value) {
+    actionError.value = '回执消息/回执卡片/无痕消息仅支持文字，请先取消该模式'
+    return
+  }
   const items = files.map(file => ({
     id: ++attachmentId,
     file,
@@ -941,7 +1027,6 @@ const keyword = ref('')
 const searchActive = ref(0)
 const searchListEl = ref<HTMLElement | null>(null)
 const historyOpen = ref(false)
-const appOpen = ref(false)
 const showLogs = ref(false)
 const logScope = ref('')
 /** 按来源筛选：全部 / 协议 / 登录 / console / 系统 */
@@ -1324,7 +1409,7 @@ async function onSend() {
   const text = draft.value.trim()
   const items = [...pendingAttachments.value]
   if (!text && !items.length) return
-  if ((receiptMode.value || burnMode.value) && items.length) { actionError.value = '回执与阅后即焚目前仅支持文字，请先移除附件或关闭阅读模式'; return }
+  if ((receiptMode.value || cardMode.value || burnMode.value) && items.length) { actionError.value = '回执消息/回执卡片/无痕消息仅支持文字，请先移除附件或取消该模式'; return }
   const replyId = replyDraft.value?.msg_id
   const source = replyId ? im.messages.find(message => message.msg_id === replyId) : undefined
   if (source && [66, 67].includes(Number(source.msg_type))) { actionError.value = '原消息已撤回，请取消引用后发送'; return }
@@ -1348,9 +1433,13 @@ async function onSend() {
       }
     } else {
       if (text) {
-        im.sendText(text, atUserIds, replyId, { receipt: receiptMode.value, deleteAfterRead: burnMode.value })
+        im.sendText(text, atUserIds, replyId, { receipt: receiptMode.value, receiptCard: cardMode.value, deleteAfterRead: burnMode.value })
         drafts.value[key] = ''
         delete replyDrafts.value[key]
+        // 原版模式是一次性的：发送后输入框上方的浮动条自动消失
+        receiptModes.value[key] = false
+        cardModes.value[key] = false
+        burnModes.value[key] = false
       }
       await im.sendFiles(items.map(item => item.file), (_, index) => {
         removeAttachment(key, items[index].id)
@@ -1798,8 +1887,28 @@ function openPreview(payload: { url: string; name: string; image?: ImageMeta }) 
 .chat-action-error { color: var(--warning-text); font-size: 12px; padding: 8px 20px; }
 .reply-draft { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-left: 3px solid var(--primary); background: var(--chip-bg); color: var(--chip-text); font-size: 12px; margin-bottom: 8px; }
 .reply-draft span { flex: 1; overflow-wrap: anywhere; }
-.composer-actions label { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; white-space: nowrap; }
-.composer-actions label input { width: auto; }
+.composer-actions .composer-mode {
+  min-width: 0; height: 24px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: transparent; color: var(--text-muted);
+  font-size: 11px; line-height: 1;
+}
+.composer-actions .composer-mode:hover { background: var(--hover); color: var(--text); }
+.composer-actions .composer-mode.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+  font-weight: 500;
+}
+.composer-mode-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 6px;
+  background: var(--info-soft); color: var(--info-text);
+  font-size: 12px;
+}
+.composer-mode-bar .mode-tag { font-weight: 600; }
+.composer-mode-bar .mode-note { flex: 1; }
+.composer-mode-bar button { padding: 2px 8px; font-size: 11px; }
 .message-located { background: var(--warning-soft); border-radius: 8px; outline: 2px solid var(--primary); }
 /* 滚动辅助按钮：贴在消息区右侧滚动条旁，图标按钮不打断阅读 */
 .jump-btn {

@@ -65,3 +65,5 @@ CAS 标准的浏览器 SSO 依赖浏览器提交 TGC cookie；客户端有 OAuth
 1. `/jump/cache` 选租户 → `oauth2/authorize`（Basic）取 tokens → 仅当 token 域与 `casUrl` 主机匹配时才尝试 `{casTicketUrl}/v1/tickets/{TGT}`，避免发注定 401 的请求；整段最多等 4 秒。
 2. 换到 ST 就打开 `{casUrl}/login?token=&service=`（含 `token2`/`service2`），否则打开该租户的 `{casUrl}/login?service=<待办地址>`，由浏览器复用或建立 CAS 会话。
 3. 提示语不再暴露 reqwest 原文，也不再声称「自动登录失败」，只说明首次可能需要统一认证登录。
+
+> 补充（2026-11-28）：客户端侧已经找到可用的 CAS 会话换取方式——用桌面端 `loginTicket` 静默完成 CAS 扫码登录拿 TGT，再以 `CASTGC` Cookie 写进 WebView。本文「客户端凭证换不到 ST」的结论只对系统浏览器成立。详见 [集团CAS应用免登录打通记录](/Users/tom/Documents/code/old/yue/doc/集团CAS应用免登录打通记录.md)。

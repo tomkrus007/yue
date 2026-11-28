@@ -132,3 +132,32 @@
 - **下载**：GitHub 在国内代理下 TLS 握手约两成概率被掐断（`client error (Connect)：connection closed via error`），必须重试 2–3 次；`reqwest::Error` 的 `Display` 只有「error sending request」，要把 `source()` 链拼进错误文案才有排查价值。
 - **半截包要续传**：组件包 118 MB，重下代价太高。缓存目录固定留一份 `.download.part`（来源 URL 记在同名 `.json` 里，换地址就不续），按 `Range: bytes=<已有长度>-` 接着拉；服务器回 416 且 `Content-Range` 的总长等于本地长度就说明上次其实已经下完，直接用；服务器不认 Range 回 200 时截断重写。老版本遗留的 `.download-<pid>.part` 会被认领改名。只有解压阶段报错（包本身坏了）才丢掉半截包，取消/签名不符/落位失败都留着，省一次下载。
 - **解压不能调系统 tar**：macOS 的 `/usr/bin/tar`（bsdtar）没链 libzstd，遇到 `.tar.zst` 会去 `PATH` 找外部 `zstd`，报 `Can't initialize filter; unable to run program "zstd -d -qq"`。app 由 Finder/launchd 启动时 `PATH` 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，Homebrew 的 zstd 不在其中；而干净机器根本装不了。安装器用 `zstd` + `tar` crate 在进程内解码（保留权限位与符号链接，`..` 路径直接拒绝）。
+
+## 历史消息翻页不能依赖 skip
+
+- **现象**：回复详情一直提示「历史尚未全部扫描」并报「服务端历史分页未推进」，只能识别到 1 条回复。
+- **原因**：`GET {embQueryUri}/get/history/date` 的 `skip` 在服务端无效（传 0 与非 0 返回同一页）；原实现固定 `dateTime` 递增 `skip`，第二页必然拿到重复页。
+- **做法**：`dateTime` 是毫秒时间戳且为**含上界**，翻页要把 `dateTime` 退到上一页最早一条 `send_time`（含）再查，按 `msg_id` 去重；同一毫秒消息多于一页且服务端忽略更早上界时，退一毫秒强制前进并结束，不要再抛重复页错误。回归脚本 `YX/scripts/check-history-pager.cjs`。
+
+## 「我的应用」是个人桌面，不是 `es/authorized` 列表
+
+- **现象**：按 `{appApiUri}/es/authorized?terminalType=4` 平铺出来的应用和原版对不上（本账号 56 个 vs 原版桌面 26 个），点开还会在应用里要求重新登录。
+- **原因**：原版「应用」页读的是用户自己维护的应用桌面：`GET {appApiUri}/v2/desk/list` 拿桌面，`GET /v2/desk/{deskId}/details` 拿文件夹与应用；`es/authorized` 只是「全部可授权应用」的目录来源（消息右键、搜索结果）。桌面应用的 `href` 实测全为 `null`，真实地址在 `deployTemplateDescription` 的 `urlParams`/`otherParams`，必须复刻官方 `getFormatHref`（含 `uam` 前缀替换、`{web}`/`{analysisstatic}` 占位符、非 http 补 `http://`）才能打开。
+- **添加/移除**：都是 `POST {appApiUri}/v2/desk/app`，添加体 `{deskId, apps:[{appId}]}`（可选 `folderId`），移除再加 `folderId` 与 `isDeleted:true`；「全部应用」的分类与搜索走 `escategory/get`、`escategory/{id}/appItem?deskId=`、`escategory/{关键词}/search`。
+- **免二次登录靠 Cookie，不是靠 code**：只把窗口导航到 `{ssoUri}/oauth2/authorize?...&login_token=<票据>` 时，服务端确实 302 到应用并带上 `code`/`openid.ex.service_ticket`，但实测大部分应用仍跳登录页——应用真正认的是自己的 SSO（如会议一体化的 `config.json` 里 `oauth2.serverUrl=https://linksso.yuexiu.com`），它去校验会话时没有 Cookie 就判未登录。原版的做法是 `GET {ssoUri}/oauth2/authorize?client_id=link_desktop&response_type=create_session&redirect_uri=<ssoUri>&logout_uri=&responseJson=true&access_token=<AT>`（Basic 认证头），返回 `tokens[]`（实测两条：`www.bingolink.biz` 的 `auth_token_saaslink_sso_cookie`、`linksso.yuexiu.com` 的 `auth_token_yuexiu.linksso_cookie`，均 HttpOnly、path=/），由原生层写进 WebView 的 Cookie 仓库再加载应用。Tauri 里用 `Webview::set_cookie`（wry 走 `WKHTTPCookieStore`，能写 HttpOnly），所以建窗、写 Cookie、导航都放 Rust（`src-tauri/src/app_window.rs`），窗口先挂 `about:blank`，Cookie 写完再 `navigate`，否则应用会先判未登录。系统浏览器设置不了 Cookie，仍只能用 login_token 桥兜底。
+- **坑**：`http://{web}/xxx` 这种写法在官方只替换开头一个占位符（`^\$?\{...}`），实际拼不出合法地址；复刻时先去掉占位符前的 `http://` 再替换。哈希路由应用（`.../#/path`）追加参数要按官方 `UrlAddParam` 规则接在 `?`/`&` 后面，不要用 `URL.searchParams`（会把参数塞到 `#` 之前，应用读不到）。
+
+## 集团 CAS 应用（E-HR、主数据）要 CASTGC，linksso Cookie 对它们无效
+
+- **现象**：`create_session` 的 linksso Cookie 写进 WebView 后，`link.yuexiu.com` 系应用都能免登录，但 E-HR、主数据仍停在 `sso1.yuexiu.com/cas/login`。
+- **原因**：这些应用走集团 CAS（`sso1.yuexiu.com`），和 linksso OAuth 是两套会话。实测把 `login_token` 桥、`code`、`openid.ex.service_ticket` 喂给 `ehr.yuexiu.com/ehrAuthService/sso` 都会被无视并 302 回 CAS 登录页；原版桌面端也没有任何 CAS 处理代码。
+- **打通点**：linksso 与 CAS 共用同一套扫码会话（`casSessionManager/qrcode` 的 key 空间）。用桌面端 `loginTicket` 代替「手机扫码人」，就能静默走完 CAS 扫码登录：
+  1. `GET https://ssoser.yuexiu.com/casSessionManager/qrcode/GetQRCodeUUID?t=` → 纯文本 32 位 key；
+  2. `POST https://linksso.yuexiu.com/qrcode/create`，表单 `key` + `loginTicket` → JSON 带 `nonce`；
+  3. `POST https://linksso.yuexiu.com/qrcode/confirm?key=&nonce=` → `{"status":1}`，CAS 侧 `Check?key=` 同步变成 1；
+  4. `GET https://ssoser.yuexiu.com/casSessionManager/qrcode/Await?key=` → `loginTicket`（CAS 票据，异步落库，可能要轮询几次）；
+  5. `GET .../qrcode/LoginAuthorize?redirect_uri=<encode(sso1/cas/login)>&response_type=id_token&login_token=<上一步>` → **单引号 JS 对象**（不是 JSON）`{idToken, username}`，idToken 约 5 分钟过期；
+  6. `POST https://sso1.yuexiu.com/cas/v1/tickets`，表单 `username=<username>&password=#QRCODE#<idToken>` → `201` + `Location: .../cas/v1/tickets/TGT-xxx`（正文 `form action` 里也有同一个地址）。
+- **用法**：把 `TGT-...` 当作 `CASTGC` Cookie（domain `sso1.yuexiu.com`、path `/cas/`、Secure、HttpOnly）写进应用窗口，应用跳 CAS 时直接 302 回 `service?ticket=ST`。实测 E-HR 落 `EHR_TOKEN`、主数据落 `mdm` 会话，都不再要密码。
+- **坑**：`#QRCODE#` 前缀是 CAS 登录 webflow 的约定；标准 CAS REST 用同一前缀也能过认证处理器。`/cas/v1/tickets` 用 OAuth JWT 当密码是 400，必须是 `#QRCODE#<idToken>` 或真实密码。Cookie 属性按 CAS 自己下发的写：domain `sso1.yuexiu.com`、path `/cas/`、Secure、HttpOnly。
+- **边界**：系统浏览器写不了 Cookie，只能人工登录；TGT 30 分钟内复用（`app-desk.ts` 的 `casTgt`），过期或换账号后重开窗口会重新换一次。

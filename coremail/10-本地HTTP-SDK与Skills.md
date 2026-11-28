@@ -10,9 +10,16 @@
 | 响应信封 | `{ code: 0, var: <数据>, msg: "错误信息" }` | 同上 |
 | 成功判定 | `code === 0`（**注意：与 AI 的 `"S_OK"` 不同**） | `cmclient.ts` |
 | 接口数 | 15 | `cmclient.ts` 全量扫描 |
-| 端口常量 | **二进制中未找到 `11328`** | `grep -a 11328 cmclient` 无结果 |
+| 端口常量 | **二进制中确认为 `0x2c40`（11328）** | `SysSettingManage.AIMCPPort` 默认值（反编译确认） |
 
-**重要结论**：11328 只出现在 `skills/` 的文档与代码里，二进制内没有该常量。因此 11328 **要么是 C++ 侧的常量未被字符串化（以整数形式存在于代码段），要么是配置默认值**。用户可通过设置改端口（参照 MCP 的 `AIMCPPort` 模式）。文档中应表述为"**随包 SDK 文档声明的默认端口**"。
+**重要更正（第二版）**：`grep -a 11328 cmclient` 找不到，是因为 11328 以**整数立即数 `0x2c40`** 存在，不是字符串。反编译 `SysSettingManage::onBindFields`（`0x10006c4e0`）可直接看到：
+
+```
+AIMCPPort = 0x2c40      // 11328
+EnableAIMCP = 0        // 默认关闭
+```
+
+`AISettingPanel::save()` 会在用户开启时 `initPort(AIMCPPort)` + `start()`。所以 11328 **既是 SDK 默认端口，也是 MCP 默认端口**——两者共用一个服务。详见 [`15-反编译发现-Ghidra.md`](./15-反编译发现-Ghidra.md) 第 1、3 节。
 
 ---
 
@@ -21,15 +28,43 @@
 ```
 Plugin::Plugin_CommandServer_Http
 ├── Plugin_CommandServer_Http()                       // 构造
-├── start(int port, unsigned long, unsigned long)     // 启动（端口 + 两个策略参数）
+├── start(int port, unsigned long, unsigned long)     // 启动（端口 + 2 + 30）
 ├── isRunning() const
 ├── getErrorPort(int&)                                // 端口冲突时取实际端口
-└── start(...)::$_1::operator()(async_server_request, async_respond)   // 请求处理
+├── start(...)::$_1::operator()(async_server_request, async_respond)   // SDK 请求处理
+└── start(...)::$_0::operator()(async_server_request, async_respond)   // /auth 处理
 ```
 
-- 请求处理是 `ara::http` 的**异步回调**（`shared_ptr<async_server_request>` / `shared_ptr<async_respond>`），与引擎其他部分一致；
-- `start` 的两个 `unsigned long` 参数很可能是"允许的方法位掩码"或"超时/大小限制"；
-- `getErrorPort(int&)` 说明**端口被占用时会把冲突端口回传给 UI**（而不是静默失败）。
+### 2.0 关键架构事实：与网页 JS 桥共用函数表
+
+反编译 `Plugin::CoremailEngineSDK_Disptach::init`（`0x1009ada80`）确认：15 个接口全部通过
+
+```cpp
+CoremailEngine::JSApi::JSApiCallManager::registerFunc("listAccount", CoremailEngineSDK_listAccount);
+```
+
+注册进 **`JSApiCallManager`**——这正是网页 `window.CM(func, json)` 用的同一张函数表。`CoremailEngineSDK_Disptach::call`（`0x1009b1618`）也只是转调 `JSApiCallManager::asyncCall`。
+
+**含义**：网页桥与本地 SDK **天然具备完全相同的能力边界和返回结构**；新增一个 `registerFunc` 会同时对两者生效。
+
+### 2.1 请求解析（`0x1009c9934`）
+
+1. `HttpSvrAuthManager::checkAuth` —— 失败直接 401；
+2. 在 URL 里 `memchr` 找 `"func="`（`0x636e7566` + `'='`），取其后内容作为函数名；
+3. 日志：`Got Command: func:%v name:%v body:%v`；
+4. 分发到 `JSApiCallManager`；
+5. **无 `Origin` / `Host` 校验**。
+
+### 2.2 `/auth` 与鉴权实现
+
+| 端点/组件 | 行为 |
+|---|---|
+| `POST /auth` | key 管理（`AuthSetting` = `Name` / `Key` / `CreateTime`） |
+| `HttpSvrAuthManager::checkAuth` | 读 `Authorization` 头，去 7 字符前缀后 `checkKey` |
+| `checkKey` | **key 表为空时直接放行** |
+| `loadAuthSetting` / `saveAuthSetting` | **均为空函数** |
+
+因此：**默认无鉴权**；鉴权只在同一进程内被 `setAuthSetting` 填充后临时生效，重启丢失。这与 `09` 第 6 节的安全评价是同一条事实。
 
 业务函数（`Plugin::CoremailEngineSDK_*`）：
 

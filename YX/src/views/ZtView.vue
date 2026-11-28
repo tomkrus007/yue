@@ -1,6 +1,6 @@
 <template>
   <div class="zt-layout">
-    <SideNav active="zt" @apps="appOpen = true" />
+    <SideNav active="zt" />
 
     <main class="zt-main">
       <header class="zt-head" data-tauri-drag-region="deep">
@@ -56,15 +56,12 @@ sudo route delete default -ifscope utun8</pre>
         </div>
       </section>
     </main>
-
-    <AppPanel :open="appOpen" @update:open="appOpen = $event" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import AppPanel from '../components/AppPanel.vue'
 import SideNav from '../components/SideNav.vue'
 import { useAuthStore } from '../stores/auth'
 import {
@@ -78,7 +75,6 @@ import {
 const auth = useAuthStore()
 const router = useRouter()
 
-const appOpen = ref(false)
 const busy = ref(false)
 const error = ref('')
 const message = ref('')

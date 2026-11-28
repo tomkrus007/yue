@@ -17,13 +17,17 @@ export interface AppEntry {
 }
 
 let cache: AppEntry[] | null = null
+let cachedAt = 0
+/** 目录类接口变化不频繁，短时缓存避免每次打开页面都请求；刷新按钮传 force。 */
+const CACHE_TTL = 5 * 60 * 1000
 
 export function clearAppCache(): void {
   cache = null
+  cachedAt = 0
 }
 
-export async function loadApps(): Promise<AppEntry[]> {
-  if (cache) return cache
+export async function loadApps(force = false): Promise<AppEntry[]> {
+  if (!force && cache && Date.now() - cachedAt < CACHE_TTL) return cache
   const base = String(getServerPaths().appApiUri || '').replace(/\/+$/, '')
   if (!base) return []
   const d = await httpJson<any>(base + '/es/authorized?terminalType=4')
@@ -43,6 +47,7 @@ export async function loadApps(): Promise<AppEntry[]> {
       (a: AppEntry, b: AppEntry) =>
         a.order - b.order || a.name.localeCompare(b.name, 'zh'),
     )
+  cachedAt = Date.now()
   return cache || []
 }
 

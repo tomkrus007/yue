@@ -31,6 +31,8 @@ export interface LinkFriend {
 
 export interface LinkUserDetail extends LinkFriend {
   userId: string
+  /** 邮箱（UAM 详情返回，域名可能大写） */
+  email?: string
   mobile?: string
   mobile2?: string
   mobile3?: string
@@ -73,6 +75,8 @@ export interface ContactEntry {
   dept?: string
   /** 手机号（mobile） */
   mobile?: string
+  /** 邮箱（来自 UAM 详情；列表/搜索接口可能没有） */
+  email?: string
   online?: boolean
   raw?: any
 }
@@ -90,6 +94,11 @@ function deptOf(u: any): string {
 /** 手机号 */
 function mobileOf(u: any): string {
   return u?.mobile || u?.telephone || u?.homeTelephone || ''
+}
+
+/** 邮箱（原样返回，不做大小写归一；比对时按小写） */
+function emailOf(u: any): string {
+  return String(u?.email || u?.mail || '').trim()
 }
 
 /**
@@ -111,16 +120,18 @@ function userEntry(u: any): ContactEntry {
     company: companyOf(u),
     dept: deptOf(u),
     mobile: mobileOf(u),
+    email: emailOf(u),
     raw: u,
   }
 }
 
-/** 用详情补全条目上缺失的公司/部门/手机（搜索接口只返回基础字段） */
+/** 用详情补全条目上缺失的公司/部门/手机/邮箱（搜索接口只返回基础字段） */
 function applyDetail(entry: ContactEntry, detail: any): void {
   const u = (detail && detail.user) || detail || {}
   entry.company = entry.company || companyOf(u)
   entry.dept = entry.dept || deptOf(u)
   entry.mobile = entry.mobile || mobileOf(u)
+  entry.email = entry.email || emailOf(u)
   entry.desc = entry.dept || entry.desc
 }
 

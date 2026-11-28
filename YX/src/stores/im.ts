@@ -1994,7 +1994,7 @@ export const useImStore = defineStore('im', () => {
     selectSession(id)
   }
 
-  function sendText(text: string, atUserIds: string[] = [], replyMsgId?: string, options: { receipt?: boolean; deleteAfterRead?: boolean } = {}): void {
+  function sendText(text: string, atUserIds: string[] = [], replyMsgId?: string, options: { receipt?: boolean; deleteAfterRead?: boolean; receiptCard?: boolean } = {}): void {
     const s = currentSession.value
     if (!s || !text.trim()) return
     if (!imClient.authed) {

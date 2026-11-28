@@ -11,6 +11,7 @@ mod notifications;
 mod zt_sdk;
 mod db;
 mod component;
+mod app_window;
 mod im_store;
 use tauri::{menu::{Menu, MenuItem}, Manager, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 
@@ -312,6 +313,7 @@ pub fn run() {
             media_stream::media_response_chunk,
             media_stream::media_response_end,
             wemeet::wemeet_init,
+            app_window::app_open_window,
             component::component_status,
             component::component_install_local,
             component::component_install_url,

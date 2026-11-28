@@ -3,7 +3,8 @@
  * 实测要点：
  * - 会话列表：GET {embHttpUri}/emb/sessions/latest
  * - 历史：GET {embQueryUri}/get/history/date?targetId&targetType&skip&limit&dateTime
- *   dateTime 必须是毫秒时间戳；翻页用「上一页最早一条 send_time - 1」。
+ *   dateTime 必须是毫秒时间戳，且是**含上界**；实测 `skip` 无效（传 0 与非 0 返回同一页），
+ *   翻页要把 dateTime 往更早的时间推（见 `HistoryPager`）。
  * - 这两个接口的 content 仍是混淆状态，要自己解一次。
  */
 import { getServerPaths } from '../config'

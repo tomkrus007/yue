@@ -25,19 +25,19 @@ pnpm tauri build   # 打包；需要关窗不退出的常驻版用 pnpm tauri bu
 ## 代码结构
 
 - 入口 `src/main.ts`：hash 路由；受保护路由只检查 localStorage 的 `AccessToken`。
-- `src/services/` 放协议与 API（auth/im/disk/contact、config、http、app/task/pan/zt），`src/stores/` 放 Pinia 状态，`src/views/` 放页面，`src/components/` 放聊天消息/历史/抽屉/应用面板。
+- `src/services/` 放协议与 API（auth/im/disk/contact、config、http、app/task/pan/zt），`src/stores/` 放 Pinia 状态，`src/views/` 放页面，`src/components/` 放聊天消息/历史/抽屉。
 - Rust 侧 (`src-tauri/src/`)：`lib.rs` 只做插件与命令注册，`zt_sdk.rs` 驱动本机官方零信任客户端的 JSON-RPC（登录/注销/状态）；IM 业务仍全在前端；`greet` 是脚手架残留。
 
 ## 参考实现与移植约定
 
 - **主要参考 `/Users/tom/Downloads/yx-cloud-kb`**：前端看 `repo/web/index.html`，轻客户端看 `repo/kit/src`，协议与实测结论看其 `kb/`、`repo/analysis/`。移植时适配 `YX` 的 Vue 3 + Pinia + Tauri 形态，不要照搬参考库的 Node 进程或单文件网页结构。
-- 已按参考实现移植：附件收发（图片/文件/粘贴/拖拽）、历史消息与分页、REST 会话列表、未读数、token 续期、记住密码/自动登录、免打扰、置顶、折叠、消息富文本与合并转发、应用面板、团队任务、团队文档、零信任登录。
+- 已按参考实现移植：附件收发（图片/文件/粘贴/拖拽）、历史消息与分页、REST 会话列表、未读数、token 续期、记住密码/自动登录、免打扰、置顶、折叠、消息富文本与合并转发、我的应用、团队任务、团队文档、零信任登录。
 - 附件上传地址是 `{storeUri}/store/putFile`（`storeUri` 本身以 `/store` 结尾，所以会出现 `/store/store/putFile`，与参考一致）；图片后缀只认 `jpg/jpeg/png/gif/bmp`，其余走文件消息。
 - 存储服务返回 `application/octet-stream` + `nosniff`，图片必须取字节后转 `Blob` URL，不能直接给 `<img src>`；图标走 v1 `store/getFile`。
 - IM 离线游标用已收离线消息的 `max(send_time)`；鉴权成功后主动发 `uOfflineStart`；`101` 表示还有下一批，`97` 才是结束；收到 `99` 刷新 token 后重连。
 - 会话归属：`to_type ∈ {2,4,8}` 或自己发的归到 `to_*`，否则归到 `from_*`；未读以 `is_read === 0` 为准，排除本设备发送，免打扰会话只计 `at_user_ids` 里的 `ALL`/自己，服务号不计数。
 - 免打扰/折叠/置顶接口按会话类型分流，且多数只收表单参数；细节见 `src/services/im/prefs.ts`。
-- 应用面板 `appApiUri`、团队任务 `taskUri`、团队文档 `panServerUri`/`panDocUri` 都来自配置中心；云盘/任务接口只认 query `access_token`。
+- 我的应用 `appApiUri`、团队任务 `taskUri`、团队文档 `panServerUri`/`panDocUri` 都来自配置中心；云盘/任务接口只认 query `access_token`。
 - 零信任**不自研隧道**：`src-tauri/src/zt_sdk.rs` 调用本机官方客户端 `127.0.0.1:35440-35443/trustagent` 的 `login/logout/status/get_config`，把当前 AccessToken 交出去；隧道与内网路由由官方客户端负责（详见 `doc/官方零信任客户端架构与移植分析.md`）。
 - 会议组件（`TMSDK.framework`，355 MB）**不随安装包分发**：shim 用 `dlopen` 加载，安装器把它装回 `YX.app/Contents/Frameworks/TMSDK.framework` 并重签整个 app（`src-tauri/src/component.rs`）。组件包用 `scripts/pack-tmsdk.sh` 打成 `TMSDK-<ver>-macos-arm64.tar.zst` 发 GitHub Release，默认地址在 `src-tauri/components.json`（启动时种子进 SQLite，用户可改）；组件缓存留在 `app_cache_dir/components/`，进会议时缺失就本地回装。设计见 `doc/TMSDK组件化与跨平台设计.md`。
 
