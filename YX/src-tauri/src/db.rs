@@ -18,14 +18,20 @@ pub const DOWNLOAD_DIR: &str = "paths.download_dir";
 pub const SPOOL_DIR: &str = "paths.spool_dir";
 pub const FFMPEG_PATH: &str = "paths.ffmpeg";
 pub const MESSAGE_SOUND: &str = "ui.message_sound";
+/// @ 提醒中心：关闭后导航栏不显示入口，也不统计待处理数量。
+pub const MENTION_CENTER: &str = "ui.mention_center";
+/// 应用打开方式：`1` = 系统浏览器；缺省（`0`）= 内嵌窗口。
+pub const APP_OPEN_IN_BROWSER: &str = "ui.app_open_in_browser";
 
-const KNOWN_KEYS: [&str; 6] = [
+const KNOWN_KEYS: [&str; 8] = [
     COMPONENT_URL,
     COMPONENT_CACHE_DIR,
     DOWNLOAD_DIR,
     SPOOL_DIR,
     FFMPEG_PATH,
     MESSAGE_SOUND,
+    MENTION_CENTER,
+    APP_OPEN_IN_BROWSER,
 ];
 
 /// 数据库位置：系统应用数据目录，不在 `.app` 包内。
@@ -420,6 +426,8 @@ fn platform_default(app: &AppHandle, key: &str) -> Option<String> {
             .to_string_lossy()
             .into_owned(),
         MESSAGE_SOUND => "1".to_string(),
+        MENTION_CENTER => "1".to_string(),
+        APP_OPEN_IN_BROWSER => "0".to_string(),
         COMPONENT_URL => default_component_url()?,
         _ => return None,
     })
@@ -460,6 +468,24 @@ pub fn settings_set(db: State<'_, Db>, key: String, value: Option<String>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_mention_center_switch() {
+        let db = Db::in_memory().unwrap();
+        db.set(MENTION_CENTER, Some("0")).unwrap();
+        assert_eq!(db.get(MENTION_CENTER).as_deref(), Some("0"));
+        db.set(MENTION_CENTER, None).unwrap();
+        assert_eq!(db.get(MENTION_CENTER), None);
+    }
+
+    #[test]
+    fn accepts_app_open_in_browser_switch() {
+        let db = Db::in_memory().unwrap();
+        db.set(APP_OPEN_IN_BROWSER, Some("1")).unwrap();
+        assert_eq!(db.get(APP_OPEN_IN_BROWSER).as_deref(), Some("1"));
+        db.set(APP_OPEN_IN_BROWSER, None).unwrap();
+        assert_eq!(db.get(APP_OPEN_IN_BROWSER), None);
+    }
 
     #[test]
     fn migrates_v3_database_to_search_schema() {

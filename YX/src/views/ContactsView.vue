@@ -1,6 +1,6 @@
 <template>
   <div class="app-layout">
-    <SideNav active="contacts" @apps="appOpen = true" />
+    <SideNav active="contacts" />
 
     <main class="contacts-main">
       <header class="contacts-header" data-tauri-drag-region="deep">
@@ -134,7 +134,6 @@
         </section>
       </div>
     </main>
-    <AppPanel v-model:open="appOpen" />
     <CreateGroupModal
       :open="createOpen"
       @close="createOpen = false"
@@ -146,7 +145,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import AppPanel from '../components/AppPanel.vue'
 import SideNav from '../components/SideNav.vue'
 import CreateGroupModal from '../components/CreateGroupModal.vue'
 import ContactDetailPanel from '../components/ContactDetailPanel.vue'
@@ -159,7 +157,6 @@ import type { ContactEntry } from '../services/contact-client'
 
 const auth = useAuthStore()
 const im = useImStore()
-const appOpen = ref(false)
 const createOpen = ref(false)
 const router = useRouter()
 const keyword = ref('')

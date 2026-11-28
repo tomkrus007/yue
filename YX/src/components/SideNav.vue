@@ -39,14 +39,14 @@
       </svg>
     </router-link>
 
-    <button class="nav-item" title="我的应用" aria-label="我的应用" @click="emit('apps')">
+    <router-link to="/apps" :class="['nav-item', { active: active === 'apps' }]" title="我的应用">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
         <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
         <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
         <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
       </svg>
-    </button>
+    </router-link>
 
     <router-link v-if="caps?.meeting !== false" to="/wemeet" :class="['nav-item', { active: active === 'wemeet' }]" title="会议">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -81,6 +81,7 @@
       </button>
       <div v-if="menuOpen" class="nav-menu-backdrop" @click="menuOpen = false"></div>
       <div v-if="menuOpen" class="nav-menu" role="menu" aria-label="更多">
+        <button role="menuitem" @click="onSettings">设置</button>
         <button v-if="active === 'chat'" role="menuitem" @click="onLogs">日志</button>
         <button role="menuitem" class="danger" @click="onLogout">退出</button>
       </div>
@@ -94,26 +95,33 @@ import { useRouter } from 'vue-router'
 import { onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useImStore } from '../stores/im'
+import { useUiStore } from '../stores/ui'
 import { useWeMeetStore } from '../stores/wemeet'
 import ConnectionStatus from './ConnectionStatus.vue'
 import { useCapabilities } from '../services/platform'
 
 withDefaults(defineProps<{
-  active: 'chat' | 'contacts' | 'disk' | 'zt' | 'wemeet'
+  active: 'chat' | 'contacts' | 'disk' | 'apps' | 'zt' | 'wemeet'
   /** 传入待处理 @ 数量时显示提醒中心入口；null 表示该页面不显示 */
   mentionCount?: number | null
 }>(), { mentionCount: null })
-const emit = defineEmits<{ apps: []; mentions: []; logs: [] }>()
+const emit = defineEmits<{ mentions: []; logs: [] }>()
 
 const router = useRouter()
 const auth = useAuthStore()
 const im = useImStore()
+const ui = useUiStore()
 const wemeet = useWeMeetStore()
 const menuOpen = ref(false)
 const { caps, loadCapabilities } = useCapabilities()
 onMounted(() => void loadCapabilities())
 /** 全部 + 折叠两个分组的未读之和（tabs 内已排除服务号） */
 const chatUnread = computed(() => im.tabs.reduce((sum, t) => sum + t.unread, 0))
+
+function onSettings() {
+  menuOpen.value = false
+  ui.openSettings()
+}
 
 function onLogs() {
   menuOpen.value = false

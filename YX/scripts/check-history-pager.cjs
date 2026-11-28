@@ -28,24 +28,44 @@ new Function('require', 'module', 'exports', 'setTimeout', 'clearTimeout', sourc
   }};
 }, moduleUnderTest, moduleUnderTest.exports, setTimeoutMock, id => timers.delete(id));
 const {HistoryPager} = moduleUnderTest.exports;
-const message = id => ({msg_id: String(id), send_time: 12345, msg_type: 1, content: '同毫秒消息' + id});
-const page = ids => ({messages: ids.map(message), total: ids.length});
+const message = (id, sendTime) => ({msg_id: String(id), send_time: sendTime, msg_type: 1, content: '消息' + id});
+const page = ids => ({messages: ids.map((id, index) => message(id, 12345 - index)), total: ids.length});
+/** 模拟真实服务端：dateTime 是含上界，忽略 skip，按时间倒序返回。 */
+const server = rows => async ({dateTime, limit}) => ({
+  messages: rows.filter(row => row.send_time <= dateTime).slice(0, limit),
+  total: rows.length,
+});
 function deferred() {let resolve, reject; const promise = new Promise((yes, no) => {resolve = yes; reject = no}); return {promise, resolve, reject};}
 (async () => {
   calls.length = 0;
-  const rows = Array.from({length: 253}, (_, index) => message(index));
-  handler = async ({skip, limit}) => ({messages: rows.slice(skip, skip + limit), total: rows.length});
-  const pager = new HistoryPager('group', 2, 54321);
+  const rows = Array.from({length: 253}, (_, index) => message(index, 100000 - index));
+  handler = server(rows);
+  const pager = new HistoryPager('group', 2, 200000);
   const received = [];
   while (!pager.complete) received.push(...(await pager.next(100)).messages);
   assert.equal(received.length, rows.length);
-  assert.equal(new Set(received.map(item => item.msg_id)).size, rows.length, '同一毫秒超过两页也不得漏消息或重复');
-  assert.deepEqual(calls.map(call => call.skip), [0, 100, 200]);
-  assert.ok(calls.every(call => call.dateTime === 54321 && call.targetId === 'group' && call.targetType === 2));
+  assert.equal(new Set(received.map(item => item.msg_id)).size, rows.length, '翻页不得漏消息或重复交付');
+  assert.deepEqual(received.map(item => item.msg_id), rows.map(item => item.msg_id));
+  assert.ok(calls.every(call => call.skip === undefined && call.targetId === 'group' && call.targetType === 2));
+  assert.equal(calls[0].dateTime, 200000, '第一页使用固定查询上界');
+  assert.ok(calls.every((call, index) => index === 0 || call.dateTime < calls[index - 1].dateTime), 'dateTime 必须逐页往前推');
   assert.equal(pager.offset, 253);
+  const finishedCalls = calls.length;
   assert.deepEqual(await pager.next(100), {messages: [], total: 253});
-  assert.equal(calls.length, 3, '短页结束后不再请求服务端');
-  console.log('固定上界、skip翻页与同毫秒多页完整性回归通过');
+  assert.equal(calls.length, finishedCalls, '结束后不再请求服务端');
+  console.log('dateTime 上界翻页与去重完整性回归通过');
+
+  calls.length = 0;
+  const sameMs = [
+    message('m0', 1000), message('m1', 999), message('m2', 998),
+    message('m3', 500), message('m4', 500), message('m5', 400),
+  ];
+  handler = server(sameMs);
+  const boundary = new HistoryPager('same-ms', 2, 2000);
+  const boundaryIds = [];
+  while (!boundary.complete) boundaryIds.push(...(await boundary.next(4)).messages.map(item => item.msg_id));
+  assert.deepEqual(boundaryIds, ['m0', 'm1', 'm2', 'm3', 'm4', 'm5'], '页尾落在同一毫秒时不得漏掉同毫秒的其余消息');
+  console.log('同一毫秒跨页不丢消息回归通过');
 
   calls.length = 0;
   const wait = deferred();
@@ -66,35 +86,36 @@ function deferred() {let resolve, reject; const promise = new Promise((yes, no) 
 
   calls.length = 0;
   let failed = false;
-  handler = async ({skip}) => {
-    if (!skip) return page(['one', 'two']);
-    if (!failed) {failed = true; throw new Error('模拟第二页失败');}
-    return page(['three']);
+  const retryRows = [message('a', 500), message('b', 400), message('c', 300)];
+  handler = async ({dateTime, limit}) => {
+    if (dateTime === 400 && !failed) { failed = true; throw new Error('模拟第二页失败'); }
+    return {messages: retryRows.filter(row => row.send_time <= dateTime).slice(0, limit), total: 3};
   };
-  const retry = new HistoryPager('retry-group', 2, 70000);
+  const retry = new HistoryPager('retry-group', 2, 1000);
   await retry.next(2);
+  assert.equal(retry.offset, 2);
   await assert.rejects(retry.next(2), /第二页失败/);
   assert.equal(retry.offset, 2, '失败不能推进游标');
   assert.equal(retry.complete, false);
   const successfulRetry = await retry.next(2);
-  assert.deepEqual(successfulRetry.messages.map(item => item.msg_id), ['three']);
-  assert.deepEqual(calls.map(call => call.skip), [0, 2, 2], '重试复用失败页游标');
+  assert.deepEqual(successfulRetry.messages.map(item => item.msg_id), ['c']);
+  assert.equal(calls[calls.length - 1].dateTime, 400, '重试复用失败页游标');
+  assert.equal(retry.offset, 3);
+  await retry.next(2);
   assert.equal(retry.complete, true);
   console.log('失败保留游标与重试恢复回归通过');
 
   calls.length = 0;
-  let repeated = true;
-  handler = async ({skip}) => !skip || repeated ? page(skip ? ['b', 'a'] : ['a', 'b']) : page(['c']);
+  const stuckPage = {messages: [message('a', 80000), message('b', 80000)], total: 2};
+  handler = async () => stuckPage;
   const stuck = new HistoryPager('stuck', 2, 80000);
   await stuck.next(2);
-  await assert.rejects(stuck.next(2), /分页未推进|重复/);
-  assert.equal(stuck.offset, 2, '重复页错误不能继续推进');
-  assert.equal(stuck.complete, false);
-  repeated = false;
-  await stuck.next(2);
-  assert.equal(stuck.offset, 3);
-  assert.equal(stuck.complete, true);
-  console.log('重复页重排检测与错误后恢复回归通过');
+  let guard = 0;
+  while (!stuck.complete && guard++ < 10) await stuck.next(2);
+  assert.equal(stuck.complete, true, '服务端反复返回同一页时必须终止而不是报错');
+  assert.equal(guard < 10, true, '反复页不得无限请求');
+  assert.equal(stuck.offset, 2, '已交付消息不会因重复页再次计数');
+  console.log('服务端重复页自动停止且不抛错回归通过');
 
   const empty = new HistoryPager('empty', 2, 90000);
   handler = async () => page([]);
@@ -102,12 +123,6 @@ function deferred() {let resolve, reject; const promise = new Promise((yes, no) 
   assert.equal(empty.complete, true);
   assert.equal(empty.offset, 0);
   console.log('首次空页结束回归通过');
-  handler = async ({skip}) => skip === 0 || skip === 4 ? page(['a', 'b']) : page(['c', 'd']);
-  const cycle = new HistoryPager('cycle', 2, 100000);
-  await cycle.next(2); await cycle.next(2);
-  await assert.rejects(cycle.next(2), /分页未推进|重复/);
-  assert.equal(cycle.offset, 4, '非相邻重复页也必须停止推进');
-  console.log('A→B→A循环页停止推进回归通过');
 
   let signal;
   handler = ({signal: requestSignal}) => {

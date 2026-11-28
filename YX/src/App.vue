@@ -2,6 +2,7 @@
   <router-view />
   <UploadProgress />
   <MeetingInvitePrompt />
+  <SettingsModal v-if="ui.settingsOpen" />
 </template>
 
 <script setup lang="ts">
@@ -10,17 +11,22 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useImStore } from './stores/im'
 import { useWeMeetStore } from './stores/wemeet'
+import { usePreferencesStore } from './stores/preferences'
+import { useUiStore } from './stores/ui'
 import { authService } from './services/auth'
 import { initNotificationClick, showMainWindow } from './services/notifications'
 import UploadProgress from './components/UploadProgress.vue'
 import MeetingInvitePrompt from './components/MeetingInvitePrompt.vue'
+import SettingsModal from './components/SettingsModal.vue'
 
 const auth = useAuthStore()
 const im = useImStore()
 const wemeet = useWeMeetStore()
+const prefs = usePreferencesStore()
+const ui = useUiStore()
 const router = useRouter()
 
-onMounted(() => {
+onMounted(async () => {
   // 点击系统通知：先唤起窗口，再跳到对应会话并定位到那条消息。
   // 通知只负责唤起，找不到目标（通知已被回收）时就把窗口带到前台。
   initNotificationClick((target) => {
@@ -41,6 +47,9 @@ onMounted(() => {
   if (auth.isLoggedIn && !auth.user) {
     authService.getCurrentUser().catch(() => {})
   }
+  // 本地配置（含 @ 提醒中心开关）必须先就绪，再开始接收离线消息，
+  // 否则关闭提醒后仍会把启动瞬间到达的 @ 记成待处理。
+  await prefs.load()
   // IM 连接是全局的：不能随聊天页卸载而断开（否则切到其它页面就显示"未连接"）
   if (auth.isLoggedIn) {
     im.start()
@@ -53,7 +62,7 @@ watch(
   () => auth.isLoggedIn,
   (logged) => {
     if (logged) {
-      im.start()
+      void prefs.load().then(() => im.start())
       void wemeet.start()
     } else {
       im.stop()

@@ -4,18 +4,26 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { authService } from '../services/auth'
 import { getServerPaths } from '../services/config'
 import {
+  clearInvalidShares,
   createFolder,
+  createShare,
   deleteItem,
+  deleteShare,
   listDepartmentSpaces,
   listDir,
+  listMyShares,
   listReceivedShares,
   listSharedDir,
   listTeamSpaces,
+  modifyShare,
   previewUrl,
   sharedDownloadUrl,
   sharedPreviewUrl,
+  transferShare,
   type PanDiskItem,
+  type PanShareInput,
   type PanShareItem,
+  type PanShareLinkInfo,
 } from '../services/disk-pan'
 import {
   diskClient,
@@ -27,8 +35,8 @@ export interface DiskDrive {
   /** 盘标识：/Private /Team /Org /Public/<classId> /Shared */
   id: string
   name: string
-  /** private | team | org | public | shared */
-  kind: 'private' | 'team' | 'org' | 'public' | 'shared'
+  /** private | team | org | public | shared | myshare */
+  kind: 'private' | 'team' | 'org' | 'public' | 'shared' | 'myshare'
   classId?: string
 }
 
@@ -44,6 +52,8 @@ export const useDiskStore = defineStore('disk', () => {
   const subEntries = ref<DiskFile[]>([])
   /** 共享给我列表（仅「共享给我」入口使用） */
   const shares = ref<PanShareItem[]>([])
+  /** 我发出的分享列表（仅「我的共享」入口使用） */
+  const myShares = ref<PanShareItem[]>([])
   /** 当前正在浏览的分享 id；为空表示浏览自己的盘 */
   const currentShareId = ref('')
   /** 全盘搜索关键词；非空表示列的是搜索结果而不是目录内容 */
@@ -114,7 +124,8 @@ export const useDiskStore = defineStore('disk', () => {
       } catch {
         /* 无公开盘 */
       }
-      // 共享协作 → 共享给我：服务端没有对应的「盘」，这里补一个本地入口
+      // 共享协作：服务端没有对应的「盘」，这里补两个本地入口
+      list.push({ id: '/MyShares', name: '我的共享', kind: 'myshare' })
       list.push({ id: '/Shared', name: '共享给我', kind: 'shared' })
       drives.value = list
       if (list.length && !currentDrive.value) {
@@ -132,12 +143,18 @@ export const useDiskStore = defineStore('disk', () => {
     currentDrive.value = drive
     subEntries.value = []
     shares.value = []
+    myShares.value = []
     currentShareId.value = ''
     searchKeyword.value = ''
     error.value = ''
     if (drive.kind === 'shared') {
       trail.value = [{ id: '', name: drive.name }]
       await loadShares()
+      return
+    }
+    if (drive.kind === 'myshare') {
+      trail.value = [{ id: '', name: drive.name }]
+      await loadMyShares()
       return
     }
     if (drive.kind === 'team') {
@@ -204,11 +221,31 @@ export const useDiskStore = defineStore('disk', () => {
     searchKeyword.value = ''
     try {
       shares.value = await listReceivedShares()
+      myShares.value = []
       files.value = []
       subEntries.value = []
     } catch (e: any) {
       error.value = '加载共享给我的内容失败：' + (e?.message || String(e))
       shares.value = []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /** 我的共享：加载我发出的分享 */
+  async function loadMyShares() {
+    loading.value = true
+    error.value = ''
+    currentShareId.value = ''
+    searchKeyword.value = ''
+    try {
+      myShares.value = await listMyShares()
+      shares.value = []
+      files.value = []
+      subEntries.value = []
+    } catch (e: any) {
+      error.value = '加载我的共享失败：' + (e?.message || String(e))
+      myShares.value = []
     } finally {
       loading.value = false
     }
@@ -234,7 +271,8 @@ export const useDiskStore = defineStore('disk', () => {
 
   /** 共享给我：进入一条分享；文件分享不进入目录，由列表里的下载/预览处理 */
   async function enterShare(share: PanShareItem) {
-    if (share.resourceType !== 'D' || share.status !== 0) return
+    const valid = share.status === 0 || share.status === -2
+    if (share.resourceType !== 'D' || !valid) return
     currentShareId.value = share.id
     const root = trail.value[0] || { id: '', name: currentDrive.value?.name || '共享给我' }
     trail.value = [root, { id: share.resourceId, name: share.title }]
@@ -412,6 +450,38 @@ export const useDiskStore = defineStore('disk', () => {
     }
   }
 
+  /** 创建或修改共享；在「我的共享」页时顺带刷新列表 */
+  async function saveShare(
+    input: PanShareInput,
+    shareId?: string,
+  ): Promise<PanShareLinkInfo> {
+    const info = shareId
+      ? await modifyShare(shareId, input)
+      : await createShare(input)
+    if (currentDrive.value?.kind === 'myshare') await loadMyShares()
+    return info
+  }
+
+  /** 取消我发出的共享 / 删除收到的共享 */
+  async function revokeShare(share: PanShareItem) {
+    const way = share.way || 1
+    await deleteShare(share.id, way)
+    if (way === 1) await loadMyShares()
+    else await loadShares()
+  }
+
+  /** 一键清理失效共享 */
+  async function clearInvalid(way: 1 | 2) {
+    await clearInvalidShares(way)
+    if (way === 1) await loadMyShares()
+    else await loadShares()
+  }
+
+  /** 转存收到的共享到自己的目录（默认个人盘根目录） */
+  async function transfer(share: PanShareItem, targetDirId: string) {
+    await transferShare(share.id, targetDirId)
+  }
+
   return {
     drives,
     currentDrive,
@@ -421,6 +491,7 @@ export const useDiskStore = defineStore('disk', () => {
     searchKeyword,
     files,
     shares,
+    myShares,
     loading,
     error,
     history,
@@ -429,6 +500,7 @@ export const useDiskStore = defineStore('disk', () => {
     loadDrives,
     openDrive,
     loadShares,
+    loadMyShares,
     list,
     listShared,
     enter,
@@ -445,5 +517,9 @@ export const useDiskStore = defineStore('disk', () => {
     downloadShare,
     preview,
     previewShare,
+    saveShare,
+    revokeShare,
+    clearInvalid,
+    transfer,
   }
 })

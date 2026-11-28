@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authService, type UserInfo } from '../services/auth'
+import { clearAppCache } from '../services/app-client'
+import { clearAppLoginCache } from '../services/app-desk'
 import { disableAutoLogin } from '../services/credentials'
 import { STORAGE_KEYS } from '../services/config'
 import { logEvent } from '../services/app-log'
@@ -87,6 +89,10 @@ export const useAuthStore = defineStore('auth', () => {
     // 退出后保留「记住密码」，但关掉自动登录，否则重开又直接进去
     disableAutoLogin()
     authService.logout()
+    // 应用目录按账号隔离：不清缓存会把上一个账号的应用带给下一个账号
+    clearAppCache()
+    // CAS 票据同样是账号级的，不能留给下一个账号
+    clearAppLoginCache()
     syncSession()
     user.value = null
     debugLog.value = []

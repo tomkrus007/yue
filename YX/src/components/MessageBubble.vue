@@ -60,17 +60,18 @@ const pending = computed(() => im.interactionPending(props.message.msg_id))
 const replyCount = computed(() => im.repliesFor(props.message.msg_id).length)
 const readers = computed(() => im.readersOf(props.message.msg_id))
 const readerCount = computed(() => Object.keys(readers.value).length)
-/** 群聊（群/部门/工作群）显示已读人数，单聊只显示对方已读或未读。 */
+/** 群聊（群/部门/工作群）显示实际收到的人数，单聊只显示对方已读或未读。 */
 const multi = computed(() => [2, 4, 8].includes(Number(props.message.to_type || im.currentSession?.type || 0)))
 const showsReadState = computed(() => {
   if (!im.isMine(props.message) || recalled.value) return false
   const receiptable = [1, 2, 3, 4, 7, 19, 28, 96].includes(Number(props.message.msg_type))
   if (!receiptable && !readerCount.value) return false
-  if (multi.value) return true
-  return readerCount.value > 0 ||
-    Number(props.message.is_need_send_read) === 1 ||
-    String(props.message.is_need_read_receipt) === 'true' ||
-    String(props.message.is_delete_after_read) === 'true'
+  // 官方只给单聊和要求回执的消息发逐条阅读确认；群聊普通文字没有人回执，
+  // 固定显示「0 人已读」是误导。群聊只在真收到确认（或消息本身要求回执）时才展示。
+  if (String(props.message.is_need_read_receipt) === 'true' || String(props.message.is_delete_after_read) === 'true') return true
+  if (readerCount.value > 0) return true
+  if (multi.value) return false
+  return Number(props.message.is_need_send_read) === 1
 })
 const sendFailure = computed(() => {
   const message = props.message

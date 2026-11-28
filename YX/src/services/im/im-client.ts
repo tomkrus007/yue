@@ -622,7 +622,7 @@ export class ImClient {
     text: string,
     replyMsgId?: string,
     atUserIds: string[] = [],
-    options: { receipt?: boolean; deleteAfterRead?: boolean } = {},
+    options: { receipt?: boolean; deleteAfterRead?: boolean; receiptCard?: boolean } = {},
   ): ImMessage {
     const msg = this.baseMessage(
       MsgType.TEXT,
@@ -633,9 +633,14 @@ export class ImClient {
       replyMsgId,
     )
     msg.at_user_ids = [...new Set(atUserIds)].join(',')
-    msg.is_need_read_receipt = !!options.receipt
+    const receipt = !!options.receipt || !!options.receiptCard
+    msg.is_need_read_receipt = receipt
     msg.is_delete_after_read = !!options.deleteAfterRead
-    msg.is_need_send_read = !options.receipt && !options.deleteAfterRead && toType === FromType.USER && toId !== authService.getCurrentUserId() && !toId.includes('@') ? 1 : 0
+    // 原版「回执消息」在正文前加一个零宽不连字（U+200C）：接收端消息进入可视区就
+    // 自动回 95（cmd=2），发送方不用等对方点开；「回执卡片」不加这个标记，
+    // 必须由接收人点开后才回执。两种模式都只置 is_need_read_receipt。
+    if (options.receipt) msg.content = '\u200c' + text
+    msg.is_need_send_read = !receipt && !options.deleteAfterRead && toType === FromType.USER && toId !== authService.getCurrentUserId() && !toId.includes('@') ? 1 : 0
     if (!this.authed || !this.send(Cmd.uSendMsg, 1, msg)) throw new Error('连接已断开，消息未发送')
     return msg
   }

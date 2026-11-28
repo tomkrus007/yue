@@ -1,6 +1,6 @@
 <template>
   <div class="wemeet-layout">
-    <SideNav active="wemeet" @apps="appOpen = true" />
+    <SideNav active="wemeet" />
 
     <main class="wemeet-main">
       <header class="wemeet-head" data-tauri-drag-region="deep">
@@ -173,8 +173,6 @@
       @close="pickerOpen = false"
       @confirm="confirmInvitees"
     />
-
-    <AppPanel v-model:open="appOpen" />
   </div>
 </template>
 
@@ -182,7 +180,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import SideNav from '../components/SideNav.vue'
-import AppPanel from '../components/AppPanel.vue'
 import MemberPicker from '../components/MemberPicker.vue'
 import type { PickedMember } from '../components/MemberPicker.vue'
 import { useWeMeetStore } from '../stores/wemeet'
@@ -190,7 +187,6 @@ import { authService } from '../services/auth'
 import { settingsGetAll, settingsSet } from '../services/settings'
 
 const wemeet = useWeMeetStore()
-const appOpen = ref(false)
 const busy = ref(false)
 const meetingCode = ref('')
 const pickerOpen = ref(false)
